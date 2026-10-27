@@ -18,11 +18,13 @@ import uuid
 
 from . import activities as act
 from . import brain, world
+from .conversation import Conversation
 from .llm import LLMError
 from .models import ApiProfile, Decision, GameEvent, Settings
 from .player import Player
 
 BEDROOM_ANCHORS = [(3, 4), (9, 4), (14, 4), (20, 4), (23, 21)]   # 五间卧室的中心
+DEFAULT_PLAYER_COUNT = 3            # 初始玩家数（网络压力考虑，用户要求）
 
 PRESET_IDENTITIES = [
     {"name": "小满", "color": "#e74c3c", "emoji": "🧑‍🎓"},
@@ -49,7 +51,8 @@ class Simulation:
         self.system_prompt: str = ""            # 用户自定义统一提示词
         self.decor_common = 0.0                 # 公共区装饰度
         self.meal_until = 0                     # 家里有饭的截止 tick
-        self.dialogue_log: list[dict] = []
+        self.dialogue_log: list[dict] = []      # 兼容保留
+        self.conversations: list[Conversation] = []   # 活跃对话
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self._affinity_busy = False
         self._loop_task: asyncio.Task | None = None
@@ -82,7 +85,7 @@ class Simulation:
         return next((p for p in self.players if p.pid == pid), None)
 
     # ------------------------------------------------------------ 玩家管理
-    def spawn_players(self, n: int = 5) -> list[Player]:
+    def spawn_players(self, n: int = DEFAULT_PLAYER_COUNT) -> list[Player]:
         """生成 n 个无名玩家（身份待定）"""
         out = []
         for i in range(n):
@@ -96,6 +99,37 @@ class Simulation:
             self.players.append(p)
             out.append(p)
         return out
+
+    def add_player_manual(self, name: str, color: str, emoji: str) -> Player:
+        """未运行时手动添加玩家（有名字，跳过身份阶段）"""
+        if any(p.name == name for p in self.players):
+            raise ValueError(f"玩家 {name} 已存在")
+        import random as _r
+        used = [p.bedroom for p in self.players]
+        free = [a for a in BEDROOM_ANCHORS if a not in used]
+        anchor = _r.choice(free) if free else _r.choice(BEDROOM_ANCHORS)
+        bx, by = world.nearest_walkable("house", *anchor)
+        p = Player(pid=uuid.uuid4().hex[:8], name=name, color=color,
+                   emoji=emoji or "🙂", bedroom=(bx, by))
+        p.identity_done = True
+        self.players.append(p)
+        self.log("system", f"🎉 {name} {p.emoji} 入住小镇", [p.pid])
+        return p
+
+    def remove_player(self, pid: str) -> Player | None:
+        """移除玩家（对话一并清理）"""
+        p = self.by_pid(pid)
+        if not p:
+            return None
+        # 清理其参与的对话
+        for c in list(self.conversations):
+            if p in (c.a, c.b):
+                c._end("leave")
+        self.conversations = [c for c in self.conversations
+                              if c.phase != "ended" and p not in (c.a, c.b)]
+        self.players.remove(p)
+        self.log("system", f"👋 {p.name} 离开了小镇", [p.pid])
+        return p
 
     def apply_identity(self, p: Player, name: str, color: str, why: str = ""):
         """应用身份（LLM 选的或预设的）"""
@@ -203,10 +237,27 @@ class Simulation:
         if self.identity_phase:
             return
 
-        # 1. 决策（idle 玩家）
-        idlers = [p for p in self.players if p.state == "idle" and p.identity_done]
+        # 1. 决策（idle 且不在对话中的玩家）
+        idlers = [p for p in self.players
+                  if p.state == "idle" and p.identity_done
+                  and p._conversation is None]
         if idlers:
             await self._decide_batch(idlers)
+
+        # 1.5 推进活跃对话（每 tick 每对话推进一步回合）
+        if self.conversations:
+            for conv in list(self.conversations):
+                if conv.phase == "ended":
+                    self.conversations.remove(conv)
+                    continue
+                # 双方还在同一地点才继续；走散则结束
+                if conv.a.scene != conv.b.scene or (
+                        max(abs(conv.a.x - conv.b.x), abs(conv.a.y - conv.b.y)) > 3
+                        and not world.same_place(conv.a, conv.b)):
+                    conv._end("separated")
+                    self.conversations.remove(conv)
+                    continue
+                await conv.advance()
 
         # 2. 推进状态机
         for p in self.players:
@@ -331,6 +382,38 @@ class Simulation:
                      + (f"（对象:{d.target}）" if d.target else "")
                      + f" —— {d.reason}", [p.pid])
 
+    # ------------------------------------------------------------ 对话
+    def start_conversation(self, initiator: Player, target: Player, kind: str):
+        """发起回合制对话（由 player._start_social 调用）"""
+        # 任一方已在对话中则不再开新对话
+        if initiator._conversation or target._conversation:
+            return
+        # love 需要双方好感达标（在 player 层校验过，这里再保险一次）
+        if kind == "love":
+            a_ok = initiator.affinity.get(target.pid, 0) >= 55
+            b_ok = target.affinity.get(initiator.pid, 0) >= 55
+            if not (a_ok and b_ok):
+                return
+        conv = Conversation(initiator, target, kind, self)
+        initiator._conversation = conv
+        target._conversation = conv
+        self.conversations.append(conv)
+        kind_cn = {"chat": "聊天", "love": "约会"}[kind]
+        self.log("social", f"💬 {initiator.name} 找 {target.name} {kind_cn}",
+                 [initiator.pid, target.pid])
+
+    def on_conversation_end(self, conv: Conversation):
+        """对话结束：好感结算（LLM）+ 基础增量"""
+        a, b = conv.a, conv.b
+        key = "chat" if conv.kind in ("chat", "follow") else "love"
+        base = 2.0 if key == "chat" else 4.0
+        # 基础好感增量
+        a.affinity[b.pid] = min(100.0, a.affinity.get(b.pid, 50) + base)
+        b.affinity[a.pid] = min(100.0, b.affinity.get(a.pid, 50) + base)
+        # LLM 决定的浮动增减
+        self.request_affinity(a, b, key)
+        self.request_affinity(b, a, key)
+
     # ------------------------------------------------------------ 好感队列
     def request_affinity(self, a: Player, o: Player, activity_key: str):
         self.affinity_queue.append((a.pid, o.pid, activity_key))
@@ -369,29 +452,3 @@ class Simulation:
                                3)
         finally:
             self._affinity_busy = False
-
-    # ------------------------------------------------------------ 对白
-    def request_dialogue(self, a: Player, b: Player, kind: str) -> None:
-        self.dialogue_log.append({"a": a.pid, "b": b.pid, "kind": kind,
-                                  "tick": self.global_tick, "lines": []})
-
-    async def generate_dialogue(self, a: Player, b: Player, kind: str) -> list[str]:
-        prof = self.profile_for(a.pid)
-        if not (self.settings.dialogue_generation and prof):
-            return []
-        model = self.model_of.get(a.pid) or prof.default_model
-        aff = a.affinity.get(b.pid, 30)
-        kind_cn = "聊天" if kind == "chat" else "约会"
-        prompt = (f"合租之家里，{a.name} 和 {b.name} 正在{kind_cn}。"
-                  f"{a.name} 对 {b.name} 的好感是 {aff:.0f}/100。"
-                  f"请写他们之间 2~4 句简短自然的中文对话（每句不超过15字），"
-                  f"格式：每行一句，行首用说话人名。只输出对话本身。")
-        try:
-            from .llm import chat as llm_chat
-            text = await brain._run_in_thread(
-                llm_chat, prof, model,
-                "你是合租生活的对话生成器，语言自然口语化。",
-                prompt, 1.0, 200, 20.0)
-            return [ln.strip() for ln in text.splitlines() if ln.strip()][:4]
-        except Exception:                      # noqa: BLE001
-            return []

@@ -73,7 +73,7 @@ async def startup() -> None:
     global _identity_started
     load_config()
     if not sim.players:
-        sim.spawn_players(5)
+        sim.spawn_players(sim_mod.DEFAULT_PLAYER_COUNT)
         _sync_from_config()
     sim.log("system", "🏘️ 小镇服务启动")
 
@@ -113,7 +113,7 @@ async def control(c: ControlCmd):
         sim.stop()
         sim = sim_mod.Simulation()
         _sync_from_config()
-        sim.spawn_players(5)
+        sim.spawn_players(sim_mod.DEFAULT_PLAYER_COUNT)
         _identity_started = False
         sim.log("system", "🔄 世界已重置")
         globals()["_last_event_id"] = 0
@@ -370,27 +370,27 @@ class PlayerIn(BaseModel):
 
 @app.post("/api/players")
 async def add_player(p_in: PlayerIn):
-    if any(p.name == p_in.name for p in sim.players):
-        raise HTTPException(400, "名字重复")
-    bedrooms = world.find_tiles("house", "h")
-    import random as _r
-    bx, by = world.nearest_walkable("house", *_r.choice(bedrooms)) if bedrooms \
-        else world.nearest_walkable("house", 12, 12)
-    p = sim_mod.Player(pid=uuid.uuid4().hex[:8], name=p_in.name,
-                       color=p_in.color, emoji=p_in.emoji, bedroom=(bx, by))
-    sim.players.append(p)
-    p.identity_done = True
-    sim.log("system", f"🎉 {p.name} {p.emoji} 入住小镇", [p.pid])
+    # 未运行时才允许手动增减（运行中玩家身份/状态会与模拟冲突）
+    if sim.running or sim.identity_phase:
+        raise HTTPException(400, "模拟运行中无法添加玩家，请先暂停/停止")
+    try:
+        p = sim.add_player_manual(p_in.name, p_in.color, p_in.emoji)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return p.snapshot().model_dump()
 
 
 @app.delete("/api/players/{name}")
 async def remove_player(name: str):
+    if sim.running or sim.identity_phase:
+        raise HTTPException(400, "模拟运行中无法移除玩家，请先暂停/停止")
     p = next((p for p in sim.players if p.name == name), None)
     if not p:
         raise HTTPException(404, "玩家不存在")
-    sim.players.remove(p)
-    sim.log("system", f"👋 {name} 离开了小镇", [p.pid])
+    sim.remove_player(p.pid)
+    # 清理该玩家的绑定
+    config.player_bindings.pop(p.pid, None)
+    save_config()
     return {"ok": True}
 
 
@@ -461,47 +461,11 @@ async def tick_broadcaster() -> None:
             await manager.broadcast(payload)
 
 
-async def dialogue_worker() -> None:
-    """消费对白请求：LLM 生成，失败给兜底文案（不再只显示 ...）"""
-    while True:
-        await asyncio.sleep(0.5)
-        if not sim.dialogue_log:
-            continue
-        if _dialogue_sent >= len(sim.dialogue_log):
-            continue
-        d = sim.dialogue_log[_dialogue_sent]
-        globals()["_dialogue_sent"] = _dialogue_sent + 1
-        a = sim.by_pid(d["a"])
-        b = sim.by_pid(d["b"])
-        if not a or not b:
-            continue
-        lines = await sim.generate_dialogue(a, b, d["kind"])
-        if not lines:
-            # 兜底：按互动类型给自然文案
-            if d["kind"] == "love":
-                lines = [f"{a.name}: 和你在一起真好。",
-                         f"{b.name}: 嗯，我也是。"]
-            else:
-                topics = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
-                          "最近有点累啊", "这集综艺太好笑了", "阳台的花该浇水了"]
-                import random as _r
-                t = _r.choice(topics)
-                t2 = _r.choice([x for x in topics if x != t])
-                lines = [f"{a.name}: {t}", f"{b.name}: {t2}"]
-        ev = sim.log("dialogue",
-                     " / ".join(lines) +
-                     f"（{a.name}与{b.name}{'聊天' if d['kind'] == 'chat' else '约会'}）",
-                     [a.pid, b.pid])
-        await manager.broadcast({"type": "dialogue", "lines": lines,
-                                 "a": a.name, "b": b.name,
-                                 "event": ev.model_dump()})
-
-
 @app.on_event("startup")
 async def start_background() -> None:
     loop = asyncio.get_event_loop()
     loop.create_task(tick_broadcaster())
-    loop.create_task(dialogue_worker())
+    # 对白已由 Conversation 引擎实时写入事件流，无需单独 worker
 
 
 @app.websocket("/ws")

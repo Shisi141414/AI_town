@@ -273,6 +273,16 @@
     <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="120" value="25"></div>
     <button class="btn primary" id="btnSaveSettings" style="width:100%">保存设置</button>
 
+    <div class="section-title">玩家管理 <span style="font-weight:normal;font-size:11px;color:#999">（未运行时可增减）</span></div>
+    <div id="playerAdmin"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input id="npName" placeholder="新居民名" style="flex:1;font-size:12px;padding:6px;border:1px solid #d0d7de;border-radius:6px">
+      <input id="npEmoji" placeholder="🙂" style="width:52px;font-size:12px;padding:6px;border:1px solid #d0d7de;border-radius:6px">
+      <input id="npColor" type="color" value="#7f8c8d" style="width:40px;height:32px;border:1px solid #d0d7de;border-radius:6px">
+    </div>
+    <button class="btn" id="btnAddPlayer" style="width:100%;margin-top:6px">＋ 入住小镇</button>
+    <div class="hint">模拟开始后锁定；重置世界后恢复默认 3 位居民。手动添加的居民跳过起名阶段。</div>
+
     <div class="section-title">记忆查看器</div>
     <div class="form-row"><select id="memPlayer" style="width:100%"></select></div>
     <button class="btn" id="btnLoadMem" style="width:100%">读取记忆流</button>
@@ -523,10 +533,12 @@ function connectWS() {
       players = d.players;
       decorCommon = d.decor_common;
       identityPhase = d.identity_phase;
+      simRunning = d.running;
       $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
       $("modeTag").textContent = identityPhase ? "居民起名中…" : (d.running ? "运行中" : "已暂停");
       $("stageTitle").textContent = `公共装饰度：${(decorCommon||0).toFixed(0)} · ${players.filter(p=>p.scene===curScene).length} 人在此场景`;
       renderPlayers(); draw();
+      renderPlayerAdmin();
       if ($("panel-relations").classList.contains("active")) drawRelations();
       if (d.events && d.events.length) {
         allEvents = [...d.events, ...allEvents].slice(0, 500);
@@ -535,7 +547,7 @@ function connectWS() {
     } else if (d.type === "dialogue") {
       for (const ln of d.lines) {
         const m = ln.match(/^(.+?):\s*(.+)$/);
-        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 9000});
+        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 12000});
       }
       allEvents.unshift(d.event);
       if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
@@ -772,6 +784,38 @@ $("btnResetPrompt").onclick = async () => {
   toast("已恢复默认提示词");
 };
 
+/* ================= 玩家管理（未运行时） ================= */
+let simRunning = false;
+function renderPlayerAdmin() {
+  $("playerAdmin").innerHTML = players.map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed #eee">
+      <span class="dot" style="width:10px;height:10px;border-radius:50%;background:${p.color};display:inline-block"></span>
+      <span style="font-size:12.5px;flex:1">${p.emoji} ${p.name}</span>
+      <button class="btn" style="padding:2px 9px;font-size:11px" ${simRunning ? "disabled" : ""}
+              onclick="removePlayer('${p.name}')">移除</button>
+    </div>`).join("");
+  $("btnAddPlayer").disabled = simRunning;
+}
+window.removePlayer = async name => {
+  if (!confirm(`移除 ${name}？`)) return;
+  try {
+    const r = await fetch(`${API}/players/${encodeURIComponent(name)}`, {method:"DELETE"});
+    if (!r.ok) { const d = await r.json(); throw new Error(d.detail || "失败"); }
+    toast(`${name} 已离开`);
+    await refreshState(); loadBinds(); renderPlayerAdmin();
+  } catch (e) { toast(e.message, false); }
+};
+$("btnAddPlayer").onclick = async () => {
+  const name = $("npName").value.trim();
+  if (!name) return toast("名字不能为空", false);
+  try {
+    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂"});
+    $("npName").value = "";
+    toast(`${name} 已入住`);
+    await refreshState(); loadBinds(); renderPlayerAdmin();
+  } catch (e) { toast(e.message, false); }
+};
+
 /* ================= 记忆 ================= */
 $("btnLoadMem").onclick = async () => {
   const name = $("memPlayer").value;
@@ -800,6 +844,7 @@ async function refreshState() {
   await refreshState();
   await loadProfiles();
   await loadPrompt();
+  renderPlayerAdmin();
   connectWS();
   queryEvents();
 })();

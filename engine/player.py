@@ -69,6 +69,8 @@ class Player:
         # 出行统计（规则引擎的跨场景加权用）
         self.last_out_tick = 0
         self.last_home_tick = 0
+        # 回合制对话（由 simulation 的对话引擎驱动）
+        self._conversation = None
 
     # ------------------------------------------------------------- 感知
     def nearby_players(self, others: list["Player"], radius: int = 4) -> list["Player"]:
@@ -256,6 +258,10 @@ class Player:
 
     # ------------------------------------------------------------- tick
     def tick(self, sim: "Simulation") -> None:
+        # 对话中：位置不动、不做活动结算，说话由 Conversation 驱动
+        if self._conversation is not None and self._conversation.phase != "ended":
+            return
+
         if self.state == "moving":
             # 每 tick 走 3 格（人物移动更利落）
             for _ in range(3):
@@ -280,6 +286,9 @@ class Player:
             return
 
         if self.state == "doing":
+            # 对话类活动不结算数值效果（效果在对话结束后统一给）
+            if self.activity_key in ("chat", "love"):
+                return
             self._step_activity(sim)
 
     def _at_gate(self) -> bool:
@@ -292,8 +301,8 @@ class Player:
         return self._pending_key
 
     def _start_social(self, key: str, sim: "Simulation", t: "Player"):
-        if t.scene != self.scene or max(abs(t.x - self.x), abs(t.y - self.y)) > 2 \
-                and not world.same_place(self, t):
+        if t.scene != self.scene or (max(abs(t.x - self.x), abs(t.y - self.y)) > 2
+                                     and not world.same_place(self, t)):
             self.state = "idle"
             self._pending_key = ""
             return
@@ -303,7 +312,7 @@ class Player:
         if key == "attack":
             self._resolve_attack(sim)
         if key in ("chat", "love"):
-            sim.request_dialogue(self, t, key)
+            sim.start_conversation(self, t, key)
         if key == "gift":
             self._resolve_gift(sim, t)
 
@@ -403,20 +412,17 @@ class Player:
     def _finish_activity(self, sim: "Simulation", a: dict):
         key = self.activity_key
         # 社交/协同互动的好感结算：LLM 决定增减
-        if key in ("chat", "love", "game", "watch_tv", "work", "movie",
-                   "park", "balcony", "cook", "eat", "exercise", "build"):
+        if key in ("chat", "love"):
+            # 对话结束时 Conversation 已写记忆/好感，这里不重复处理
+            pass
+        elif key in ("game", "watch_tv", "work", "movie",
+                     "park", "balcony", "cook", "eat", "exercise", "build"):
             partners = [o for o in sim.players
                         if o is not self and o.scene == self.scene
                         and world.same_place(self, o)
                         and o.activity_key == key]
             for o in partners:
                 sim.request_affinity(self, o, key)
-        if key in ("chat", "love") and self.target_player:
-            t = self.target_player
-            # 基础好感保证（LLM 增减之外的最小值）
-            base = 2.0 if key == "chat" else 4.0
-            self.affinity[t.pid] = self.affinity.get(t.pid, 30) + base
-            t.affinity[self.pid] = t.affinity.get(self.pid, 30) + base
         self.remember(f"我完成了{a['name']}", 2)
         self.activity = None
         self.activity_key = ""

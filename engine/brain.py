@@ -198,6 +198,82 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
         return 0
 
 
+# ================================================================== 回合制对话
+CONV_TURN_TEMPLATE = """【背景】你是{self_name}，正在和{other_name}面对面{kind}。
+【你对TA的好感】{aff:.0f}/100
+【你的状态】心情{mood:.0f}/100 精力{energy:.0f}/100
+【对话记录】（"我"是你的话，"{other_name}"是TA的话）
+{history}
+
+现在轮到你说话。你可以：
+1. 回应TA说的内容——要针对TA刚才那句话，不要自说自话
+2. 结束对话离开（你不想聊了，说句告别的话）
+3. 如果TA刚才说"要走了"，你也可以挽留或跟上TA继续聊
+
+注意：不要重复自己或TA说过的原话；一句即可，15字以内。
+只输出一行 JSON：
+{{"say": "你要说的话", "act": "stay 或 leave 或 follow"}}"""
+
+CONV_KIND_CN = {"chat": "聊天", "love": "约会", "follow": "边走边聊"}
+
+# 规则模式对话库（无 API 时兜底）
+RULE_OPENERS = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
+                "最近有点累啊", "阳台的花该浇水了", "你昨晚打游戏到几点？",
+                "这条消息看到了吗", "天气真不错"]
+RULE_REPLIES = ["嗯嗯，我也是这么想的", "哈哈，确实", "有道理",
+                "然后呢？后来怎么样了", "唉，最近事情好多", "说得对",
+                "我没意见，都行", "下次一起呗"]
+RULE_CLOSERS = ["我先去忙了，回头聊", "好吧，那我先走了", "就聊到这吧，拜拜",
+                "想起来我还有事", "改天再聊"]
+
+
+def parse_conv_turn(text: str) -> dict | None:
+    """解析对话回合输出 {"say","act"}；宽容处理纯文本回答"""
+    text = (text or "").strip()
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            d = json.loads(m.group(0))
+            act = str(d.get("act", "stay")).strip().lower()
+            if act not in ("stay", "leave", "follow"):
+                act = "stay"
+            say = str(d.get("say", "")).strip()[:40]
+            if act == "stay" and not say:
+                return None
+            return {"say": say, "act": act}
+        except json.JSONDecodeError:
+            pass
+    # 纯文本：整句当作说话
+    if text and len(text) <= 40:
+        return {"say": text, "act": "stay"}
+    return None
+
+
+async def conv_turn_llm(profile: ApiProfile, model: str, self_name: str,
+                        other_name: str, kind: str, aff: float, mood: float,
+                        energy: float, history: list[tuple[str, str]],
+                        timeout: float = 25.0) -> dict:
+    """一次对话回合：模型看着完整对话历史决定说什么/是否离开。
+    失败抛 LLMError（由 Conversation 降级规则库）。"""
+    hist_lines = []
+    for speaker, line in history[-12:]:      # 最近12条，防超长
+        who = "我" if speaker == self_name else speaker
+        hist_lines.append(f"{who}：{line}")
+    history_s = "\n".join(hist_lines) if hist_lines else "（刚开始，还没有说过话）"
+    kind_cn = CONV_KIND_CN.get(kind, "聊天")
+    prompt = CONV_TURN_TEMPLATE.format(
+        self_name=self_name, other_name=other_name, kind=kind_cn,
+        aff=aff, mood=mood, energy=energy, history=history_s)
+    text = await _run_in_thread(chat, profile, model,
+                                "你在一个生活模拟游戏里扮演角色的对话，"
+                                "说话要自然口语化，符合当前语境。只输出要求的 JSON。",
+                                prompt, 0.9, 120, timeout)
+    d = parse_conv_turn(text)
+    if d is None:
+        raise LLMError(f"对话回合无法解析: {text[:80]}")
+    return d
+
+
 # ================================================================== 规则引擎
 def decide_rule(p, others: list, clock_hour: int) -> Decision:
     s = p.stats
