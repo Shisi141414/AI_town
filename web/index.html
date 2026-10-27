@@ -5,115 +5,116 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🏘️ AI 小镇</title>
 <style>
-  :root { color-scheme: light; }
+  :root { color-scheme: light; --green: #2e7d32; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
     background: #f0f2f5; color: #2c3e50;
-    display: grid; grid-template-columns: 1fr 360px;
+    display: grid; grid-template-columns: 1fr 380px;
     grid-template-rows: 56px 1fr; height: 100vh; overflow: hidden;
   }
   header {
     grid-column: 1/3; background: #fff; border-bottom: 1px solid #e0e4e8;
-    display: flex; align-items: center; padding: 0 16px; gap: 12px; z-index: 5;
+    display: flex; align-items: center; padding: 0 14px; gap: 10px; z-index: 5;
   }
-  header h1 { font-size: 18px; margin-right: auto; }
-  header h1 small { color: #888; font-weight: normal; font-size: 12px; margin-left: 8px; }
+  header h1 { font-size: 17px; margin-right: auto; }
+  header h1 small { color: #888; font-weight: normal; font-size: 12px; margin-left: 6px; }
   .btn {
     border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
-    padding: 6px 14px; cursor: pointer; font-size: 13px; transition: all .15s;
+    padding: 6px 13px; cursor: pointer; font-size: 13px; transition: all .15s;
   }
   .btn:hover { background: #f3f4f6; }
-  .btn.primary { background: #2e7d32; color: #fff; border-color: #2e7d32; }
+  .btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
   .btn.primary:hover { background: #1b5e20; }
   .btn.warn { background: #c62828; color: #fff; border-color: #c62828; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
-  select, input[type=number] {
-    border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 8px; font-size: 13px;
-  }
+  select, input[type=number] { border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 8px; font-size: 13px; }
   #clockbox {
     font-family: Consolas, monospace; background: #1a2332; color: #7ee787;
-    padding: 5px 12px; border-radius: 6px; font-size: 14px; min-width: 150px; text-align: center;
+    padding: 5px 12px; border-radius: 6px; font-size: 14px; min-width: 130px; text-align: center;
   }
-  #stage { position: relative; overflow: hidden; }
-  canvas { display: block; background: #a8d5a2; }
+  #stage { position: relative; overflow: hidden; background: #dfe8df; }
+  canvas { display: block; margin: 0 auto; }
+  /* 场景切换标签 */
+  #sceneTabs {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    display: flex; background: #fff; border-radius: 22px; box-shadow: 0 2px 10px rgba(0,0,0,.15);
+    overflow: hidden; z-index: 4;
+  }
+  #sceneTabs button {
+    border: none; background: none; padding: 8px 22px; font-size: 14px; cursor: pointer;
+    color: #666; transition: all .2s;
+  }
+  #sceneTabs button.active { background: var(--green); color: #fff; }
+  #stageTitle {
+    position: absolute; top: 12px; left: 14px; font-size: 13px; color: #555;
+    background: rgba(255,255,255,.85); padding: 4px 10px; border-radius: 6px; z-index: 4;
+  }
   /* ---------- 侧栏 ---------- */
-  aside {
-    background: #fff; border-left: 1px solid #e0e4e8;
-    display: flex; flex-direction: column; overflow: hidden;
-  }
+  aside { background: #fff; border-left: 1px solid #e0e4e8; display: flex; flex-direction: column; overflow: hidden; }
   nav { display: flex; border-bottom: 1px solid #e0e4e8; }
   nav button {
     flex: 1; padding: 10px 0; border: none; background: none; cursor: pointer;
     font-size: 13px; color: #666; border-bottom: 2px solid transparent;
   }
-  nav button.active { color: #2e7d32; border-bottom-color: #2e7d32; font-weight: bold; }
+  nav button.active { color: var(--green); border-bottom-color: var(--green); font-weight: bold; }
   .panel { flex: 1; overflow-y: auto; padding: 12px; display: none; }
   .panel.active { display: block; }
   /* 玩家卡 */
-  .pcard {
-    border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 10px;
-    cursor: pointer; transition: box-shadow .15s;
-  }
+  .pcard { border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 10px; cursor: pointer; }
   .pcard:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
   .pcard .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .pcard .head .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pcard .head .dot { width: 12px; height: 12px; border-radius: 50%; }
   .pcard .head b { font-size: 14px; }
-  .pcard .head .model { margin-left: auto; font-size: 11px; color: #888; }
+  .pcard .head .model { margin-left: auto; font-size: 10.5px; color: #888; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bar { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 3px 0; }
   .bar label { width: 34px; color: #666; }
   .bar .track { flex: 1; height: 8px; background: #eef1f4; border-radius: 4px; overflow: hidden; }
   .bar .fill { height: 100%; border-radius: 4px; transition: width .4s; }
   .bar .val { width: 34px; text-align: right; color: #999; font-family: monospace; }
   .pcard .doing { font-size: 12px; color: #555; background: #f6f8fa; border-radius: 4px; padding: 4px 8px; margin-top: 6px; }
-  .pcard .doing b { color: #2e7d32; }
+  .pcard .doing b { color: var(--green); }
+  .pcard .belong { font-size: 11px; color: #999; margin-top: 3px; }
+  /* 关系网络 */
+  #relCanvas { width: 100%; border: 1px solid #e0e4e8; border-radius: 8px; background: #fafcf9; }
   /* 日志 */
   .filters { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-  .filters select, .filters input {
-    font-size: 12px; padding: 4px 6px; border: 1px solid #d0d7de; border-radius: 5px;
-  }
-  .filters input { width: 110px; }
+  .filters select, .filters input { font-size: 12px; padding: 4px 6px; border: 1px solid #d0d7de; border-radius: 5px; }
+  .filters input { width: 90px; }
   #logList { font-size: 12.5px; }
   .ev { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; line-height: 1.5; }
   .ev .meta { color: #999; font-size: 11px; font-family: monospace; margin-right: 6px; }
-  .ev.combat .meta, .ev.combat { color: #c62828; }
+  .ev.combat, .ev.combat .meta { color: #c62828; }
   .ev.dialogue { background: #f0f7ff; }
   .ev.system { color: #666; }
   .ev.error { color: #b58900; }
-  /* 设置表单 */
+  .ev.social { color: #1565c0; }
+  /* 表单 */
   .form-row { margin-bottom: 12px; }
   .form-row label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
-  .form-row input, .form-row select {
+  .form-row input, .form-row select, .form-row textarea {
     width: 100%; padding: 7px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;
   }
+  .form-row textarea { font-family: inherit; resize: vertical; }
   .section-title { font-size: 13px; font-weight: bold; margin: 14px 0 8px; color: #444; }
   .hint { font-size: 11.5px; color: #999; line-height: 1.5; margin-top: 4px; }
-  .profile-item {
-    border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 8px;
-  }
-  .profile-item.active { border-color: #2e7d32; background: #f4faf4; }
-  .profile-item .row { display: flex; align-items: center; gap: 8px; }
+  .profile-item { border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .profile-item.active { border-color: var(--green); background: #f4faf4; }
+  .profile-item .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .profile-item .row b { font-size: 13px; }
-  .tag {
-    font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #eef1f4; color: #666;
-  }
+  .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #eef1f4; color: #666; }
   .tag.openai { background: #e8f4e8; color: #1a7f37; }
   .tag.anthropic { background: #fdeee2; color: #bc4c00; }
   .profile-item .ops { margin-left: auto; display: flex; gap: 6px; }
   .profile-item .ops .btn { padding: 3px 10px; font-size: 11px; }
   .model-bind { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-  .model-bind span { width: 60px; font-size: 12px; }
-  .model-bind input { flex: 1; }
+  .model-bind span.nm { width: 70px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-bind input { flex: 1; font-size: 12px; padding: 5px; border: 1px solid #d0d7de; border-radius: 5px; }
   .switch { position: relative; width: 38px; height: 20px; display: inline-block; }
   .switch input { opacity: 0; width: 0; height: 0; }
-  .switch .slider {
-    position: absolute; inset: 0; background: #ccc; border-radius: 20px; cursor: pointer; transition: .2s;
-  }
-  .switch .slider:before {
-    content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px;
-    background: #fff; border-radius: 50%; transition: .2s;
-  }
-  .switch input:checked + .slider { background: #2e7d32; }
+  .switch .slider { position: absolute; inset: 0; background: #ccc; border-radius: 20px; cursor: pointer; transition: .2s; }
+  .switch .slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background: var(--green); }
   .switch input:checked + .slider:before { transform: translateX(18px); }
   .mem-list { font-size: 12px; }
   .mem-list .mi { padding: 5px 8px; border-bottom: 1px dashed #eee; }
@@ -125,18 +126,40 @@
     font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99;
   }
   #toast.show { opacity: 1; }
-  /* 对话气泡 */
+  /* 气泡 */
   .bubble {
-    position: absolute; background: rgba(255,255,255,.95); border: 1px solid #ccc;
-    border-radius: 8px; padding: 3px 8px; font-size: 11px; pointer-events: none;
-    white-space: nowrap; transform: translate(-50%, -130%); box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    position: absolute; background: rgba(255,255,255,.96); border: 1px solid #bbb;
+    border-radius: 8px; padding: 3px 8px; font-size: 11.5px; pointer-events: none;
+    white-space: nowrap; transform: translate(-50%, -135%); box-shadow: 0 1px 4px rgba(0,0,0,.18);
+    z-index: 3; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* 使用指南 */
+  #guideOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50;
+    display: none; align-items: center; justify-content: center;
+  }
+  #guideOverlay.show { display: flex; }
+  #guideBox {
+    background: #fff; border-radius: 12px; width: min(680px, 92vw); max-height: 84vh;
+    display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.3);
+  }
+  #guideBox .ghead { padding: 16px 22px; border-bottom: 1px solid #eee; display: flex; align-items: center; }
+  #guideBox .ghead b { font-size: 17px; }
+  #guideBox .ghead .btn { margin-left: auto; }
+  #guideBox .gbody { padding: 18px 24px; overflow-y: auto; font-size: 13.5px; line-height: 1.75; }
+  #guideBox .gbody h3 { font-size: 14.5px; margin: 16px 0 6px; color: var(--green); }
+  #guideBox .gbody h3:first-child { margin-top: 0; }
+  #guideBox .gbody p { margin-bottom: 8px; color: #444; }
+  #guideBox .gbody .kbd {
+    background: #eef1f4; border: 1px solid #d0d7de; border-radius: 4px;
+    padding: 1px 7px; font-family: Consolas, monospace; font-size: 12px;
   }
 </style>
 </head>
 <body>
 <header>
   <h1>🏘️ AI 小镇 <small id="modeTag">规则引擎模式</small></h1>
-  <div id="clockbox">第1天 08:00</div>
+  <div id="clockbox">第1天 00:00</div>
   <button class="btn primary" id="btnStart">▶ 开始</button>
   <button class="btn" id="btnPause" disabled>⏸ 暂停</button>
   <button class="btn" id="btnStep">⏭ 单步</button>
@@ -149,19 +172,34 @@
     <option value="4">4x</option>
     <option value="8">8x</option>
   </select>
+  <button class="btn" id="btnGuide" title="使用指南">📖 指南</button>
 </header>
 
-<div id="stage"><canvas id="cv"></canvas></div>
+<div id="stage">
+  <div id="sceneTabs">
+    <button class="active" data-scene="house">🏠 室内·合租之家</button>
+    <button data-scene="town">🌤 室外·小镇</button>
+  </div>
+  <div id="stageTitle">公共装饰度：0</div>
+  <canvas id="cv"></canvas>
+</div>
 
 <aside>
   <nav>
     <button class="active" data-panel="players">居民</button>
-    <button data-panel="logs">事件日志</button>
-    <button data-panel="api">API 设置</button>
-    <button data-panel="settings">模拟设置</button>
+    <button data-panel="relations">关系网</button>
+    <button data-panel="logs">事件</button>
+    <button data-panel="api">API / 模型</button>
+    <button data-panel="settings">设置</button>
   </nav>
 
   <div class="panel active" id="panel-players"><div id="playerList"></div></div>
+
+  <div class="panel" id="panel-relations">
+    <canvas id="relCanvas" width="340" height="340"></canvas>
+    <div class="hint" style="margin-top:6px">连线颜色：红=敌意(<30) 灰=一般 蓝=友好(≥60) 绿=挚友(≥80)；粗细代表好感强度。方向 A→B 用靠 A 端更粗表示。</div>
+    <div id="relList" style="margin-top:10px;font-size:12.5px"></div>
+  </div>
 
   <div class="panel" id="panel-logs">
     <div class="filters">
@@ -174,16 +212,16 @@
         <option value="system">系统</option>
         <option value="error">异常</option>
       </select>
-      <input id="fDayFrom" type="number" min="1" placeholder="起始天" title="起始天">
-      <input id="fDayTo" type="number" min="1" placeholder="结束天" title="结束天">
-      <input id="fQ" placeholder="🔍 关键词" title="关键词">
+      <input id="fDayFrom" type="number" min="1" placeholder="起始天">
+      <input id="fDayTo" type="number" min="1" placeholder="结束天">
+      <input id="fQ" placeholder="🔍 关键词">
       <button class="btn" id="btnFilter" style="padding:4px 10px;font-size:12px">查询</button>
     </div>
     <div id="logList"></div>
   </div>
 
   <div class="panel" id="panel-api">
-    <div class="section-title">API 档案（CCswitch 风格）</div>
+    <div class="section-title">API 档案</div>
     <div id="profileList"></div>
     <button class="btn" id="btnAddProfile" style="width:100%;margin:8px 0">＋ 新增档案</button>
     <div id="profileForm" style="display:none;background:#f8f9fa;border:1px solid #e0e4e8;border-radius:8px;padding:12px">
@@ -196,49 +234,86 @@
       </div>
       <div class="form-row"><label>API 地址（Base URL）</label><input id="pfUrl" placeholder="https://api.example.com/v1"></div>
       <div class="form-row"><label>API Key</label><input id="pfKey" type="password" placeholder="sk-..."></div>
-      <div class="form-row"><label>默认模型</label><input id="pfModel" placeholder="gpt-4o-mini / glm-4.7 / deepseek-chat"></div>
+      <div class="form-row">
+        <label>默认模型</label>
+        <div style="display:flex;gap:6px">
+          <input id="pfModel" placeholder="点右侧按钮获取列表" style="flex:1">
+          <button class="btn" id="btnFetchModels" style="white-space:nowrap">📋 获取模型列表</button>
+        </div>
+        <select id="pfModelList" size="5" style="display:none;width:100%;margin-top:4px;font-size:12px"></select>
+        <div class="hint" id="fmStatus"></div>
+      </div>
       <div style="display:flex;gap:8px">
         <button class="btn primary" id="btnSaveProfile" style="flex:1">保存档案</button>
         <button class="btn" id="btnCancelProfile">取消</button>
       </div>
     </div>
+
     <div class="section-title">玩家模型绑定</div>
-    <div class="hint" style="margin-bottom:8px">所有玩家共用上方档案的 API，但可分别指定各自请求的模型——给不同角色接不同大脑，观察行为差异。</div>
+    <div class="hint" style="margin-bottom:8px">所有玩家共用一个 API 档案，但每人可指定不同模型——同一提示词，不同大脑，观察行为差异。</div>
     <div id="modelBinds"></div>
     <button class="btn" id="btnSaveBinds" style="width:100%;margin-top:8px">保存绑定</button>
   </div>
 
   <div class="panel" id="panel-settings">
+    <div class="section-title">统一提示词（所有玩家共用）</div>
+    <textarea id="sysPrompt" rows="6" style="width:100%;font-size:12.5px;padding:8px;border:1px solid #d0d7de;border-radius:6px;font-family:inherit"></textarea>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn primary" id="btnSavePrompt" style="flex:1">保存提示词</button>
+      <button class="btn" id="btnResetPrompt">恢复默认</button>
+    </div>
+    <div class="hint">修改后从下一次决策开始生效。个体差异仍来自各自的记忆与状态。</div>
+
     <div class="section-title">模拟设置</div>
     <div class="form-row" style="display:flex;align-items:center;gap:10px">
       <label class="switch"><input type="checkbox" id="setDialogue"><span class="slider"></span></label>
-      <span style="font-size:13px">聊天时 LLM 生成对白</span>
+      <span style="font-size:13px">聊天时生成对白（关闭则用内置文案）</span>
     </div>
-    <div class="hint">开启后每次聊天/恋爱额外调用一次 LLM 生成 2~4 句对话；关闭则只显示互动摘要，更省 token。</div>
-    <div class="form-row" style="margin-top:14px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
-    <div class="form-row"><label>决策超时（秒，超时自动降级规则引擎）</label><input id="setTimeout" type="number" step="1" min="5" max="120" value="25"></div>
+    <div class="form-row" style="margin-top:12px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
+    <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="120" value="25"></div>
     <button class="btn primary" id="btnSaveSettings" style="width:100%">保存设置</button>
 
-    <div class="section-title">添加玩家</div>
-    <div class="form-row"><label>名字</label><input id="npName" placeholder="新居民名"></div>
-    <div class="form-row"><label>颜色</label><input id="npColor" type="color" value="#7f8c8d" style="height:34px"></div>
-    <div class="form-row"><label>Emoji</label><input id="npEmoji" placeholder="🙂"></div>
-    <button class="btn" id="btnAddPlayer" style="width:100%">＋ 入住小镇</button>
-
     <div class="section-title">记忆查看器</div>
-    <div class="form-row">
-      <select id="memPlayer" style="width:100%"></select>
-    </div>
+    <div class="form-row"><select id="memPlayer" style="width:100%"></select></div>
     <button class="btn" id="btnLoadMem" style="width:100%">读取记忆流</button>
     <div class="mem-list" id="memList" style="margin-top:10px"></div>
   </div>
 </aside>
 
+<!-- 使用指南 -->
+<div id="guideOverlay">
+  <div id="guideBox">
+    <div class="ghead"><b>📖 AI 小镇 · 使用指南</b><button class="btn" onclick="closeGuide()">✕ 关闭</button></div>
+    <div class="gbody">
+      <h3>这是什么？</h3>
+      <p>一座由 AI 居民自主生活的合租之家 + 小镇。每个居民由一个大模型扮演，共享同一份提示词，但拥有各自的记忆、数值状态和人际关系——所以他们会表现出不同的性格。</p>
+      <h3>30 秒上手</h3>
+      <p>① 点顶部的 <span class="kbd">▶ 开始</span>，居民们先给自己起名字（若已配置 API）；② 看着他们吃饭、上班、打游戏、交朋友；③ 中途随时可 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速 / <span class="kbd">⟲ 重置</span>。</p>
+      <h3>两个场景</h3>
+      <p>地图上方有两个标签页：<b>室内·合租之家</b>（5 间卧室、客厅、厨房、餐厅、两个卫生间、洗衣区、大阳台）和<b>室外·小镇</b>（商店、公园、办公楼、电影院、健身房、医院等）。居民从东侧大门出入；两个场景用不同比例尺渲染。</p>
+      <h3>接入大模型</h3>
+      <p>不配置 API 时居民由内置规则引擎驱动（也能玩）。想要「真 AI」：</p>
+      <p>① 侧栏 <b>API / 模型</b> → 新增档案：填 Base URL、API Key，选上游格式；<br>
+      ② 点 <span class="kbd">📋 获取模型列表</span> 直接拉取该网关可用模型，点选即可，不用手填；<br>
+      ③ 保存后点「测试」验证连通，然后「启用」；<br>
+      ④ 在「玩家模型绑定」里给每个居民指定各自模型——比如五个居民分别用 DeepSeek / GLM / Qwen / ERNIE / MiniMax，观察他们的性格差异。</p>
+      <h3>社交机制</h3>
+      <p>居民一起打游戏、吃饭、工作有<b>协同加成</b>（效果随人数提升），但好感度会调制加成——关系差的人一起做事反而互相拖累。每次互动后，模型自己决定好感变化多少（-5~+5），送鲜花/盆栽能大幅提升好感。在「关系网」面板可以看到实时的好感网络图。</p>
+      <h3>生活循环</h3>
+      <p>饱食度会持续下降，归零开始掉血；血量归零会被送医并扣 30 元；没钱要去办公楼/田地/施工地打工；睡觉恢复精力，夜间睡眠效果更好。居民可以去商店买<b>鲜花💐/盆栽🪴</b>布置自己的房间或公共区域（持续提升心情），也可以送给心上人。</p>
+      <h3>观察工具</h3>
+      <p><b>居民</b>面板：每个人的数值、当前活动、持有物品；<b>关系网</b>：好感网络图；<b>事件</b>：全部日志（按天/类型/关键词过滤，含 AI 决策理由和对白）；<b>设置</b>：编辑统一提示词、读任意居民的记忆流。</p>
+      <h3>省 token 技巧</h3>
+      <p>「聊天时生成对白」关闭后，对话改用内置文案，只剩决策调用 LLM。速度调快（8x）会让单位时间内的决策更密集，token 消耗也随之上升。</p>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 "use strict";
-/* ================= 基础工具 ================= */
+/* ================= 工具 ================= */
 const $ = id => document.getElementById(id);
 const API = "/api";
 async function jpost(url, body) {
@@ -253,59 +328,92 @@ async function jput(url, body) {
 async function jget(url) { return (await fetch(url)).json(); }
 function toast(msg, ok=true) {
   const t = $("toast"); t.textContent = msg; t.style.background = ok ? "rgba(30,30,30,.92)" : "#c62828";
-  t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2200);
+  t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2400);
 }
 
-/* ================= Canvas 地图 ================= */
-const cv = $("cv"), ctx = cv.getContext("2d");
-const TILE = 26;
-let MAP = [], MAPW = 0, MAPH = 0, FAC = {};
+/* ================= 场景与地图 ================= */
+let curScene = "house";
+let MAPS = {house: null, town: null};      // rows
 let players = [], bubbles = [];
+let decorCommon = 0, identityPhase = false;
 
+const TILE_HOUSE = 30, TILE_TOWN = 22;     // 室内比例尺更大
 const TILE_STYLE = {
-  ".": ["#a8d5a2", ""], "#": ["#c8c0b4", ""], "T": ["#5d8f4e", "🌲"],
-  "W": ["#6ab7d8", ""], "H": ["#d9b382", "🏠"], "C": ["#e8a87c", "☕"],
-  "K": ["#d4a373", "🍳"], "G": ["#b5838d", "🏋"], "V": ["#8e9aaf", "📺"],
-  "P": ["#95b8a6", "🪑"], "B": ["#e0e0e0", "🛏"], "S": ["#f2c57c", "🛒"],
-  "F": ["#c9a66b", "🌾"], "O": ["#a3b18a", "💼"], "~": ["#b08968", "🧱"],
-  "I": ["#e8a87c", ""], "X": ["#8d99ae", "💥"],
+  ".": ["#e8e4d8", ""], "#": ["#c8c0b4", ""], "T": ["#5d8f4e", "🌲"],
+  "W": ["#6ab7d8", "🌊"], "■": ["#8a8578", ""],
+  "h": ["#d9c9b0", "🛏"], "L": ["#c9d6c8", "🛋"], "K": ["#e3c9a8", "🍳"],
+  "D": ["#e8d8c3", "🍽"], "b": ["#b8d4d8", "🚻"], "a": ["#a8d5a2", "🌿"],
+  "w": ["#d4d4e0", "🧺"], "E": ["#b9985f", "🚪"],
+  "S": ["#f2c57c", "🛒"], "P": ["#95b8a6", "🌳"], "O": ["#a3b18a", "🏢"],
+  "M": ["#b8a7d8", "🎬"], "G": ["#b5838d", "🏋"], "C": ["#e8a87c", "☕"],
+  "F": ["#c9a66b", "🌾"], "~": ["#b08968", "🧱"], "B": ["#e0e0e0", "🏥"],
+  "X": ["#8d99ae", "💥"],
 };
+const cv = $("cv"), ctx = cv.getContext("2d");
+
+function tilePx() { return curScene === "house" ? TILE_HOUSE : TILE_TOWN; }
+
 function resize() {
-  cv.width = MAPW * TILE; cv.height = MAPH * TILE;
+  const rows = MAPS[curScene]; if (!rows) return;
+  const n = rows.length, tp = tilePx();
+  cv.width = n * tp; cv.height = n * tp;
   const stage = $("stage");
-  const scale = Math.min(stage.clientWidth / cv.width, (stage.clientHeight) / cv.height, 1.6);
-  cv.style.width = (cv.width * scale) + "px";
-  cv.style.height = (cv.height * scale) + "px";
+  const scale = Math.min((stage.clientWidth - 20) / cv.width, (stage.clientHeight - 60) / cv.height, 1.8);
+  cv.style.width = Math.round(cv.width * scale) + "px";
+  cv.style.height = Math.round(cv.height * scale) + "px";
 }
 window.addEventListener("resize", resize);
 
 function draw() {
-  if (!MAP.length) return;
-  for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
-    const ch = MAP[y][x], st = TILE_STYLE[ch] || TILE_STYLE["."];
-    ctx.fillStyle = st[0]; ctx.fillRect(x*TILE, y*TILE, TILE, TILE);
+  const rows = MAPS[curScene]; if (!rows) return;
+  const tp = tilePx(), n = rows.length;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const ch = rows[y][x], st = TILE_STYLE[ch] || TILE_STYLE["."];
+    ctx.fillStyle = st[0]; ctx.fillRect(x*tp, y*tp, tp, tp);
     if (st[1]) {
-      ctx.font = "15px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(st[1], x*TILE+TILE/2, y*TILE+TILE/2+1);
+      ctx.font = (tp*0.55|0) + "px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(st[1], x*tp+tp/2, y*tp+tp/2+1);
     }
   }
-  // 玩家
+  // 只画当前场景的玩家
   for (const p of players) {
-    const px = p.x*TILE, py = p.y*TILE;
-    ctx.beginPath(); ctx.arc(px+TILE/2, py+TILE/2, 10, 0, Math.PI*2);
+    if (p.scene !== curScene) continue;
+    const px = p.x*tp, py = p.y*tp, r = Math.max(11, tp*0.42);
+    // 影子
+    ctx.beginPath(); ctx.ellipse(px+tp/2, py+tp*0.82, r*0.8, r*0.3, 0, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(0,0,0,.15)"; ctx.fill();
+    // 身体
+    ctx.beginPath(); ctx.arc(px+tp/2, py+tp*0.45, r, 0, Math.PI*2);
     ctx.fillStyle = p.color; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    ctx.font = "13px serif"; ctx.textAlign = "center";
-    ctx.fillText(p.emoji, px+TILE/2, py+TILE/2+1);
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillStyle = "#222"; ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 3;
-    ctx.strokeText(p.name, px+TILE/2, py-4); ctx.fillText(p.name, px+TILE/2, py-4);
-    // 活动emoji
+    ctx.lineWidth = 2.5; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.font = (r*1.2|0) + "px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(p.emoji, px+tp/2, py+tp*0.45+1);
+    // 名字
+    ctx.font = "bold " + Math.max(10, tp*0.34|0) + "px sans-serif";
+    ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 3;
+    ctx.strokeText(p.name, px+tp/2, py-4);
+    ctx.fillStyle = "#222"; ctx.fillText(p.name, px+tp/2, py-4);
+    // 活动 emoji 徽章
     if (p.activity_emoji) {
-      ctx.font = "14px serif";
-      ctx.fillText(p.activity_emoji, px+TILE/2+12, py+TILE/2-10);
+      ctx.font = (tp*0.5|0) + "px serif";
+      ctx.fillText(p.activity_emoji, px+tp/2+r*0.95, py+tp*0.45-r*0.95);
     }
   }
+}
+
+/* ================= 场景切换 ================= */
+document.querySelectorAll("#sceneTabs button").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll("#sceneTabs button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    curScene = btn.dataset.scene;
+    if (!MAPS[curScene]) loadMap(curScene);
+    resize(); draw();
+  };
+});
+async function loadMap(scene) {
+  const m = await jget(`${API}/map?scene=${scene}`);
+  MAPS[scene] = m.rows;
 }
 
 /* ================= 玩家面板 ================= */
@@ -320,29 +428,80 @@ function renderPlayers() {
       const pct = k === "money" ? Math.min(100, v/2) : v;
       return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(0)}</span></div>`;
     }).join("");
+    const items = Object.entries(p.items||{}).filter(([,v])=>v>0)
+      .map(([k,v]) => ({flower:"💐",plant:"🪴"}[k]+"×"+v)).join(" ");
+    const decor = (p.decor_room||0) > 0 ? ` · 🌸装饰${p.decor_room.toFixed(0)}` : "";
     const doing = p.activity
       ? `<div class="doing">${p.activity_emoji} 正在<b>${p.activity}</b>${p.target_name ? " → " + p.target_name : ""}</div>`
       : `<div class="doing">💭 ${p.state === "deciding" ? "思考中..." : (p.plan || "闲站着")}</div>`;
-    return `<div class="pcard" data-name="${p.name}">
-      <div class="head"><span class="dot" style="background:${p.color}"></span><b>${p.emoji} ${p.name}</b><span class="model">${p.model ? "🧠"+p.model : "规则引擎"}</span></div>
-      ${bars}${doing}</div>`;
+    const sceneTag = p.scene === "house" ? "🏠" : "🌤";
+    return `<div class="pcard">
+      <div class="head"><span class="dot" style="background:${p.color}"></span><b>${p.emoji} ${p.name}</b>
+        <span class="model">${p.model ? "🧠"+p.model.split("/").pop() : "规则"}</span></div>
+      ${bars}${doing}
+      <div class="belong">${sceneTag} ${p.home}${decor}${items ? " · " + items : ""}</div>
+    </div>`;
   }).join("");
-  // 记忆查看器下拉同步
   const sel = $("memPlayer");
-  sel.innerHTML = players.map(p => `<option>${p.name}</option>`).join("");
+  if (sel) sel.innerHTML = players.map(p => `<option>${p.name}</option>`).join("");
+}
+
+/* ================= 关系网络 ================= */
+function drawRelations() {
+  const c = $("relCanvas"), g = c.getContext("2d");
+  g.clearRect(0, 0, c.width, c.height);
+  const nodes = players, n = nodes.length;
+  if (!n) return;
+  const cx = c.width/2, cy = c.height/2, R = Math.min(cx, cy) - 52;
+  const pos = nodes.map((_, i) => {
+    const ang = -Math.PI/2 + i * 2*Math.PI/n;
+    return [cx + R*Math.cos(ang), cy + R*Math.sin(ang)];
+  });
+  // 边
+  for (let i = 0; i < n; i++) for (let j = i+1; j < n; j++) {
+    const ab = nodes[i].affinity[nodes[j].name], ba = nodes[j].affinity[nodes[i].name];
+    if (ab === undefined && ba === undefined) continue;
+    const a2 = (ab ?? 50), b2 = (ba ?? 50);
+    const avg = (a2 + b2) / 2;
+    const color = avg >= 80 ? "#27ae60" : avg >= 60 ? "#3498db" : avg < 30 ? "#c0392b" : "#95a5a6";
+    const w = 0.8 + Math.abs(avg - 50) / 25;
+    g.beginPath(); g.moveTo(...pos[i]); g.lineTo(...pos[j]);
+    g.strokeStyle = color; g.lineWidth = Math.min(4, w); g.globalAlpha = .75; g.stroke(); g.globalAlpha = 1;
+    // 中点数值
+    const mx = (pos[i][0]+pos[j][0])/2, my = (pos[i][1]+pos[j][1])/2;
+    g.font = "bold 10px monospace"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = color; g.fillText(avg.toFixed(0), mx, my);
+  }
+  // 节点
+  nodes.forEach((p, i) => {
+    const [x, y] = pos[i];
+    g.beginPath(); g.arc(x, y, 16, 0, Math.PI*2);
+    g.fillStyle = p.color; g.fill(); g.lineWidth = 2.5; g.strokeStyle = "#fff"; g.stroke();
+    g.font = "14px serif"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = "#fff"; g.fillText(p.emoji, x, y+1);
+    g.font = "bold 11.5px sans-serif"; g.fillStyle = "#333";
+    g.fillText(p.name, x, y + 27);
+  });
+  // 边明细列表
+  const rows = [];
+  for (let i = 0; i < n; i++) for (let j = i+1; j < n; j++) {
+    const ab = nodes[i].affinity[nodes[j].name], ba = nodes[j].affinity[nodes[i].name];
+    if (ab === undefined && ba === undefined) continue;
+    rows.push(`<div class="ev"><span class="meta"></span>${nodes[i].name} ⇄ ${nodes[j].name}：
+      ${ab!==undefined ? ab.toFixed(0) : "?"} / ${ba!==undefined ? ba.toFixed(0) : "?"}</div>`);
+  }
+  $("relList").innerHTML = rows.join("") || '<div class="hint">还没有人际互动</div>';
 }
 
 /* ================= 日志 ================= */
 let allEvents = [];
 function renderEvents(evs) {
   const list = $("logList");
-  const top = list.scrollTop;
-  const html = evs.slice(0, 300).map(e => {
-    const cls = ["combat","dialogue","system","error"].includes(e.type) ? e.type : "";
+  const html = (evs || allEvents).slice(0, 300).map(e => {
+    const cls = ["combat","dialogue","system","error","social"].includes(e.type) ? e.type : "";
     return `<div class="ev ${cls}"><span class="meta">D${e.day} ${e.clock}</span>${e.text}</div>`;
   }).join("");
-  list.innerHTML = html || '<div style="color:#999;padding:20px;text-align:center">还没有事件，点「▶ 开始」让小镇动起来</div>';
-  list.scrollTop = 0;
+  list.innerHTML = html || '<div style="color:#999;padding:20px;text-align:center">还没有事件</div>';
 }
 async function queryEvents() {
   const params = new URLSearchParams();
@@ -362,18 +521,21 @@ function connectWS() {
     const d = JSON.parse(msg.data);
     if (d.type === "tick") {
       players = d.players;
+      decorCommon = d.decor_common;
+      identityPhase = d.identity_phase;
       $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
-      $("modeTag").textContent = d.running ? "运行中" : "已暂停";
+      $("modeTag").textContent = identityPhase ? "居民起名中…" : (d.running ? "运行中" : "已暂停");
+      $("stageTitle").textContent = `公共装饰度：${(decorCommon||0).toFixed(0)} · ${players.filter(p=>p.scene===curScene).length} 人在此场景`;
       renderPlayers(); draw();
+      if ($("panel-relations").classList.contains("active")) drawRelations();
       if (d.events && d.events.length) {
         allEvents = [...d.events, ...allEvents].slice(0, 500);
         if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
       }
     } else if (d.type === "dialogue") {
-      // 展示对话气泡 8 秒
       for (const ln of d.lines) {
         const m = ln.match(/^(.+?):\s*(.+)$/);
-        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 8000});
+        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 9000});
       }
       allEvents.unshift(d.event);
       if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
@@ -385,34 +547,42 @@ function renderBubbles() {
   document.querySelectorAll(".bubble").forEach(b => b.remove());
   const now = Date.now();
   bubbles = bubbles.filter(b => b.until > now);
+  const rect = cv.getBoundingClientRect();
+  const scale = cv.width / rect.width;
+  const tp = tilePx();
   for (const b of bubbles) {
-    const p = players.find(p => p.name === b.name);
+    const p = players.find(p => p.name === b.name && p.scene === curScene);
     if (!p) continue;
     const el = document.createElement("div");
-    el.className = "bubble"; el.textContent = `${b.name}: ${b.text}`;
-    const scale = cv.width / cv.getBoundingClientRect().width;
-    el.style.left = ((p.x+0.5)*TILE/scale) + "px";
-    el.style.top = ((p.y)*TILE/scale) + "px";
+    el.className = "bubble"; el.textContent = b.text;
+    el.style.left = (cv.offsetLeft + (p.x+0.5)*tp/scale) + "px";
+    el.style.top = (cv.offsetTop + p.y*tp/scale) + "px";
     $("stage").appendChild(el);
   }
 }
-setInterval(renderBubbles, 500);
+setInterval(renderBubbles, 400);
 
-/* ================= 控制按钮 ================= */
+/* ================= 控制 ================= */
 $("btnStart").onclick = async () => { await jpost(`${API}/control`, {cmd:"start"}); setRunning(true); };
 $("btnPause").onclick = async () => { await jpost(`${API}/control`, {cmd:"pause"}); setRunning(false); };
 $("btnStep").onclick = async () => { await jpost(`${API}/control`, {cmd:"step"}); };
 $("btnReset").onclick = async () => {
-  if (!confirm("确定重置整个世界？所有进度清零。")) return;
+  if (!confirm("重置世界？身份阶段会重新进行（模型会重新起名）。")) return;
   await jpost(`${API}/control`, {cmd:"reset"});
-  location.reload();
+  MAPS = {house:null, town:null};
+  await loadMap(curScene); resize();
+  allEvents = []; players = [];
+  toast("已重置"); refreshState();
 };
 $("speedSel").onchange = e => jpost(`${API}/control`, {cmd:"speed", speed:+e.target.value});
-function setRunning(r) {
-  $("btnStart").disabled = r; $("btnPause").disabled = !r;
-}
+function setRunning(r) { $("btnStart").disabled = r; $("btnPause").disabled = !r; }
 
-/* ================= Tab 切换 ================= */
+/* ================= 指南 ================= */
+$("btnGuide").onclick = () => $("guideOverlay").classList.add("show");
+window.closeGuide = () => $("guideOverlay").classList.remove("show");
+$("guideOverlay").onclick = e => { if (e.target.id === "guideOverlay") closeGuide(); };
+
+/* ================= Tab ================= */
 document.querySelectorAll("nav button").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
@@ -420,11 +590,12 @@ document.querySelectorAll("nav button").forEach(btn => {
     btn.classList.add("active");
     $("panel-" + btn.dataset.panel).classList.add("active");
     if (btn.dataset.panel === "logs") renderEvents(allEvents);
+    if (btn.dataset.panel === "relations") drawRelations();
   };
 });
 
-/* ================= API 档案管理 ================= */
-let profiles = [], activeProfile = null, editingProfile = null;
+/* ================= 档案 ================= */
+let profiles = [], activeProfile = null;
 async function loadProfiles() {
   const d = await jget(`${API}/profiles`);
   profiles = d.profiles; activeProfile = d.active;
@@ -434,13 +605,13 @@ async function loadProfiles() {
         <b>${p.name}</b>
         <span class="tag ${p.format}">${p.format}</span>
         <div class="ops">
-          ${p.id !== activeProfile ? `<button class="btn" onclick="activateProfile('${p.id}')">启用</button>` : '<span style="color:#2e7d32;font-size:11px">✓ 当前</span>'}
+          ${p.id !== activeProfile ? `<button class="btn" onclick="activateProfile('${p.id}')">启用</button>` : '<span style="color:var(--green);font-size:11px">✓ 当前</span>'}
           <button class="btn" onclick="testProfile('${p.id}')">测试</button>
           <button class="btn" onclick="delProfile('${p.id}')">删除</button>
         </div>
       </div>
-      <div style="font-size:11px;color:#999;margin-top:4px">${p.base_url} · 模型 ${p.default_model || "-"}</div>
-    </div>`).join("") || '<div class="hint">还没有档案。新增一个，填入你的 API 网关地址和 Key，小镇就会接入大模型大脑。</div>';
+      <div style="font-size:11px;color:#999;margin-top:4px">${p.base_url} · 默认 ${p.default_model || "-"}</div>
+    </div>`).join("") || '<div class="hint">还没有档案。新增一个，填入网关地址和 Key，小镇居民就会接入大模型。</div>';
   await loadBinds();
 }
 window.activateProfile = async id => {
@@ -448,7 +619,7 @@ window.activateProfile = async id => {
   toast("已切换档案"); loadProfiles(); refreshState();
 };
 window.testProfile = async id => {
-  toast("测试中...");
+  toast("测试中（可能需10~20秒）…");
   const r = await jpost(`${API}/profiles/test`, {id});
   toast(r.message, r.ok);
 };
@@ -457,7 +628,10 @@ window.delProfile = async id => {
   await fetch(`${API}/profiles/${id}`, {method:"DELETE"});
   loadProfiles();
 };
-$("btnAddProfile").onclick = () => { $("profileForm").style.display = "block"; };
+$("btnAddProfile").onclick = () => {
+  $("profileForm").style.display = "block";
+  $("pfModelList").style.display = "none";
+};
 $("btnCancelProfile").onclick = () => { $("profileForm").style.display = "none"; };
 $("btnSaveProfile").onclick = async () => {
   const body = {
@@ -472,12 +646,34 @@ $("btnSaveProfile").onclick = async () => {
   toast("档案已保存"); loadProfiles();
 };
 
+/* --- 获取模型列表 --- */
+$("btnFetchModels").onclick = async () => {
+  const url = $("pfUrl").value.trim(), key = $("pfKey").value.trim(), fmt = $("pfFormat").value;
+  if (!url || !key) return toast("请先填写 API 地址和 Key", false);
+  $("fmStatus").textContent = "获取中…";
+  // 临时保存一个草稿档案来走代理（用draft前缀，保存后删除）——更简单：直接传参查询
+  const r = await fetch(`${API}/models?base_url=${encodeURIComponent(url)}&api_key=${encodeURIComponent(key)}&format=${fmt}`).catch(()=>null);
+  let d = null;
+  if (r && r.ok) d = await r.json();
+  if (!d || !d.ok) {
+    $("fmStatus").textContent = d ? ("获取失败: " + (d.message||"").slice(0,80)) : "请求失败";
+    $("pfModelList").style.display = "none";
+    return;
+  }
+  $("fmStatus").textContent = `获取到 ${d.count} 个模型，点击选择：`;
+  const sel = $("pfModelList");
+  sel.innerHTML = d.models.map(m => `<option>${m}</option>`).join("");
+  sel.style.display = "block";
+  sel.onchange = () => { $("pfModel").value = sel.value; };
+  toast(`获取到 ${d.count} 个模型`);
+};
+
 /* ================= 模型绑定 ================= */
 async function loadBinds() {
   const d = await jget(`${API}/config`);
-  $("modelBinds").innerHTML = players.map(p => `
-    <div class="model-bind"><span>${p.emoji}${p.name}</span>
-      <input data-player="${p.name}" value="${d.player_models[p.name] || ""}" placeholder="留空=用档案默认模型">
+  $("modelBinds").innerHTML = (d.players||[]).map(p => `
+    <div class="model-bind"><span class="nm" title="${p.pid}">${p.name}</span>
+      <input data-pid="${p.pid}" value="${p.model || ""}" placeholder="留空=默认模型" list="modelHint">
     </div>`).join("");
   $("setDialogue").checked = d.settings.dialogue_generation;
   $("setTemp").value = d.settings.temperature;
@@ -485,7 +681,7 @@ async function loadBinds() {
 }
 $("btnSaveBinds").onclick = async () => {
   const binds = {};
-  document.querySelectorAll("#modelBinds input").forEach(i => binds[i.dataset.player] = i.value.trim());
+  document.querySelectorAll("#modelBinds input").forEach(i => binds[i.dataset.pid] = i.value.trim());
   await jput(`${API}/config`, {player_models: binds});
   toast("模型绑定已保存"); refreshState();
 };
@@ -497,16 +693,27 @@ $("btnSaveSettings").onclick = async () => {
   });
   toast("设置已保存");
 };
-$("btnAddPlayer").onclick = async () => {
-  const name = $("npName").value.trim();
-  if (!name) return toast("名字不能为空", false);
-  try {
-    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂"});
-    $("npName").value = ""; toast(`${name} 已入住`); refreshState(); loadBinds();
-  } catch (e) { toast(e.message, false); }
+
+/* ================= 提示词 ================= */
+async function loadPrompt() {
+  const d = await jget(`${API}/prompt`);
+  $("sysPrompt").value = d.system_prompt;
+  $("sysPrompt").dataset.default = d.default_prompt;
+}
+$("btnSavePrompt").onclick = async () => {
+  await jput(`${API}/prompt`, {system_prompt: $("sysPrompt").value});
+  toast("提示词已保存，下次决策生效");
 };
+$("btnResetPrompt").onclick = async () => {
+  $("sysPrompt").value = $("sysPrompt").dataset.default || "";
+  await jput(`${API}/prompt`, {system_prompt: ""});
+  toast("已恢复默认提示词");
+};
+
+/* ================= 记忆 ================= */
 $("btnLoadMem").onclick = async () => {
   const name = $("memPlayer").value;
+  if (!name) return;
   const ms = await jget(`${API}/players/${name}/memories`);
   $("memList").innerHTML = ms.map(m =>
     `<div class="mi"><span class="t">[D${m.day}·${m.tick}] ⭐${m.importance}</span><br>${m.content}</div>`
@@ -518,17 +725,19 @@ $("btnFilter").onclick = queryEvents;
 async function refreshState() {
   const d = await jget(`${API}/state`);
   players = d.players;
+  identityPhase = d.identity_phase;
   $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
-  $("modeTag").textContent = d.llm_mode ? `LLM模式·${d.active_profile}` : "规则引擎模式";
+  $("modeTag").textContent = d.identity_phase ? "居民起名中…"
+    : (d.llm_mode ? `LLM·${d.active_profile}` : "规则引擎模式");
   setRunning(d.running);
   renderPlayers(); draw();
 }
 (async function init() {
-  const m = await jget(`${API}/map`);
-  MAP = m.rows; MAPW = m.width; MAPH = m.height; FAC = m.facilities;
+  await loadMap("house");
   resize(); draw();
   await refreshState();
   await loadProfiles();
+  await loadPrompt();
   connectWS();
   queryEvents();
 })();

@@ -1,27 +1,19 @@
-"""FastAPI 服务层 —— REST 控制 + WebSocket 广播 + API 档案管理
+"""FastAPI 服务层 v2 —— 双场景 + 模型列表 + 提示词编辑
 
-端点一览：
-  GET  /                     前端页面
-  GET  /api/state            全量快照（玩家+时钟+事件）
-  POST /api/control          开始/暂停/继续/停止/速度/单步
-  GET  /api/events           事件日志（支持 day 范围、type 筛选、分页）
-  GET/POST/DELETE /api/profiles   API 档案 CRUD（CCswitch 风格）
-  POST /api/profiles/test    连接测试
-  POST /api/profiles/active  切换激活档案
-  GET/PUT /api/config        设置（对白开关/温度/超时/玩家→模型绑定）
-  POST /api/players          动态添加玩家
-  DELETE /api/players/{name} 移除玩家
-  GET  /api/players/{name}/memories  查看某玩家记忆流（后台观察）
-  WS   /ws                   实时推送（每 tick 快照 + 事件 + 对白）
+新增端点：
+  GET  /api/models?profile_id=  获取该档案可用模型列表（代理网关 /models）
+  GET/PUT /api/prompt           统一提示词读写
+  GET  /api/map?scene=          双场景地图
+  GET  /api/relationships       好感关系网络数据
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from pathlib import Path
 
+import requests as req_lib
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -29,8 +21,8 @@ from pydantic import BaseModel
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
+from engine import brain, world
 from engine import simulation as sim_mod
-from engine import world
 from engine.llm import LLMError, test_profile
 from engine.models import ApiProfile, AppConfig, Settings
 
@@ -38,11 +30,11 @@ ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.json"
 WEB_DIR = ROOT / "web"
 
-app = FastAPI(title="AI 小镇")
+app = FastAPI(title="AI 小镇 v2")
 
-# ---------------------------------------------------------------- 全局状态
 sim = sim_mod.Simulation()
 config = AppConfig()
+_identity_started = False
 
 
 def load_config() -> None:
@@ -60,33 +52,36 @@ def save_config() -> None:
 
 
 def _sync_from_config() -> None:
-    """把配置应用到模拟器：激活档案 + 每玩家模型绑定"""
     prof = next((p for p in config.profiles if p.id == config.active_profile_id), None)
     sim.profile = prof
     sim.settings = config.settings
-    for p in sim.players:
-        p.model = config.player_models.get(p.name, "")
+    sim.system_prompt = config.system_prompt
+    sim.model_of = dict(config.player_models)
 
 
 @app.on_event("startup")
 async def startup() -> None:
+    global _identity_started
     load_config()
     if not sim.players:
-        sim.spawn_preset_players()
+        sim.spawn_players(5)
         _sync_from_config()
-    sim.log("system", "🏘️ 小镇服务启动，5 位居民已就位")
+    sim.log("system", "🏘️ 小镇服务启动")
 
 
-# ================================================================ REST：控制
+# ================================================================ 控制
 class ControlCmd(BaseModel):
-    cmd: str            # start/pause/resume/stop/step/speed/reset
+    cmd: str
     speed: float | None = None
 
 
 @app.post("/api/control")
 async def control(c: ControlCmd):
-    global sim                     # reset 分支会整体替换模拟器实例
+    global sim, _identity_started
     if c.cmd == "start":
+        if not _identity_started:
+            _identity_started = True
+            asyncio.get_event_loop().create_task(_start_with_identity())
         if not sim.running:
             sim.log("system", "▶ 模拟开始")
             sim.start()
@@ -96,7 +91,10 @@ async def control(c: ControlCmd):
         sim.resume()
     elif c.cmd == "stop":
         sim.stop()
+        _identity_started = False
     elif c.cmd == "step":
+        if sim.identity_phase:
+            return {"ok": False, "note": "身份阶段进行中，请稍候"}
         await sim.step_tick()
     elif c.cmd == "speed":
         if c.speed:
@@ -105,24 +103,35 @@ async def control(c: ControlCmd):
     elif c.cmd == "reset":
         sim.stop()
         sim = sim_mod.Simulation()
-        sim.spawn_preset_players()
         _sync_from_config()
+        sim.spawn_players(5)
+        sim.model_of = dict(config.player_models)
+        _identity_started = False
+        sim.log("system", "🔄 世界已重置")
         globals()["_last_event_id"] = 0
         globals()["_dialogue_sent"] = 0
-        sim.log("system", "🔄 世界已重置，5 位居民重新入住")
-        return {"ok": True, "note": "已重置"}
+        return {"ok": True, "note": "已重置（身份阶段将重新进行）"}
     else:
         raise HTTPException(400, f"未知命令 {c.cmd}")
     return {"ok": True, "running": sim.running, "speed": sim.speed,
-            "day": sim.day, "clock": sim.clock}
+            "day": sim.day, "clock": sim.clock,
+            "identity_phase": sim.identity_phase}
+
+
+async def _start_with_identity():
+    """首次开始：先跑身份阶段再进入主循环"""
+    await sim.run_identity_phase()
 
 
 @app.get("/api/state")
 async def state():
+    name_of = {p.pid: p.name for p in sim.players}
     return {
         "running": sim.running, "speed": sim.speed,
         "day": sim.day, "tick": sim.tick, "clock": sim.clock,
-        "players": [p.snapshot().model_dump() for p in sim.players],
+        "identity_phase": sim.identity_phase,
+        "decor_common": sim.decor_common,
+        "players": [p.snapshot(name_of).model_dump() for p in sim.players],
         "active_profile": (sim.profile.name if sim.profile else None),
         "llm_mode": bool(sim.profile and sim.profile.api_key),
     }
@@ -132,7 +141,6 @@ async def state():
 async def events(day_from: int | None = None, day_to: int | None = None,
                  type_: str | None = None, q: str | None = None,
                  after_id: int = 0, limit: int = 200):
-    """事件日志查询：支持天数范围、类型、关键词、增量拉取"""
     out = []
     for e in reversed(sim.events):
         if e.id <= after_id:
@@ -140,14 +148,45 @@ async def events(day_from: int | None = None, day_to: int | None = None,
         if day_from and e.day < day_from: continue
         if day_to and e.day > day_to: continue
         if type_ and e.type != type_: continue
-        if q and q not in e.text and q not in " ".join(e.players): continue
+        if q and q not in e.text: continue
         out.append(e.model_dump())
         if len(out) >= limit:
             break
     return out
 
 
-# ================================================================ REST：档案
+# ================================================================ 地图
+@app.get("/api/map")
+async def map_info(scene: str = "house"):
+    if scene not in ("house", "town"):
+        raise HTTPException(400, "scene 必须是 house 或 town")
+    return {"scene": scene, "rows": ["".join(r) for r in world.grid(scene)],
+            "width": world.SIZE, "height": world.SIZE,
+            "facilities": world.FACILITY_CHARS}
+
+
+# ================================================================ 关系网络
+@app.get("/api/relationships")
+async def relationships():
+    """好感网络：节点=玩家，边=互相好感（各方向的平均）"""
+    nodes = [{"pid": p.pid, "name": p.name, "color": p.color, "emoji": p.emoji}
+             for p in sim.players]
+    edges = []
+    for i, a in enumerate(sim.players):
+        for b in sim.players[i + 1:]:
+            ab = a.affinity.get(b.pid)
+            ba = b.affinity.get(a.pid)
+            if ab is None and ba is None:
+                continue
+            avg = ((ab if ab is not None else 50) + (ba if ba is not None else 50)) / 2
+            edges.append({"a": a.pid, "b": b.pid, "a_name": a.name, "b_name": b.name,
+                          "ab": round(ab, 1) if ab is not None else None,
+                          "ba": round(ba, 1) if ba is not None else None,
+                          "avg": round(avg, 1)})
+    return {"nodes": nodes, "edges": edges, "decor_common": sim.decor_common}
+
+
+# ================================================================ 档案
 class ProfileIn(BaseModel):
     name: str
     format: str = "openai"
@@ -158,10 +197,8 @@ class ProfileIn(BaseModel):
 
 @app.get("/api/profiles")
 async def list_profiles():
-    return {
-        "profiles": [p.model_dump() for p in config.profiles],
-        "active": config.active_profile_id,
-    }
+    return {"profiles": [p.model_dump() for p in config.profiles],
+            "active": config.active_profile_id}
 
 
 @app.post("/api/profiles")
@@ -214,12 +251,73 @@ async def profile_test(t: TestIn):
     return {"ok": ok, "message": msg}
 
 
-# ================================================================ REST：配置
+# ---------- 模型列表（新增） ----------
+@app.get("/api/models")
+async def list_models(profile_id: str | None = None,
+                      base_url: str | None = None,
+                      api_key: str | None = None,
+                      format: str = "openai"):
+    """获取可用模型列表。两种用法：
+    1. profile_id：已保存档案
+    2. base_url + api_key + format：表单草稿直查（保存前就能拉列表）
+    """
+    if base_url and api_key:
+        prof = ApiProfile(id="draft", name="draft", format=format,
+                          base_url=base_url, api_key=api_key)
+    else:
+        prof = next((p for p in config.profiles if p.id == profile_id), None) \
+            or next((p for p in config.profiles if p.id == config.active_profile_id), None) \
+            or (config.profiles[0] if config.profiles else None)
+    if prof is None:
+        raise HTTPException(400, "请先填写 API 地址和 Key，或保存一个档案")
+    base = prof.base_url.rstrip("/")
+    if prof.format == "anthropic":
+        url = f"{base}/v1/models"
+        headers = {"x-api-key": prof.api_key, "anthropic-version": "2023-06-01"}
+    else:
+        url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
+        headers = {"Authorization": f"Bearer {prof.api_key}"}
+    try:
+        r = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: req_lib.get(url, headers=headers, timeout=(5, 15)))
+        if r.status_code != 200:
+            return {"ok": False, "message": f"HTTP {r.status_code}: {r.text[:150]}",
+                    "models": []}
+        data = r.json()
+        models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        return {"ok": True, "models": sorted(models), "count": len(models)}
+    except Exception as e:                              # noqa: BLE001
+        return {"ok": False, "message": str(e)[:150], "models": []}
+
+
+# ================================================================ 提示词
+@app.get("/api/prompt")
+async def get_prompt():
+    return {"system_prompt": brain.get_system_prompt(config.system_prompt),
+            "is_default": not config.system_prompt.strip(),
+            "default_prompt": brain.DEFAULT_SYSTEM_PROMPT}
+
+
+class PromptIn(BaseModel):
+    system_prompt: str
+
+
+@app.put("/api/prompt")
+async def put_prompt(p_in: PromptIn):
+    config.system_prompt = p_in.system_prompt
+    save_config(); _sync_from_config()
+    sim.log("system", "📝 统一提示词已更新（下一决策生效）")
+    return {"ok": True}
+
+
+# ================================================================ 配置
 @app.get("/api/config")
 async def get_config():
     return {
         "settings": config.settings.model_dump(),
         "player_models": config.player_models,
+        "players": [{"pid": p.pid, "name": p.name, "model":
+                     config.player_models.get(p.pid, "")} for p in sim.players],
         "default_model": sim.profile.default_model if sim.profile else "",
     }
 
@@ -229,7 +327,7 @@ class SettingsIn(BaseModel):
     temperature: float | None = None
     decision_timeout: float | None = None
     ticks_per_second: float | None = None
-    player_models: dict[str, str] | None = None
+    player_models: dict[str, str] | None = None   # pid → model
 
 
 @app.put("/api/config")
@@ -245,11 +343,12 @@ async def put_config(s_in: SettingsIn):
         sim.speed = config.settings.ticks_per_second
     if s_in.player_models is not None:
         config.player_models = s_in.player_models
+        sim.model_of = dict(s_in.player_models)
     save_config(); _sync_from_config()
     return {"ok": True}
 
 
-# ================================================================ REST：玩家
+# ================================================================ 玩家
 class PlayerIn(BaseModel):
     name: str
     color: str = "#7f8c8d"
@@ -258,19 +357,27 @@ class PlayerIn(BaseModel):
 
 @app.post("/api/players")
 async def add_player(p_in: PlayerIn):
-    try:
-        p = sim.add_player(p_in.name, p_in.color, p_in.emoji)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    p.model = config.player_models.get(p.name, "")
+    if any(p.name == p_in.name for p in sim.players):
+        raise HTTPException(400, "名字重复")
+    bedrooms = world.find_tiles("house", "h")
+    import random as _r
+    bx, by = world.nearest_walkable("house", *_r.choice(bedrooms)) if bedrooms \
+        else world.nearest_walkable("house", 12, 12)
+    p = sim_mod.Player(pid=uuid.uuid4().hex[:8], name=p_in.name,
+                       color=p_in.color, emoji=p_in.emoji, bedroom=(bx, by))
+    sim.players.append(p)
+    p.identity_done = True
+    sim.log("system", f"🎉 {p.name} {p.emoji} 入住小镇", [p.pid])
     return p.snapshot().model_dump()
 
 
 @app.delete("/api/players/{name}")
 async def remove_player(name: str):
-    if not any(p.name == name for p in sim.players):
+    p = next((p for p in sim.players if p.name == name), None)
+    if not p:
         raise HTTPException(404, "玩家不存在")
-    sim.remove_player(name)
+    sim.players.remove(p)
+    sim.log("system", f"👋 {name} 离开了小镇", [p.pid])
     return {"ok": True}
 
 
@@ -283,18 +390,10 @@ async def player_memories(name: str):
             sorted(p.memory.items, key=lambda m: -m.tick)[:60]]
 
 
-# ================================================================ 静态页面
+# ================================================================ 静态页
 @app.get("/")
 async def index():
-    html = (WEB_DIR / "index.html").read_text("utf-8")
-    return HTMLResponse(html)
-
-
-@app.get("/api/map")
-async def map_info():
-    return {"rows": world.MAP_ROWS,
-            "width": world.WIDTH, "height": world.HEIGHT,
-            "facilities": world.FACILITY_CHARS}
+    return HTMLResponse((WEB_DIR / "index.html").read_text("utf-8"))
 
 
 # ================================================================ WebSocket
@@ -323,11 +422,10 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 _last_event_id = 0
-_dialogue_sent = 0            # dialogue_worker 已消费的对白数（reset 时重置）
+_dialogue_sent = 0
 
 
 async def tick_broadcaster() -> None:
-    """后台任务：每个 tick 广播快照 + 增量事件"""
     global _last_event_id
     last_tick = -1
     while True:
@@ -337,37 +435,50 @@ async def tick_broadcaster() -> None:
             new_events = [e.model_dump() for e in sim.events if e.id > _last_event_id]
             if new_events:
                 globals()["_last_event_id"] = max(e["id"] for e in new_events)
-            # 对白：从 dialogue_log 取新的
+            name_of = {p.pid: p.name for p in sim.players}
             payload = {
                 "type": "tick",
                 "day": sim.day, "clock": sim.clock, "tick": sim.global_tick,
                 "running": sim.running, "speed": sim.speed,
-                "players": [p.snapshot().model_dump() for p in sim.players],
+                "identity_phase": sim.identity_phase,
+                "decor_common": sim.decor_common,
+                "players": [p.snapshot(name_of).model_dump() for p in sim.players],
                 "events": new_events,
             }
             await manager.broadcast(payload)
 
 
 async def dialogue_worker() -> None:
-    """消费对白请求：调 LLM 生成对白并广播"""
+    """消费对白请求：LLM 生成，失败给兜底文案（不再只显示 ...）"""
     while True:
         await asyncio.sleep(0.5)
-        if not sim.dialogue_log or not sim.settings.dialogue_generation:
+        if not sim.dialogue_log:
             continue
         if _dialogue_sent >= len(sim.dialogue_log):
             continue
         d = sim.dialogue_log[_dialogue_sent]
         globals()["_dialogue_sent"] = _dialogue_sent + 1
-        a = next((p for p in sim.players if p.name == d["a"]), None)
-        b = next((p for p in sim.players if p.name == d["b"]), None)
+        a = sim.by_pid(d["a"])
+        b = sim.by_pid(d["b"])
         if not a or not b:
             continue
         lines = await sim.generate_dialogue(a, b, d["kind"])
         if not lines:
-            lines = [f"{a.name}: ...", f"{b.name}: ..."]
+            # 兜底：按互动类型给自然文案
+            if d["kind"] == "love":
+                lines = [f"{a.name}: 和你在一起真好。",
+                         f"{b.name}: 嗯，我也是。"]
+            else:
+                topics = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
+                          "最近有点累啊", "这集综艺太好笑了", "阳台的花该浇水了"]
+                import random as _r
+                t = _r.choice(topics)
+                t2 = _r.choice([x for x in topics if x != t])
+                lines = [f"{a.name}: {t}", f"{b.name}: {t2}"]
         ev = sim.log("dialogue",
-                     " / ".join(lines) + f"  （{a.name}与{b.name}{'聊天' if d['kind'] == 'chat' else '约会'}）",
-                     [a.name, b.name])
+                     " / ".join(lines) +
+                     f"（{a.name}与{b.name}{'聊天' if d['kind'] == 'chat' else '约会'}）",
+                     [a.pid, b.pid])
         await manager.broadcast({"type": "dialogue", "lines": lines,
                                  "a": a.name, "b": b.name,
                                  "event": ev.model_dump()})
@@ -385,13 +496,11 @@ async def ws_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
         while True:
-            # 客户端心跳/指令（暂只保持连接）
             await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws)
 
 
-# ================================================================ 错误兜底
 @app.exception_handler(Exception)
 async def any_error(request, exc):
     return JSONResponse(status_code=500, content={"detail": str(exc)[:300]})
@@ -400,6 +509,6 @@ async def any_error(request, exc):
 if __name__ == "__main__":
     import uvicorn
     print("=" * 56)
-    print("  🏘️ AI 小镇  http://127.0.0.1:8300")
+    print("  🏘️ AI 小镇 v2  http://127.0.0.1:8300")
     print("=" * 56)
     uvicorn.run(app, host="0.0.0.0", port=8300)

@@ -1,80 +1,77 @@
 # 🏘️ AI 小镇
 
-一个基于大语言模型的多智能体生活模拟游戏：每个「玩家」由一个 LLM 驱动，在同一份提示词下，凭借各自的数值状态、记忆与人际关系，在 2D 小镇中自由生活——吃饭、做饭、运动、看电视、打游戏、思考、聊天、攻击、破坏、建筑、治疗、恋爱、工作、睡觉。
+一个基于大语言模型的多智能体生活模拟游戏：五位「居民」合租一个大平层，各由一个 LLM 扮演。他们开局**自己给自己起名字、选颜色**，然后在同一份提示词下，凭借各自的记忆、数值状态和人际关系自主生活——做饭、打游戏、上班、看电影、买花送礼、交朋友、恋爱，也可能吵架搞破坏。
 
 **核心特点**
 
-- 🧠 **模型即人格**：5 个玩家可以各接一个模型（DeepSeek / GLM / Qwen / ERNIE / MiniMax…），同一提示词下观察不同模型的行为差异
-- 👤 **玩家框架**：`Player` 类封装「感知 → 记忆 → 决策 → 行动」生命周期，可动态添加任意数量玩家并指定模型
-- 🔌 **CCswitch 风格 API 管理**：多档案、OpenAI/Anthropic 双上游格式、连接测试、一键切换
-- 🛡️ **永不下线**：LLM 不可用时自动降级为内置规则引擎，模拟永远能跑
-- 📜 **全量事件日志**：时间范围/类型/关键词筛选，可查看任意玩家的记忆流
+- 🎭 **开局身份自选**：每个居民的模型自己决定叫什么（小x 格式）、什么颜色
+- 🧠 **模型即人格**：5 个居民可各接一个模型（DeepSeek / GLM / Qwen / ERNIE / MiniMax…），同一提示词下观察行为差异
+- 🏠🌆 **双场景世界**：室内合租之家（5 卧 / 客厅 / 厨房 / 餐厅 / 双卫 / 洗衣区 / 大阳台）+ 室外小镇（商店 / 公园 / 办公楼 / 电影院 / 健身房 / 医院 / 施工地 / 田地），两图独立比例尺，居民从大门出入
+- 🤝 **协同增益社交**：一起打游戏/吃饭/工作有数值加成，好感度调制加成幅度——关系差一起做事反而互相拖累；每次互动后由模型自己决定好感增减（-5~+5）
+- 💐 **物品与装饰**：去商店买鲜花/盆栽，布置自己的房间或公共区域（持续心情加成），或送给心上人
+- 🕸 **好感网络图**：实时可视化的居民关系网
+- 📋 **模型列表获取**：填好 API 后一键拉取网关全部可用模型，点选即用
+- ✏️ **可编辑统一提示词**：网页上直接改，下次决策生效
+- 🛡️ **永不下线**：LLM 不可用时自动降级内置规则引擎；对白生成失败用内置文案兜底
 
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
 pip install -r requirements.txt
-
-# 2. 启动（会自动打开浏览器；或手动访问 http://127.0.0.1:8300）
-python server.py
+python server.py        # 打开 http://127.0.0.1:8300
 ```
 
-**首次使用**：右侧「API 设置」→ 新增档案 → 填入 Base URL / API Key / 默认模型 → 点「测试」→ 启用。然后在「玩家模型绑定」里给每个玩家指定各自模型。不配置 API 时小镇以规则引擎模式运行。
-
-## 操作
-
-| 功能 | 位置 |
-|------|------|
-| 开始/暂停/单步/重置/速度 | 顶部控制栏 |
-| 观察居民数值与当前活动 | 「居民」面板 |
-| 事件日志（按天/类型/关键词） | 「事件日志」面板 |
-| API 档案与模型绑定 | 「API 设置」面板 |
-| 对白生成开关/温度/超时/添加玩家/记忆查看 | 「模拟设置」面板 |
+不配 API 直接点「开始」即可以规则引擎模式游玩。接入大模型：侧栏「API / 模型」→ 新增档案（Base URL / Key / 上游格式）→ 点「获取模型列表」拉取可用模型 → 测试 → 启用 → 在「玩家模型绑定」给每个居民指定模型。页面上有 📖 使用指南按钮，含完整说明。
 
 ## 架构
 
 ```
 engine/               模拟引擎（纯 Python，无 Web 依赖）
-├── models.py         pydantic 数据模型
-├── world.py          ASCII 地图 + BFS 寻路
-├── activities.py     14 种活动注册表（数值效果/约束）
+├── models.py         pydantic 数据模型（pid 稳定 ID / 物品 / 装饰度）
+├── world.py          双 26×26 方形地图 + 井字形室内布局 + BFS 寻路 + 相遇判定
+├── activities.py     24 种活动（场景标注/协同增益公式/物品/装饰）
 ├── memory.py         记忆流（recency × importance 检索）
 ├── llm.py            OpenAI/Anthropic 双格式客户端
-├── brain.py          统一提示词模板 + 规则引擎兜底
-├── player.py         玩家框架（感知→记忆→决策→行动）
-└── simulation.py     世界时钟 + tick 调度 + 对白生成
-server.py             FastAPI：REST 控制 / WS 广播 / 档案管理
-web/index.html        单文件前端：Canvas 渲染 + 四面板
+├── brain.py          统一提示词 + 身份自选 + LLM 好感增减 + 规则引擎
+├── player.py         玩家框架（感知→记忆→决策→行动 + 跨场景出行）
+└── simulation.py     世界时钟 + 身份阶段 + 好感异步队列 + 相遇播报
+server.py             FastAPI：控制/档案/模型列表/提示词/关系网/WS 广播
+web/index.html        单文件前端：双场景 Canvas + 关系网 + 指南
 ```
 
 ### 设计说明
 
-**为什么所有人的提示词相同？** 借鉴斯坦福 Generative Agents 论文的核心发现——「人格」不是设定出来的，而是经历沉淀出来的。提示词只包含：当前时间、自身数值、视野内的人、好感表、记忆流摘要、活动菜单。个体差异完全由记忆与状态涌现。
+**同一提示词，人格涌现**：提示词不含任何人设，只有时间、数值、记忆、好感、活动菜单。个体差异来自经历的沉淀（斯坦福 Generative Agents 思想）。身份自选把这个思想推到开局——连名字都是模型自己选的。
 
-**为什么后端代理 LLM 请求？** 浏览器直连 API 网关会遇到 CORS 限制（很多中转站不允许网页直接访问）。Python 后端转发则天然无此问题，同时 API Key 不暴露在前端。
+**协同增益公式**：`倍率 = 人数增益 × 好感调制`。每多 1 人 +0.35 倍；好感 50 → ×1.0，100 → ×1.5，0 → ×0.5。关系不睦（倍率 <0.75）时正收益再打五折——「不如一个人做」。
 
-**数值动力学**：饱食度自然衰减 → 归零后扣血 → 血量归零强制急救（扣 30 元）→ 穷了必须工作 → 工作消耗精力 → 精力不足要睡觉。这条压力链保证角色必须「过日子」而非随机游走，也为 LLM 决策提供了清晰的权衡空间。
+**跨场景出行**：去另一场景的设施时，寻路分两段——先到本场景大门，切换场景坐标，再走到目的地。就像真实世界的「先下楼」。
 
-**开源致谢**：架构思想来自 [joonspk-lab/generative_agents](https://github.com/joonspk-lab/generative_agents)（斯坦福 Generative Agents）与 [a16z/ai_town](https://github.com/a16z/ai_town)；API 档案管理交互参考 [CCswitch](https://github.com/farion1231/cc-switch)。工程依赖 FastAPI / pydantic / uvicorn / requests。
+**好感决定权交给模型**：互动结束后向该居民的模型提问「你对 TA 的好感变化多少」（-5~+5 的整数），规则只框边界不框方向。这让社交关系成为真正的涌现现象而非参数脚本。
 
 ## API 速览
 
 ```
-POST /api/control        {cmd: start|pause|resume|stop|step|speed|reset, speed?}
-GET  /api/state          全量快照
-GET  /api/events         ?day_from=&day_to=&type_=&q=&after_id=&limit=
+POST /api/control        start|pause|resume|stop|step|speed|reset
+GET  /api/state          快照（含身份阶段状态/公共装饰度）
+GET  /api/map?scene=     house|town 双地图
+GET  /api/models         ?profile_id= 或 ?base_url=&api_key=&format= 直查
+GET/PUT /api/prompt      统一提示词
+GET  /api/relationships  好感网络数据
 GET/POST/DELETE /api/profiles[...]   档案 CRUD + /test + /active
-GET/PUT /api/config      设置与玩家模型绑定
-POST/DELETE /api/players 动态玩家管理
+GET/PUT /api/config      设置 + pid→模型绑定
 GET  /api/players/{name}/memories    记忆流
-WS   /ws                 每 tick 推送快照+事件+对白
+WS   /ws                 每 tick 快照 + 事件 + 对白
 ```
 
 ## 隐私
 
-`config.json`（含 API Key）与 `API.txt` 已列入 `.gitignore`，不会进入版本库。请勿将密钥提交到公共仓库。
+`config.json`（含 API Key）与 `API.txt` 已列入 `.gitignore`。请勿将密钥提交到公共仓库；推送前可用 `git log --all -p | grep <密钥>` 自查。
+
+## 开源致谢
+
+架构思想来自 [joonspk-lab/generative_agents](https://github.com/joonspk-lab/generative_agents)（斯坦福 Generative Agents）与 [a16z/ai_town](https://github.com/a16z/ai_town)；API 档案管理交互参考 [CCswitch](https://github.com/farion1231/cc-switch)。工程依赖 FastAPI / pydantic / uvicorn / requests。
 
 ---
 
-*构建：claude · 2026-10*
+*构建：claude · 2026-10 · v2*
