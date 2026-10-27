@@ -26,22 +26,27 @@ class Stats(BaseModel):
 
 # ---------------------------------------------------------------- 玩家快照
 class PlayerSnapshot(BaseModel):
-    """每个 tick 广播给前端的玩家视图（内部记忆等不外泄）"""
+    """每个 tick 广播给前端的玩家视图"""
+    pid: str                     # 稳定内部 ID（模型可改名，绑定靠它）
     name: str
     color: str
     emoji: str
+    scene: str = "house"         # house / town
     x: int = 0
     y: int = 0
     stats: Stats = Stats()
-    state: str = "idle"          # idle / deciding / moving / doing
-    activity: str = ""           # 进行中的活动中文名
+    state: str = "idle"          # idle / deciding / moving / doing / away
+    activity: str = ""
     activity_emoji: str = ""
-    target_name: str = ""        # 交互对象（聊天/攻击/恋爱）
-    plan: str = ""               # 最近一次决策理由（LLM 的 reason）
-    model: str = ""              # 该玩家使用的模型
-    home: str = ""               # 所属小屋
-    speech: str = ""             # 当前对白气泡内容
-    affinity: dict[str, float] = Field(default_factory=dict)  # 我对他人的好感
+    target_name: str = ""
+    plan: str = ""
+    model: str = ""
+    home: str = ""
+    speech: str = ""
+    affinity: dict[str, float] = Field(default_factory=dict)
+    items: dict[str, int] = Field(default_factory=dict)     # 物品栏
+    decor_room: float = 0.0      # 自己卧室装饰度
+    identity_done: bool = False  # 开局身份选择是否完成
 
 
 # ---------------------------------------------------------------- 记忆
@@ -94,5 +99,6 @@ class AppConfig(BaseModel):
     """config.json 的完整结构，任何修改即时落盘"""
     profiles: list[ApiProfile] = Field(default_factory=list)
     active_profile_id: str | None = None
-    player_models: dict[str, str] = Field(default_factory=dict)  # 玩家名 → 模型
+    player_models: dict[str, str] = Field(default_factory=dict)  # pid → 模型
     settings: Settings = Settings()
+    system_prompt: str = ""       # 可编辑的统一提示词（空=用内置默认）

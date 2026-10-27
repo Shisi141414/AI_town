@@ -21,10 +21,10 @@ class MemoryStream:
         self.items.append(MemoryItem(content=content, day=day, tick=tick,
                                      importance=importance))
         if len(self.items) > MAX_MEMORIES:
-            # 淘汰：先按重要度升序、再按时间升序，去掉最没价值的
-            ranked = sorted(self.items,
-                            key=lambda m: (m.importance, m.tick))
-            self.items.remove(ranked[0])
+            # 淘汰：先按重要度升序、再按时间升序，去掉最没价值的（按对象身份移除）
+            ranked = sorted(self.items, key=lambda m: (m.importance, m.tick))
+            victim = ranked[0]
+            self.items = [m for m in self.items if m is not victim]
 
     def _score(self, m: MemoryItem, now_tick: int) -> float:
         age = max(0, now_tick - m.tick)
