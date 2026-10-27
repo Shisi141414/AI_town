@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行时产物
+config.json
+API.txt
+*.log
+
+# IDE
+.idea/
+.vscode/
+.DS_Store

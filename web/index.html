@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏘️ AI 小镇</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f0f2f5; color: #2c3e50;
+    display: grid; grid-template-columns: 1fr 360px;
+    grid-template-rows: 56px 1fr; height: 100vh; overflow: hidden;
+  }
+  header {
+    grid-column: 1/3; background: #fff; border-bottom: 1px solid #e0e4e8;
+    display: flex; align-items: center; padding: 0 16px; gap: 12px; z-index: 5;
+  }
+  header h1 { font-size: 18px; margin-right: auto; }
+  header h1 small { color: #888; font-weight: normal; font-size: 12px; margin-left: 8px; }
+  .btn {
+    border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer; font-size: 13px; transition: all .15s;
+  }
+  .btn:hover { background: #f3f4f6; }
+  .btn.primary { background: #2e7d32; color: #fff; border-color: #2e7d32; }
+  .btn.primary:hover { background: #1b5e20; }
+  .btn.warn { background: #c62828; color: #fff; border-color: #c62828; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  select, input[type=number] {
+    border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 8px; font-size: 13px;
+  }
+  #clockbox {
+    font-family: Consolas, monospace; background: #1a2332; color: #7ee787;
+    padding: 5px 12px; border-radius: 6px; font-size: 14px; min-width: 150px; text-align: center;
+  }
+  #stage { position: relative; overflow: hidden; }
+  canvas { display: block; background: #a8d5a2; }
+  /* ---------- 侧栏 ---------- */
+  aside {
+    background: #fff; border-left: 1px solid #e0e4e8;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  nav { display: flex; border-bottom: 1px solid #e0e4e8; }
+  nav button {
+    flex: 1; padding: 10px 0; border: none; background: none; cursor: pointer;
+    font-size: 13px; color: #666; border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: #2e7d32; border-bottom-color: #2e7d32; font-weight: bold; }
+  .panel { flex: 1; overflow-y: auto; padding: 12px; display: none; }
+  .panel.active { display: block; }
+  /* 玩家卡 */
+  .pcard {
+    border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 10px;
+    cursor: pointer; transition: box-shadow .15s;
+  }
+  .pcard:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .pcard .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .pcard .head .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pcard .head b { font-size: 14px; }
+  .pcard .head .model { margin-left: auto; font-size: 11px; color: #888; }
+  .bar { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 3px 0; }
+  .bar label { width: 34px; color: #666; }
+  .bar .track { flex: 1; height: 8px; background: #eef1f4; border-radius: 4px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 4px; transition: width .4s; }
+  .bar .val { width: 34px; text-align: right; color: #999; font-family: monospace; }
+  .pcard .doing { font-size: 12px; color: #555; background: #f6f8fa; border-radius: 4px; padding: 4px 8px; margin-top: 6px; }
+  .pcard .doing b { color: #2e7d32; }
+  /* 日志 */
+  .filters { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .filters select, .filters input {
+    font-size: 12px; padding: 4px 6px; border: 1px solid #d0d7de; border-radius: 5px;
+  }
+  .filters input { width: 110px; }
+  #logList { font-size: 12.5px; }
+  .ev { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; line-height: 1.5; }
+  .ev .meta { color: #999; font-size: 11px; font-family: monospace; margin-right: 6px; }
+  .ev.combat .meta, .ev.combat { color: #c62828; }
+  .ev.dialogue { background: #f0f7ff; }
+  .ev.system { color: #666; }
+  .ev.error { color: #b58900; }
+  /* 设置表单 */
+  .form-row { margin-bottom: 12px; }
+  .form-row label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+  .form-row input, .form-row select {
+    width: 100%; padding: 7px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;
+  }
+  .section-title { font-size: 13px; font-weight: bold; margin: 14px 0 8px; color: #444; }
+  .hint { font-size: 11.5px; color: #999; line-height: 1.5; margin-top: 4px; }
+  .profile-item {
+    border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 8px;
+  }
+  .profile-item.active { border-color: #2e7d32; background: #f4faf4; }
+  .profile-item .row { display: flex; align-items: center; gap: 8px; }
+  .profile-item .row b { font-size: 13px; }
+  .tag {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #eef1f4; color: #666;
+  }
+  .tag.openai { background: #e8f4e8; color: #1a7f37; }
+  .tag.anthropic { background: #fdeee2; color: #bc4c00; }
+  .profile-item .ops { margin-left: auto; display: flex; gap: 6px; }
+  .profile-item .ops .btn { padding: 3px 10px; font-size: 11px; }
+  .model-bind { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .model-bind span { width: 60px; font-size: 12px; }
+  .model-bind input { flex: 1; }
+  .switch { position: relative; width: 38px; height: 20px; display: inline-block; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #ccc; border-radius: 20px; cursor: pointer; transition: .2s;
+  }
+  .switch .slider:before {
+    content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px;
+    background: #fff; border-radius: 50%; transition: .2s;
+  }
+  .switch input:checked + .slider { background: #2e7d32; }
+  .switch input:checked + .slider:before { transform: translateX(18px); }
+  .mem-list { font-size: 12px; }
+  .mem-list .mi { padding: 5px 8px; border-bottom: 1px dashed #eee; }
+  .mem-list .mi .t { color: #aaa; font-size: 10.5px; font-family: monospace; }
+  /* toast */
+  #toast {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+    background: rgba(30,30,30,.92); color: #fff; padding: 8px 18px; border-radius: 20px;
+    font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99;
+  }
+  #toast.show { opacity: 1; }
+  /* 对话气泡 */
+  .bubble {
+    position: absolute; background: rgba(255,255,255,.95); border: 1px solid #ccc;
+    border-radius: 8px; padding: 3px 8px; font-size: 11px; pointer-events: none;
+    white-space: nowrap; transform: translate(-50%, -130%); box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏘️ AI 小镇 <small id="modeTag">规则引擎模式</small></h1>
+  <div id="clockbox">第1天 08:00</div>
+  <button class="btn primary" id="btnStart">▶ 开始</button>
+  <button class="btn" id="btnPause" disabled>⏸ 暂停</button>
+  <button class="btn" id="btnStep">⏭ 单步</button>
+  <button class="btn warn" id="btnReset">⟲ 重置</button>
+  <span style="font-size:12px;color:#888">速度</span>
+  <select id="speedSel">
+    <option value="0.5">0.5x</option>
+    <option value="1" selected>1x</option>
+    <option value="2">2x</option>
+    <option value="4">4x</option>
+    <option value="8">8x</option>
+  </select>
+</header>
+
+<div id="stage"><canvas id="cv"></canvas></div>
+
+<aside>
+  <nav>
+    <button class="active" data-panel="players">居民</button>
+    <button data-panel="logs">事件日志</button>
+    <button data-panel="api">API 设置</button>
+    <button data-panel="settings">模拟设置</button>
+  </nav>
+
+  <div class="panel active" id="panel-players"><div id="playerList"></div></div>
+
+  <div class="panel" id="panel-logs">
+    <div class="filters">
+      <select id="fType">
+        <option value="">全部类型</option>
+        <option value="activity">活动</option>
+        <option value="social">社交</option>
+        <option value="combat">冲突</option>
+        <option value="dialogue">对白</option>
+        <option value="system">系统</option>
+        <option value="error">异常</option>
+      </select>
+      <input id="fDayFrom" type="number" min="1" placeholder="起始天" title="起始天">
+      <input id="fDayTo" type="number" min="1" placeholder="结束天" title="结束天">
+      <input id="fQ" placeholder="🔍 关键词" title="关键词">
+      <button class="btn" id="btnFilter" style="padding:4px 10px;font-size:12px">查询</button>
+    </div>
+    <div id="logList"></div>
+  </div>
+
+  <div class="panel" id="panel-api">
+    <div class="section-title">API 档案（CCswitch 风格）</div>
+    <div id="profileList"></div>
+    <button class="btn" id="btnAddProfile" style="width:100%;margin:8px 0">＋ 新增档案</button>
+    <div id="profileForm" style="display:none;background:#f8f9fa;border:1px solid #e0e4e8;border-radius:8px;padding:12px">
+      <div class="form-row"><label>档案名称</label><input id="pfName" placeholder="如：我的中转站"></div>
+      <div class="form-row"><label>上游格式</label>
+        <select id="pfFormat">
+          <option value="openai">OpenAI 格式 (/v1/chat/completions)</option>
+          <option value="anthropic">Anthropic 格式 (/v1/messages)</option>
+        </select>
+      </div>
+      <div class="form-row"><label>API 地址（Base URL）</label><input id="pfUrl" placeholder="https://api.example.com/v1"></div>
+      <div class="form-row"><label>API Key</label><input id="pfKey" type="password" placeholder="sk-..."></div>
+      <div class="form-row"><label>默认模型</label><input id="pfModel" placeholder="gpt-4o-mini / glm-4.7 / deepseek-chat"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary" id="btnSaveProfile" style="flex:1">保存档案</button>
+        <button class="btn" id="btnCancelProfile">取消</button>
+      </div>
+    </div>
+    <div class="section-title">玩家模型绑定</div>
+    <div class="hint" style="margin-bottom:8px">所有玩家共用上方档案的 API，但可分别指定各自请求的模型——给不同角色接不同大脑，观察行为差异。</div>
+    <div id="modelBinds"></div>
+    <button class="btn" id="btnSaveBinds" style="width:100%;margin-top:8px">保存绑定</button>
+  </div>
+
+  <div class="panel" id="panel-settings">
+    <div class="section-title">模拟设置</div>
+    <div class="form-row" style="display:flex;align-items:center;gap:10px">
+      <label class="switch"><input type="checkbox" id="setDialogue"><span class="slider"></span></label>
+      <span style="font-size:13px">聊天时 LLM 生成对白</span>
+    </div>
+    <div class="hint">开启后每次聊天/恋爱额外调用一次 LLM 生成 2~4 句对话；关闭则只显示互动摘要，更省 token。</div>
+    <div class="form-row" style="margin-top:14px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
+    <div class="form-row"><label>决策超时（秒，超时自动降级规则引擎）</label><input id="setTimeout" type="number" step="1" min="5" max="120" value="25"></div>
+    <button class="btn primary" id="btnSaveSettings" style="width:100%">保存设置</button>
+
+    <div class="section-title">添加玩家</div>
+    <div class="form-row"><label>名字</label><input id="npName" placeholder="新居民名"></div>
+    <div class="form-row"><label>颜色</label><input id="npColor" type="color" value="#7f8c8d" style="height:34px"></div>
+    <div class="form-row"><label>Emoji</label><input id="npEmoji" placeholder="🙂"></div>
+    <button class="btn" id="btnAddPlayer" style="width:100%">＋ 入住小镇</button>
+
+    <div class="section-title">记忆查看器</div>
+    <div class="form-row">
+      <select id="memPlayer" style="width:100%"></select>
+    </div>
+    <button class="btn" id="btnLoadMem" style="width:100%">读取记忆流</button>
+    <div class="mem-list" id="memList" style="margin-top:10px"></div>
+  </div>
+</aside>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= 基础工具 ================= */
+const $ = id => document.getElementById(id);
+const API = "/api";
+async function jpost(url, body) {
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+  return r.json();
+}
+async function jput(url, body) {
+  const r = await fetch(url, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  return r.json();
+}
+async function jget(url) { return (await fetch(url)).json(); }
+function toast(msg, ok=true) {
+  const t = $("toast"); t.textContent = msg; t.style.background = ok ? "rgba(30,30,30,.92)" : "#c62828";
+  t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+
+/* ================= Canvas 地图 ================= */
+const cv = $("cv"), ctx = cv.getContext("2d");
+const TILE = 26;
+let MAP = [], MAPW = 0, MAPH = 0, FAC = {};
+let players = [], bubbles = [];
+
+const TILE_STYLE = {
+  ".": ["#a8d5a2", ""], "#": ["#c8c0b4", ""], "T": ["#5d8f4e", "🌲"],
+  "W": ["#6ab7d8", ""], "H": ["#d9b382", "🏠"], "C": ["#e8a87c", "☕"],
+  "K": ["#d4a373", "🍳"], "G": ["#b5838d", "🏋"], "V": ["#8e9aaf", "📺"],
+  "P": ["#95b8a6", "🪑"], "B": ["#e0e0e0", "🛏"], "S": ["#f2c57c", "🛒"],
+  "F": ["#c9a66b", "🌾"], "O": ["#a3b18a", "💼"], "~": ["#b08968", "🧱"],
+  "I": ["#e8a87c", ""], "X": ["#8d99ae", "💥"],
+};
+function resize() {
+  cv.width = MAPW * TILE; cv.height = MAPH * TILE;
+  const stage = $("stage");
+  const scale = Math.min(stage.clientWidth / cv.width, (stage.clientHeight) / cv.height, 1.6);
+  cv.style.width = (cv.width * scale) + "px";
+  cv.style.height = (cv.height * scale) + "px";
+}
+window.addEventListener("resize", resize);
+
+function draw() {
+  if (!MAP.length) return;
+  for (let y = 0; y < MAPH; y++) for (let x = 0; x < MAPW; x++) {
+    const ch = MAP[y][x], st = TILE_STYLE[ch] || TILE_STYLE["."];
+    ctx.fillStyle = st[0]; ctx.fillRect(x*TILE, y*TILE, TILE, TILE);
+    if (st[1]) {
+      ctx.font = "15px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(st[1], x*TILE+TILE/2, y*TILE+TILE/2+1);
+    }
+  }
+  // 玩家
+  for (const p of players) {
+    const px = p.x*TILE, py = p.y*TILE;
+    ctx.beginPath(); ctx.arc(px+TILE/2, py+TILE/2, 10, 0, Math.PI*2);
+    ctx.fillStyle = p.color; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.font = "13px serif"; ctx.textAlign = "center";
+    ctx.fillText(p.emoji, px+TILE/2, py+TILE/2+1);
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillStyle = "#222"; ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 3;
+    ctx.strokeText(p.name, px+TILE/2, py-4); ctx.fillText(p.name, px+TILE/2, py-4);
+    // 活动emoji
+    if (p.activity_emoji) {
+      ctx.font = "14px serif";
+      ctx.fillText(p.activity_emoji, px+TILE/2+12, py+TILE/2-10);
+    }
+  }
+}
+
+/* ================= 玩家面板 ================= */
+const STAT_STYLE = {
+  hp: ["生命", "#e74c3c"], satiety: ["饱食", "#e67e22"], energy: ["精力", "#f1c40f"],
+  mood: ["心情", "#9b59b6"], money: ["金钱", "#27ae60"],
+};
+function renderPlayers() {
+  $("playerList").innerHTML = players.map(p => {
+    const bars = Object.entries(STAT_STYLE).map(([k, [label, color]]) => {
+      const v = k === "money" ? p.stats.money : p.stats[k];
+      const pct = k === "money" ? Math.min(100, v/2) : v;
+      return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(0)}</span></div>`;
+    }).join("");
+    const doing = p.activity
+      ? `<div class="doing">${p.activity_emoji} 正在<b>${p.activity}</b>${p.target_name ? " → " + p.target_name : ""}</div>`
+      : `<div class="doing">💭 ${p.state === "deciding" ? "思考中..." : (p.plan || "闲站着")}</div>`;
+    return `<div class="pcard" data-name="${p.name}">
+      <div class="head"><span class="dot" style="background:${p.color}"></span><b>${p.emoji} ${p.name}</b><span class="model">${p.model ? "🧠"+p.model : "规则引擎"}</span></div>
+      ${bars}${doing}</div>`;
+  }).join("");
+  // 记忆查看器下拉同步
+  const sel = $("memPlayer");
+  sel.innerHTML = players.map(p => `<option>${p.name}</option>`).join("");
+}
+
+/* ================= 日志 ================= */
+let allEvents = [];
+function renderEvents(evs) {
+  const list = $("logList");
+  const top = list.scrollTop;
+  const html = evs.slice(0, 300).map(e => {
+    const cls = ["combat","dialogue","system","error"].includes(e.type) ? e.type : "";
+    return `<div class="ev ${cls}"><span class="meta">D${e.day} ${e.clock}</span>${e.text}</div>`;
+  }).join("");
+  list.innerHTML = html || '<div style="color:#999;padding:20px;text-align:center">还没有事件，点「▶ 开始」让小镇动起来</div>';
+  list.scrollTop = 0;
+}
+async function queryEvents() {
+  const params = new URLSearchParams();
+  if ($("fType").value) params.set("type_", $("fType").value);
+  if ($("fDayFrom").value) params.set("day_from", $("fDayFrom").value);
+  if ($("fDayTo").value) params.set("day_to", $("fDayTo").value);
+  if ($("fQ").value) params.set("q", $("fQ").value);
+  allEvents = await jget(`${API}/events?` + params.toString());
+  renderEvents(allEvents);
+}
+
+/* ================= WebSocket ================= */
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = msg => {
+    const d = JSON.parse(msg.data);
+    if (d.type === "tick") {
+      players = d.players;
+      $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
+      $("modeTag").textContent = d.running ? "运行中" : "已暂停";
+      renderPlayers(); draw();
+      if (d.events && d.events.length) {
+        allEvents = [...d.events, ...allEvents].slice(0, 500);
+        if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
+      }
+    } else if (d.type === "dialogue") {
+      // 展示对话气泡 8 秒
+      for (const ln of d.lines) {
+        const m = ln.match(/^(.+?):\s*(.+)$/);
+        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 8000});
+      }
+      allEvents.unshift(d.event);
+      if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
+    }
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+function renderBubbles() {
+  document.querySelectorAll(".bubble").forEach(b => b.remove());
+  const now = Date.now();
+  bubbles = bubbles.filter(b => b.until > now);
+  for (const b of bubbles) {
+    const p = players.find(p => p.name === b.name);
+    if (!p) continue;
+    const el = document.createElement("div");
+    el.className = "bubble"; el.textContent = `${b.name}: ${b.text}`;
+    const scale = cv.width / cv.getBoundingClientRect().width;
+    el.style.left = ((p.x+0.5)*TILE/scale) + "px";
+    el.style.top = ((p.y)*TILE/scale) + "px";
+    $("stage").appendChild(el);
+  }
+}
+setInterval(renderBubbles, 500);
+
+/* ================= 控制按钮 ================= */
+$("btnStart").onclick = async () => { await jpost(`${API}/control`, {cmd:"start"}); setRunning(true); };
+$("btnPause").onclick = async () => { await jpost(`${API}/control`, {cmd:"pause"}); setRunning(false); };
+$("btnStep").onclick = async () => { await jpost(`${API}/control`, {cmd:"step"}); };
+$("btnReset").onclick = async () => {
+  if (!confirm("确定重置整个世界？所有进度清零。")) return;
+  await jpost(`${API}/control`, {cmd:"reset"});
+  location.reload();
+};
+$("speedSel").onchange = e => jpost(`${API}/control`, {cmd:"speed", speed:+e.target.value});
+function setRunning(r) {
+  $("btnStart").disabled = r; $("btnPause").disabled = !r;
+}
+
+/* ================= Tab 切换 ================= */
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    $("panel-" + btn.dataset.panel).classList.add("active");
+    if (btn.dataset.panel === "logs") renderEvents(allEvents);
+  };
+});
+
+/* ================= API 档案管理 ================= */
+let profiles = [], activeProfile = null, editingProfile = null;
+async function loadProfiles() {
+  const d = await jget(`${API}/profiles`);
+  profiles = d.profiles; activeProfile = d.active;
+  $("profileList").innerHTML = profiles.map(p => `
+    <div class="profile-item ${p.id === activeProfile ? "active" : ""}">
+      <div class="row">
+        <b>${p.name}</b>
+        <span class="tag ${p.format}">${p.format}</span>
+        <div class="ops">
+          ${p.id !== activeProfile ? `<button class="btn" onclick="activateProfile('${p.id}')">启用</button>` : '<span style="color:#2e7d32;font-size:11px">✓ 当前</span>'}
+          <button class="btn" onclick="testProfile('${p.id}')">测试</button>
+          <button class="btn" onclick="delProfile('${p.id}')">删除</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#999;margin-top:4px">${p.base_url} · 模型 ${p.default_model || "-"}</div>
+    </div>`).join("") || '<div class="hint">还没有档案。新增一个，填入你的 API 网关地址和 Key，小镇就会接入大模型大脑。</div>';
+  await loadBinds();
+}
+window.activateProfile = async id => {
+  await jpost(`${API}/profiles/active`, {id});
+  toast("已切换档案"); loadProfiles(); refreshState();
+};
+window.testProfile = async id => {
+  toast("测试中...");
+  const r = await jpost(`${API}/profiles/test`, {id});
+  toast(r.message, r.ok);
+};
+window.delProfile = async id => {
+  if (!confirm("删除该档案？")) return;
+  await fetch(`${API}/profiles/${id}`, {method:"DELETE"});
+  loadProfiles();
+};
+$("btnAddProfile").onclick = () => { $("profileForm").style.display = "block"; };
+$("btnCancelProfile").onclick = () => { $("profileForm").style.display = "none"; };
+$("btnSaveProfile").onclick = async () => {
+  const body = {
+    name: $("pfName").value.trim(), format: $("pfFormat").value,
+    base_url: $("pfUrl").value.trim(), api_key: $("pfKey").value.trim(),
+    default_model: $("pfModel").value.trim(),
+  };
+  if (!body.name || !body.base_url || !body.api_key) return toast("名称/地址/Key 不能为空", false);
+  const r = await fetch(`${API}/profiles`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  if (!r.ok) return toast("保存失败", false);
+  $("profileForm").style.display = "none";
+  toast("档案已保存"); loadProfiles();
+};
+
+/* ================= 模型绑定 ================= */
+async function loadBinds() {
+  const d = await jget(`${API}/config`);
+  $("modelBinds").innerHTML = players.map(p => `
+    <div class="model-bind"><span>${p.emoji}${p.name}</span>
+      <input data-player="${p.name}" value="${d.player_models[p.name] || ""}" placeholder="留空=用档案默认模型">
+    </div>`).join("");
+  $("setDialogue").checked = d.settings.dialogue_generation;
+  $("setTemp").value = d.settings.temperature;
+  $("setTimeout").value = d.settings.decision_timeout;
+}
+$("btnSaveBinds").onclick = async () => {
+  const binds = {};
+  document.querySelectorAll("#modelBinds input").forEach(i => binds[i.dataset.player] = i.value.trim());
+  await jput(`${API}/config`, {player_models: binds});
+  toast("模型绑定已保存"); refreshState();
+};
+$("btnSaveSettings").onclick = async () => {
+  await jput(`${API}/config`, {
+    dialogue_generation: $("setDialogue").checked,
+    temperature: +$("setTemp").value,
+    decision_timeout: +$("setTimeout").value,
+  });
+  toast("设置已保存");
+};
+$("btnAddPlayer").onclick = async () => {
+  const name = $("npName").value.trim();
+  if (!name) return toast("名字不能为空", false);
+  try {
+    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂"});
+    $("npName").value = ""; toast(`${name} 已入住`); refreshState(); loadBinds();
+  } catch (e) { toast(e.message, false); }
+};
+$("btnLoadMem").onclick = async () => {
+  const name = $("memPlayer").value;
+  const ms = await jget(`${API}/players/${name}/memories`);
+  $("memList").innerHTML = ms.map(m =>
+    `<div class="mi"><span class="t">[D${m.day}·${m.tick}] ⭐${m.importance}</span><br>${m.content}</div>`
+  ).join("") || '<div class="hint">还没有记忆</div>';
+};
+$("btnFilter").onclick = queryEvents;
+
+/* ================= 初始化 ================= */
+async function refreshState() {
+  const d = await jget(`${API}/state`);
+  players = d.players;
+  $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
+  $("modeTag").textContent = d.llm_mode ? `LLM模式·${d.active_profile}` : "规则引擎模式";
+  setRunning(d.running);
+  renderPlayers(); draw();
+}
+(async function init() {
+  const m = await jget(`${API}/map`);
+  MAP = m.rows; MAPW = m.width; MAPH = m.height; FAC = m.facilities;
+  resize(); draw();
+  await refreshState();
+  await loadProfiles();
+  connectWS();
+  queryEvents();
+})();
+</script>
+</body>
+</html>
