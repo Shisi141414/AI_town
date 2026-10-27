@@ -99,6 +99,8 @@ class AppConfig(BaseModel):
     """config.json 的完整结构，任何修改即时落盘"""
     profiles: list[ApiProfile] = Field(default_factory=list)
     active_profile_id: str | None = None
-    player_models: dict[str, str] = Field(default_factory=dict)  # pid → 模型
+    player_bindings: dict[str, dict[str, str]] = Field(
+        default_factory=dict)      # pid → {"profile_id":..., "model":...}
+    player_models: dict[str, str] = Field(default_factory=dict)  # 旧版迁移用
     settings: Settings = Settings()
     system_prompt: str = ""       # 可编辑的统一提示词（空=用内置默认）

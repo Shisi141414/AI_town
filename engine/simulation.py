@@ -44,7 +44,8 @@ class Simulation:
         self.events: list[GameEvent] = []
         self.event_id = 0
         self.settings = Settings()
-        self.profile: ApiProfile | None = None
+        self.profile: ApiProfile | None = None     # 兼容：默认档案（诊断/无绑定玩家）
+        self.profiles_by_id: dict[str, ApiProfile] = {}   # 全部档案（server 同步）
         self.system_prompt: str = ""            # 用户自定义统一提示词
         self.decor_common = 0.0                 # 公共区装饰度
         self.meal_until = 0                     # 家里有饭的截止 tick
@@ -55,7 +56,18 @@ class Simulation:
         self._llm_error_count = 0
         self.identity_phase = False             # 是否在开局身份阶段
         self.model_of: dict[str, str] = {}      # pid → 模型（server 同步进来）
+        self.binding_of: dict[str, str] = {}    # pid → profile_id（server 同步）
         self.names = {}                         # pid → 当前名字（广播用）
+
+    # ------------------------------------------------------------ 每玩家档案
+    def profile_for(self, pid: str) -> ApiProfile | None:
+        """玩家实际使用的档案：自己绑定的 > 激活的"""
+        pid_prof = self.profiles_by_id.get(self.binding_of.get(pid, ""))
+        if pid_prof and pid_prof.api_key:
+            return pid_prof
+        if self.profile and self.profile.api_key:
+            return self.profile
+        return None
 
     # ------------------------------------------------------------ 时钟
     @property
@@ -97,8 +109,10 @@ class Simulation:
         p.remember(f"我叫{name}，住进了合租之家", 8)
 
     async def run_identity_phase(self) -> None:
-        """开局身份阶段：并行让每个玩家（有模型的）自选身份"""
-        if not (self.profile and self.profile.api_key):
+        """开局身份阶段：并行让每个玩家（有档案的）自选身份"""
+        # 任一玩家有可用档案就走 LLM 身份（每玩家各自的档案）
+        any_api = any(self.profile_for(p.pid) for p in self.players)
+        if not any_api:
             for i, p in enumerate(self.players):
                 preset = PRESET_IDENTITIES[i % len(PRESET_IDENTITIES)]
                 self.apply_identity(p, preset["name"], preset["color"])
@@ -108,14 +122,15 @@ class Simulation:
         self.log("system", "🎪 新居民们正在给自己起名字…")
 
         async def one(p: Player):
-            model = self.model_of.get(p.pid) or self.profile.default_model
-            if not model:
+            prof = self.profile_for(p.pid)
+            model = self.model_of.get(p.pid) or (prof.default_model if prof else "")
+            if not prof or not model:
                 preset = PRESET_IDENTITIES[len(taken) % len(PRESET_IDENTITIES)]
                 self.apply_identity(p, preset["name"], preset["color"])
                 taken.append(preset["name"])
                 return
             ident = await brain.choose_identity_llm(
-                self.profile, model, list(taken),
+                prof, model, list(taken),
                 timeout=self.settings.decision_timeout)
             if ident and ident["name"] not in taken:
                 taken.append(ident["name"])
@@ -238,21 +253,24 @@ class Simulation:
 
     # ------------------------------------------------------------ 决策
     async def _decide_batch(self, idlers: list[Player]) -> None:
-        if self.profile and self.profile.api_key and not self.identity_phase:
+        if not self.identity_phase and any(self.profile_for(p.pid) for p in idlers):
             await asyncio.gather(*[self._decide_one(p) for p in idlers])
         else:
             for p in idlers:
                 self._apply_rule(p)
 
     async def _decide_one(self, p: Player) -> None:
+        prof = self.profile_for(p.pid)
+        if not prof:
+            self._apply_rule(p)
+            return
         others = [o for o in self.players if o is not p]
         nearby = [o.name for o in p.nearby_players(others)]
         p.state = "deciding"
-        model = self.model_of.get(p.pid) or (self.profile.default_model
-                                             if self.profile else "")
+        model = self.model_of.get(p.pid) or prof.default_model
         try:
             d = await brain.decide_llm(
-                self.profile, model, p, nearby, self.clock,
+                prof, model, p, nearby, self.clock,
                 brain.get_system_prompt(self.system_prompt),
                 self.settings.temperature, self.settings.decision_timeout,
                 self.decor_common)
@@ -330,18 +348,19 @@ class Simulation:
                     continue
                 before = a.affinity.get(o.pid, 50)
                 delta = 0
-                if self.profile and self.profile.api_key:
-                    model = self.model_of.get(a.pid) or self.profile.default_model
+                prof = self.profile_for(a.pid)
+                if prof:
+                    model = self.model_of.get(a.pid) or prof.default_model
                     what = act.ACTIVITIES.get(key, {}).get("name", key)
                     delta = await brain.affinity_change_llm(
-                        self.profile, model, a.name, o.name, what,
+                        prof, model, a.name, o.name, what,
                         f"一起{what}", before,
                         timeout=min(20.0, self.settings.decision_timeout))
                 else:
                     delta = random.choice([1, 1, 2, 2, 3])   # 规则模式：温和正增长
                 new_val = max(0.0, min(100.0, before + delta))
                 a.affinity[o.pid] = new_val
-                if delta != 0 and self.profile and self.profile.api_key:
+                if delta != 0 and prof:
                     sign = "+" if delta > 0 else ""
                     self.log("social",
                              f"💗 {a.name} 对 {o.name} 的好感变化 {sign}{delta}"
@@ -357,10 +376,10 @@ class Simulation:
                                   "tick": self.global_tick, "lines": []})
 
     async def generate_dialogue(self, a: Player, b: Player, kind: str) -> list[str]:
-        if not (self.settings.dialogue_generation and self.profile
-                and self.profile.api_key):
+        prof = self.profile_for(a.pid)
+        if not (self.settings.dialogue_generation and prof):
             return []
-        model = self.model_of.get(a.pid) or self.profile.default_model
+        model = self.model_of.get(a.pid) or prof.default_model
         aff = a.affinity.get(b.pid, 30)
         kind_cn = "聊天" if kind == "chat" else "约会"
         prompt = (f"合租之家里，{a.name} 和 {b.name} 正在{kind_cn}。"
@@ -368,9 +387,9 @@ class Simulation:
                   f"请写他们之间 2~4 句简短自然的中文对话（每句不超过15字），"
                   f"格式：每行一句，行首用说话人名。只输出对话本身。")
         try:
+            from .llm import chat as llm_chat
             text = await brain._run_in_thread(
-                __import__("engine.llm", fromlist=["chat"]).chat,
-                self.profile, model,
+                llm_chat, prof, model,
                 "你是合租生活的对话生成器，语言自然口语化。",
                 prompt, 1.0, 200, 20.0)
             return [ln.strip() for ln in text.splitlines() if ln.strip()][:4]

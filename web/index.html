@@ -250,7 +250,7 @@
     </div>
 
     <div class="section-title">玩家模型绑定</div>
-    <div class="hint" style="margin-bottom:8px">所有玩家共用一个 API 档案，但每人可指定不同模型——同一提示词，不同大脑，观察行为差异。</div>
+    <div class="hint" style="margin-bottom:8px">每个玩家可从<b>已有 API 档案</b>中选择一个，再从该档案的可用模型里挑选——不同玩家可以走不同网关、用不同模型。</div>
     <div id="modelBinds"></div>
     <button class="btn" id="btnSaveBinds" style="width:100%;margin-top:8px">保存绑定</button>
   </div>
@@ -296,7 +296,7 @@
       <p>① 侧栏 <b>API / 模型</b> → 新增档案：填 Base URL、API Key，选上游格式；<br>
       ② 点 <span class="kbd">📋 获取模型列表</span> 直接拉取该网关可用模型，点选即可，不用手填；<br>
       ③ 保存后点「测试」验证连通，然后「启用」；<br>
-      ④ 在「玩家模型绑定」里给每个居民指定各自模型——比如五个居民分别用 DeepSeek / GLM / Qwen / ERNIE / MiniMax，观察他们的性格差异。</p>
+      ④ 在「玩家模型绑定」里为每个居民先<b>选择 API 档案</b>、再点「载模型」挑选具体模型——不同居民可以走不同网关、用不同模型（比如两个走 A 网关用 DeepSeek / GLM，三个走 B 网关用 Qwen / ERNIE / MiniMax），观察他们的性格差异。</p>
       <h3>社交机制</h3>
       <p>居民一起打游戏、吃饭、工作有<b>协同加成</b>（效果随人数提升），但好感度会调制加成——关系差的人一起做事反而互相拖累。每次互动后，模型自己决定好感变化多少（-5~+5），送鲜花/盆栽能大幅提升好感。在「关系网」面板可以看到实时的好感网络图。</p>
       <h3>生活循环</h3>
@@ -439,7 +439,7 @@ function renderPlayers() {
       <div class="head"><span class="dot" style="background:${p.color}"></span><b>${p.emoji} ${p.name}</b>
         <span class="model">${p.model ? "🧠"+p.model.split("/").pop() : "规则"}</span></div>
       ${bars}${doing}
-      <div class="belong">${sceneTag} ${p.home}${decor}${items ? " · " + items : ""}</div>
+      <div class="belong">${sceneTag} ${p.home}${decor}${items ? " · " + items : ""}${p.model ? ` · <span title="${p.model}">${p.model}</span>` : ""}</div>
     </div>`;
   }).join("");
   const sel = $("memPlayer");
@@ -668,22 +668,84 @@ $("btnFetchModels").onclick = async () => {
   toast(`获取到 ${d.count} 个模型`);
 };
 
-/* ================= 模型绑定 ================= */
+/* ================= 模型绑定（档案+模型两级选择） ================= */
+let cfgProfiles = [];        // [{id, name, default_model}]
+let modelCache = {};         // profile_id → [model,...]（懒加载缓存）
+
+async function fetchModelsOf(pid_profile) {
+  if (modelCache[pid_profile]) return modelCache[pid_profile];
+  try {
+    const d = await jget(`${API}/models?profile_id=${pid_profile}`);
+    modelCache[pid_profile] = d.ok ? d.models : [];
+  } catch (e) { modelCache[pid_profile] = []; }
+  return modelCache[pid_profile];
+}
+
 async function loadBinds() {
   const d = await jget(`${API}/config`);
-  $("modelBinds").innerHTML = (d.players||[]).map(p => `
-    <div class="model-bind"><span class="nm" title="${p.pid}">${p.name}</span>
-      <input data-pid="${p.pid}" value="${p.model || ""}" placeholder="留空=默认模型" list="modelHint">
-    </div>`).join("");
+  cfgProfiles = d.profiles || [];
+  const playersCfg = d.players || [];
+  const act = d.active_profile;
+  $("modelBinds").innerHTML = playersCfg.map(p => {
+    const profId = p.binding?.profile_id || act || "";
+    const model = p.binding?.model || "";
+    const opts = cfgProfiles.map(pr =>
+      `<option value="${pr.id}" ${pr.id === profId ? "selected" : ""}>${pr.name}</option>`).join("");
+    return `<div class="bind-row" data-pid="${p.pid}" style="border:1px solid #e0e4e8;border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+        <b style="font-size:12.5px;width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</b>
+        <select class="bind-prof" style="flex:1;font-size:12px;padding:4px;border:1px solid #d0d7de;border-radius:5px">
+          <option value="">（跟随默认档案）</option>${opts}
+        </select>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="bind-model" style="flex:1;font-size:12px;padding:4px;border:1px solid #d0d7de;border-radius:5px">
+          <option value="">${model ? model : "（档案默认模型）"}</option>
+        </select>
+        <button class="btn bind-load" style="padding:3px 8px;font-size:11px;white-space:nowrap">↻ 载模型</button>
+      </div>
+    </div>`;
+  }).join("") || '<div class="hint">还没有玩家</div>';
+
+  // 已有模型选择的直填
+  document.querySelectorAll(".bind-row").forEach(row => {
+    const pid = row.dataset.pid;
+    const cfg = playersCfg.find(p => p.pid === pid);
+    if (cfg?.binding?.model) {
+      const sel = row.querySelector(".bind-model");
+      const opt = document.createElement("option");
+      opt.value = cfg.binding.model; opt.textContent = cfg.binding.model; opt.selected = true;
+      sel.prepend(opt);
+    }
+    // 载模型按钮：拉取该档案模型列表填充下拉
+    row.querySelector(".bind-load").onclick = async e => {
+      const btn = e.target; btn.disabled = true; btn.textContent = "…";
+      const profId = row.querySelector(".bind-prof").value || act || "";
+      if (!profId) { toast("请先选择档案（或启用一个默认档案）", false); btn.disabled = false; btn.textContent = "↻ 载模型"; return; }
+      const models = await fetchModelsOf(profId);
+      const sel = row.querySelector(".bind-model");
+      const cur = sel.value;
+      const def = cfgProfiles.find(p => p.id === profId)?.default_model || "";
+      sel.innerHTML = `<option value="">${def ? "默认：" + def : "（档案默认模型）"}</option>` +
+        models.map(m => `<option value="${m}" ${m === cur ? "selected" : ""}>${m}</option>`).join("");
+      btn.disabled = false; btn.textContent = "↻ 载模型";
+      toast(models.length ? `载入 ${models.length} 个模型` : "该档案无模型或获取失败", !!models.length);
+    };
+  });
   $("setDialogue").checked = d.settings.dialogue_generation;
   $("setTemp").value = d.settings.temperature;
   $("setTimeout").value = d.settings.decision_timeout;
 }
 $("btnSaveBinds").onclick = async () => {
   const binds = {};
-  document.querySelectorAll("#modelBinds input").forEach(i => binds[i.dataset.pid] = i.value.trim());
-  await jput(`${API}/config`, {player_models: binds});
-  toast("模型绑定已保存"); refreshState();
+  document.querySelectorAll(".bind-row").forEach(row => {
+    binds[row.dataset.pid] = {
+      profile_id: row.querySelector(".bind-prof").value,
+      model: row.querySelector(".bind-model").value,
+    };
+  });
+  await jput(`${API}/config`, {player_bindings: binds});
+  toast("绑定已保存"); refreshState();
 };
 $("btnSaveSettings").onclick = async () => {
   await jput(`${API}/config`, {

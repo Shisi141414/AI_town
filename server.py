@@ -54,9 +54,18 @@ def save_config() -> None:
 def _sync_from_config() -> None:
     prof = next((p for p in config.profiles if p.id == config.active_profile_id), None)
     sim.profile = prof
+    sim.profiles_by_id = {p.id: p for p in config.profiles}
     sim.settings = config.settings
     sim.system_prompt = config.system_prompt
-    sim.model_of = dict(config.player_models)
+    # 旧版迁移：player_models(pid→model) → player_bindings(pid→{profile_id,model})
+    if config.player_models and not config.player_bindings:
+        for pid, model in config.player_models.items():
+            config.player_bindings[pid] = {
+                "profile_id": config.active_profile_id or "", "model": model}
+        config.player_models = {}
+    sim.binding_of = {pid: b["profile_id"] for pid, b in
+                      config.player_bindings.items()}
+    sim.model_of = {pid: b["model"] for pid, b in config.player_bindings.items()}
 
 
 @app.on_event("startup")
@@ -105,7 +114,6 @@ async def control(c: ControlCmd):
         sim = sim_mod.Simulation()
         _sync_from_config()
         sim.spawn_players(5)
-        sim.model_of = dict(config.player_models)
         _identity_started = False
         sim.log("system", "🔄 世界已重置")
         globals()["_last_event_id"] = 0
@@ -315,10 +323,13 @@ async def put_prompt(p_in: PromptIn):
 async def get_config():
     return {
         "settings": config.settings.model_dump(),
-        "player_models": config.player_models,
-        "players": [{"pid": p.pid, "name": p.name, "model":
-                     config.player_models.get(p.pid, "")} for p in sim.players],
-        "default_model": sim.profile.default_model if sim.profile else "",
+        "profiles": [{"id": p.id, "name": p.name, "default_model": p.default_model}
+                     for p in config.profiles],
+        "active_profile": config.active_profile_id,
+        "players": [{"pid": p.pid, "name": p.name,
+                     "binding": config.player_bindings.get(p.pid,
+                         {"profile_id": "", "model": ""})}
+                    for p in sim.players],
     }
 
 
@@ -327,7 +338,7 @@ class SettingsIn(BaseModel):
     temperature: float | None = None
     decision_timeout: float | None = None
     ticks_per_second: float | None = None
-    player_models: dict[str, str] | None = None   # pid → model
+    player_bindings: dict[str, dict[str, str]] | None = None  # pid → {profile_id, model}
 
 
 @app.put("/api/config")
@@ -341,9 +352,11 @@ async def put_config(s_in: SettingsIn):
     if s_in.ticks_per_second is not None:
         config.settings.ticks_per_second = max(0.1, min(10.0, s_in.ticks_per_second))
         sim.speed = config.settings.ticks_per_second
-    if s_in.player_models is not None:
-        config.player_models = s_in.player_models
-        sim.model_of = dict(s_in.player_models)
+    if s_in.player_bindings is not None:
+        config.player_bindings = s_in.player_bindings
+        _sync_from_config()
+        save_config()
+        return {"ok": True}
     save_config(); _sync_from_config()
     return {"ok": True}
 
