@@ -1,0 +1,28 @@
+const {chromium}=require('playwright');
+const path=require('path');
+let browser;
+(async()=>{
+ browser=await chromium.launch({channel:'msedge',headless:true});
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:8303/');
+ await page.locator('.pcard').first().waitFor();
+ if(!await page.locator('.pcard').first().textContent().then(t=>t.includes('轻症')))throw Error('Missing illness status');
+ await page.locator('nav [data-panel="settings"]').click();
+ await page.locator('#memTier').selectOption('3');
+ await page.locator('#memList .mi').first().waitFor();
+ if(!await page.locator('#memStats').textContent().then(t=>t.includes('永久')))throw Error('Missing permanent layer');
+ const before=await page.locator('#memList .mi').count();
+ if(before!==40)throw Error('Expected paginated 40, got '+before);
+ await page.locator('#btnMoreMem').click();
+ await page.waitForFunction(()=>document.querySelectorAll('#memList .mi').length>40);
+ await page.locator("#memTier").scrollIntoViewIfNeeded();
+ await page.screenshot({path:path.resolve('docs/previews/memory-system.png'),fullPage:true});
+ await page.locator('#memTier').selectOption('2');
+ await page.waitForFunction(()=>document.querySelector('#memList').textContent.includes('L2'));
+ await page.locator('#memTier').selectOption('1');
+ await page.waitForFunction(()=>document.querySelector('#memList').textContent.includes('L1'));
+ if(errors.length)throw Error(errors.join('\n'));
+ console.log(JSON.stringify({result:'passed',permanentLayerPagination:true,illnessStatus:true,consoleErrors:errors}));
+ await browser.close();
+})().catch(async e=>{console.error(e);if(browser)await browser.close();process.exitCode=1;});

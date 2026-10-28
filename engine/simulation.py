@@ -15,15 +15,19 @@ import asyncio
 import random
 import time
 import uuid
+from pathlib import Path
+
+from .random_events import RandomEvents
+from .recording import Recorder, REQUEST_TRACE
 
 from . import activities as act
 from . import brain, world
 from .conversation import Conversation
 from .llm import LLMError
-from .models import ApiProfile, Decision, GameEvent, Settings
+from .models import ApiProfile, Decision, GameEvent, Settings, Vehicle
 from .player import Player
 
-BEDROOM_ANCHORS = [(3, 4), (9, 4), (14, 4), (20, 4), (23, 21)]   # 五间卧室的中心
+BEDROOM_ANCHORS = world.BEDROOM_ANCHORS
 DEFAULT_PLAYER_COUNT = 3            # 初始玩家数（网络压力考虑，用户要求）
 
 PRESET_IDENTITIES = [
@@ -36,11 +40,23 @@ PRESET_IDENTITIES = [
 
 
 class Simulation:
-    def __init__(self) -> None:
+    def __init__(self, memory_dir: Path | None = None) -> None:
+        self.save_id = None
+        self.memory_dir = memory_dir
+        self.replay_dir = None
+        self.recorder = None
+        self.recording_segments = []
+        self.random_events = RandomEvents()
         self.players: list[Player] = []
+        self.vehicles = [Vehicle(id="shared-car")]
         self.day = 1
-        self.tick = 0
+        self.tick = 48  # 第一天早上08:00；global_tick仍是从开局起的已过刻数
         self.global_tick = 0
+        from .town_services import defaults
+        self.town_config = defaults()
+        self.meal_quality = 0
+        self.market_price = 10.0
+        self.market_last_tick = 0
         self.running = False
         self.speed = 1.0
         self.events: list[GameEvent] = []
@@ -56,11 +72,55 @@ class Simulation:
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self._affinity_busy = False
         self._loop_task: asyncio.Task | None = None
+        self._tick_lock = asyncio.Lock()
+        self._affinity_task: asyncio.Task | None = None
         self._llm_error_count = 0
         self.identity_phase = False             # 是否在开局身份阶段
         self.model_of: dict[str, str] = {}      # pid → 模型（server 同步进来）
         self.binding_of: dict[str, str] = {}    # pid → profile_id（server 同步）
         self.names = {}                         # pid → 当前名字（广播用）
+
+    def process_frame(self):
+        names={p.pid:p.name for p in self.players}
+        return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
+            "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
+            "decor_common":self.decor_common,"meal_until":self.meal_until,
+            "town_config":self.town_config,"market_price":self.market_price,
+            "players":[p.snapshot(names).model_dump() for p in self.players],
+            "vehicles":[v.model_dump() for v in self.vehicles],
+            "maps":{scene:["".join(row) for row in world.grid(scene)] for scene in ("house","town")},
+            "execution":[{"pid":p.pid,"path":p.path,"pending":p._pending_key,
+                          "decision":p.decision.model_dump() if p.decision else None} for p in self.players],
+            "conversations":[{"a":c.a.pid,"b":c.b.pid,"phase":c.phase,"history":c.history} for c in self.conversations]}
+
+    def ensure_recording(self):
+        if self.replay_dir and (not self.recorder or self.recorder.closed):
+            initial={"state":self.process_frame(),"memories":{p.pid:[m.model_dump() for m in p.memory.items] for p in self.players},
+                     "settings":self.settings.model_dump()}
+            self.recorder=Recorder(self.replay_dir,initial)
+            for p in self.players:
+                p.memory.sink=lambda data,pid=p.pid:self.record("memory",{"pid":pid,**data})
+            self.record_frame()
+
+    def record(self,kind,data):
+        if self.recorder:self.recorder.append(kind,data)
+
+    def record_frame(self):
+        if self.recorder and not self.recorder.closed:
+            from .saves import capture,recording_segments
+            frame=self.process_frame();frame['checkpoint']=capture(self)
+            for seg in frame['checkpoint']['recording_segments']:
+                if seg['id']==self.recorder.id:seg['frames']+=1
+            self.record('frame',frame)
+            self.recording_segments=recording_segments(self)
+
+    def finish_recording(self):
+        if self.recorder and not self.recorder.closed:
+            self.record_frame()
+            from .saves import recording_segments
+            self.recording_segments=recording_segments(self)
+            self.recorder.close()
+        for p in self.players:p.memory.sink=None
 
     # ------------------------------------------------------------ 每玩家档案
     def profile_for(self, pid: str) -> ApiProfile | None:
@@ -84,17 +144,62 @@ class Simulation:
     def by_pid(self, pid: str) -> Player | None:
         return next((p for p in self.players if p.pid == pid), None)
 
+    def occupied(self,scene,ignore=None):
+        cells={(p.x,p.y) for p in self.players if p is not ignore and p.scene==scene and not p.vehicle_driver}
+        from .interaction_points import active_slot
+        if scene=='house':
+            cells.update(tuple(slot['position']) for p in self.players if p is not ignore and (slot:=active_slot(p)) and slot.get('reserved',True))
+        cells.update((v.x,v.y) for v in self.vehicles if scene=="town" and (ignore is None or v.id!=ignore.car_id))
+        return cells
+
+    def position_free(self,p,scene,x,y):
+        from .interaction_points import access_cells
+        swimming=(p is not None and scene=='town' and p.scene==scene and p.state=='doing'
+                  and p.activity_key=='swim' and (x,y)==(p.x,p.y) and world.tile(scene,x,y)=='W')
+        return (world.walkable(scene,x,y) or swimming or (p is not None and (x,y) in access_cells(p,scene))) and (x,y) not in self.occupied(scene,p)
+
+    def free_position(self,scene,x,y,p=None):
+        # 优先在原设施/卧室中找空格，再寻找邻近地面，兼容家具旁的交互点。
+        ch=world.tile(scene,x,y)
+        occupied=self.occupied(scene,p)
+        candidates=[(a,b) for b in range(world.SIZE) for a in range(world.SIZE)
+                    if world.walkable(scene,a,b) and (a,b) not in occupied]
+        if not candidates:raise ValueError('场景没有可用的空位')
+        return min(candidates,key=lambda q:(0 if q==(x,y) else 1,
+                   0 if world.tile(scene,*q)==ch else 1,abs(q[0]-x)+abs(q[1]-y),q))
+
+    def yield_position(self,p,requester):
+        if p.state not in ('idle','waiting_model') or p._conversation or p.car_id or p.vehicle_driver:return False
+        candidates=[(p.x+dx,p.y+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))
+                    if self.position_free(p,p.scene,p.x+dx,p.y+dy)]
+        if not candidates:return False
+        p.x,p.y=max(candidates,key=lambda q:sum(self.position_free(p,p.scene,q[0]+dx,q[1]+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))))
+        return True
+
+    def repair_positions(self):
+        for p in self.players:
+            if p.vehicle_driver:continue
+            if not self.position_free(p,p.scene,p.x,p.y):
+                p.x,p.y=self.free_position(p.scene,p.x,p.y,p)
+                if p.state=='moving':
+                    goal=getattr(p,'route_goal',None) or (p.path[-1] if p.path else None)
+                    if goal:p.route_goal=goal;p.path=p.travel_path(self,*goal)
+        for p in self.players:
+            if p.vehicle_driver:
+                driver=self.by_pid(p.vehicle_driver)
+                if driver:p.scene,p.x,p.y=driver.scene,driver.x,driver.y
+
     # ------------------------------------------------------------ 玩家管理
     def spawn_players(self, n: int = DEFAULT_PLAYER_COUNT) -> list[Player]:
         """生成 n 个无名玩家（身份待定）"""
         out = []
         for i in range(n):
             bedroom = BEDROOM_ANCHORS[i % len(BEDROOM_ANCHORS)]
-            bx, by = world.nearest_walkable("house", *bedroom)
+            bx, by = self.free_position("house", *bedroom)
             preset = PRESET_IDENTITIES[i % len(PRESET_IDENTITIES)]
-            p = Player(pid=uuid.uuid4().hex[:8], name=f"居民{i + 1}",
+            p = Player(pid=f"resident-{i + 1}", name=f"居民{i + 1}",
                        color=preset["color"], emoji=preset["emoji"],
-                       bedroom=(bx, by))
+                       bedroom=(bx, by), memory_path=(self.memory_dir / f"resident-{i+1}.sqlite3") if self.memory_dir else None)
             p.model = self.model_of.get(p.pid, "")
             self.players.append(p)
             out.append(p)
@@ -108,12 +213,15 @@ class Simulation:
         used = [p.bedroom for p in self.players]
         free = [a for a in BEDROOM_ANCHORS if a not in used]
         anchor = _r.choice(free) if free else _r.choice(BEDROOM_ANCHORS)
-        bx, by = world.nearest_walkable("house", *anchor)
-        p = Player(pid=uuid.uuid4().hex[:8], name=name, color=color,
-                   emoji=emoji or "🙂", bedroom=(bx, by))
+        bx, by = self.free_position("house", *anchor)
+        pid = uuid.uuid4().hex[:8]
+        p = Player(pid=pid, name=name, color=color,
+                   emoji=emoji or "🙂", bedroom=(bx, by), memory_path=(self.memory_dir / f"{pid}.sqlite3") if self.memory_dir else None)
         p.identity_done = True
         self.players.append(p)
-        self.log("system", f"🎉 {name} {p.emoji} 入住小镇", [p.pid])
+        if self.recorder and not self.recorder.closed:
+            p.memory.sink=lambda data:self.record("memory",{"pid":p.pid,**data})
+        self.log("system", f"🎉 {name} {p.emoji} 入住小镇", [p.pid],scope="game")
         return p
 
     def remove_player(self, pid: str) -> Player | None:
@@ -121,6 +229,10 @@ class Simulation:
         p = self.by_pid(pid)
         if not p:
             return None
+        self.leave_vehicle(p)
+        self.drop_passengers(p)
+        self.release_car(p)
+        self.vehicles = [v for v in self.vehicles if v.owner_id != p.pid]
         # 清理其参与的对话
         for c in list(self.conversations):
             if p in (c.a, c.b):
@@ -128,34 +240,161 @@ class Simulation:
         self.conversations = [c for c in self.conversations
                               if c.phase != "ended" and p not in (c.a, c.b)]
         self.players.remove(p)
-        self.log("system", f"👋 {p.name} 离开了小镇", [p.pid])
+        self.names.pop(pid, None)
+        for other in self.players:
+            other.affinity.pop(pid, None)
+        self.log("system", f"👋 {p.name} 离开了小镇", [p.pid],scope="game")
         return p
 
-    def apply_identity(self, p: Player, name: str, color: str, why: str = ""):
+    def leave_vehicle(self, p):
+        if p.vehicle_driver:
+            driver = self.by_pid(p.vehicle_driver)
+            if driver:
+                p.scene=driver.scene
+                p.x,p.y=self.free_position(driver.scene,driver.x,driver.y,p)
+                driver.passengers = [pid for pid in driver.passengers if pid != p.pid]
+            p.vehicle_driver = None
+            p.transport = "walk"
+            p.state = "idle"
+
+    def release_car(self, p):
+        for car in self.vehicles:
+            if car.driver_id == p.pid:
+                car.driver_id = None
+        p.car_id = None
+        if p.scene=='town' and not self.position_free(p,p.scene,p.x,p.y):
+            p.x,p.y=self.free_position(p.scene,p.x,p.y,p)
+
+    def reserve_car(self, p):
+        cars = sorted((v for v in self.vehicles if v.owner_id in (None, p.pid)
+                       and v.driver_id in (None, p.pid)),
+                      key=lambda v: (v.owner_id is None, abs(v.x - p.x) + abs(v.y - p.y)))
+        for car in cars:
+            if p.scene == "house":
+                nearby = abs(car.x - 2) + abs(car.y - 12) <= 2
+            else:
+                nearby = max(abs(car.x - p.x), abs(car.y - p.y)) <= 2
+            if nearby:
+                car.driver_id, p.car_id = p.pid, car.id
+                return car
+        return None
+
+    def set_travel_mode(self, p, mode):
+        if p.vehicle_driver:
+            raise ValueError("请先下车再选择出行方式")
+        if mode not in world.TRAVEL_MODES:
+            raise ValueError("未知出行方式")
+        if mode == "car" and not p.car_id and not self.reserve_car(p):
+            raise ValueError("附近没有可用汽车；共用车可能被占用或停在其他地点")
+        if mode != "car":
+            self.drop_passengers(p)
+            self.release_car(p)
+        p.travel_mode = mode
+        if p.path:
+            tx, ty = p.path[-1]
+            # 保留跨场景最终目标，重算当前场景至停车点/目的地的路线。
+            car = next((v for v in self.vehicles if v.id == p.car_id), None)
+            if car and p.scene == "town":
+                p.path = (world.bfs_path("town", p.x, p.y, car.x, car.y)
+                          + world.travel_path("town", car.x, car.y, tx, ty, mode))
+            else:
+                p.path = world.travel_path(p.scene, p.x, p.y, tx, ty, mode)
+        self.log("system", f"{p.name} 的室外出行方式改为{world.TRAVEL_MODES[mode]['name']}", [p.pid],scope="game")
+
+    def buy_car(self, p):
+        if any(v.owner_id == p.pid for v in self.vehicles):
+            raise ValueError("已经拥有一辆私家车")
+        price=self.town_config["S"]["car"]["price"]
+        if p.stats.money < price:
+            raise ValueError(f"购买汽车需要 {price:g} 金钱")
+        occupied = self.occupied("town")
+        parking = [q for q in world.find_tiles("town", "#") if q not in occupied and world.walkable("town",*q)]
+        if not parking:raise ValueError("附近没有可用停车位")
+        origin = (p.x, p.y) if p.scene == "town" else (2, 12)
+        road = min(parking,
+                   key=lambda q: abs(q[0]-origin[0])+abs(q[1]-origin[1]))
+        p.stats.money -= price
+        car = Vehicle(id=uuid.uuid4().hex[:8], owner_id=p.pid, x=road[0], y=road[1])
+        self.vehicles.append(car)
+        self.log("system", f"{p.name} 花费 {price:g} 金钱购买了私家车", [p.pid],scope="game")
+        return car
+
+    def board_car(self, p, driver):
+        car = next((v for v in self.vehicles if driver and v.id == driver.car_id and v.driver_id == driver.pid), None)
+        if (not driver or driver is p or driver.travel_mode != "car" or not car or driver.vehicle_driver
+                or p.scene != "town" or driver.scene != "town"
+                or max(abs(p.x-driver.x), abs(p.y-driver.y)) > 2
+                or (car.x, car.y) != (driver.x, driver.y)):
+            raise ValueError("请选择身边两格内、位于室外且在车旁的司机")
+        if p.vehicle_driver or p.passengers or len(driver.passengers) >= 3 or p._conversation or driver._conversation:
+            raise ValueError("车辆最多载三名乘客；请先结束对话或当前乘车")
+        self.release_car(p)
+        p.path.clear()
+        p.activity, p.activity_key, p._pending_key = None, "", ""
+        p._pending_target_pid, p._final_scene, p._final_goal = None, None, None
+        p.vehicle_driver, p.state, p.transport = driver.pid, "riding", "passenger"
+        p.travel_mode = "walk"
+        p.activity_left = 0
+        p.plan = "搭乘室友的汽车"
+        p.x, p.y = driver.x, driver.y
+        driver.passengers.append(p.pid)
+        self.log("system", f"{p.name} 搭乘了 {driver.name} 的汽车", [p.pid, driver.pid],scope="game")
+
+    def travel_context(self, p):
+        names = {o.pid: o.name for o in self.players}
+        cars = "；".join(f"{'共用车' if not v.owner_id else names.get(v.owner_id,'已离开室友')+'的私家车'}停在({v.x},{v.y})，"
+                        + (f"由{names.get(v.driver_id,'室友')}使用" if v.driver_id else "空闲") for v in self.vehicles)
+        return (f"当前位置({p.x},{p.y})，当前出行偏好：{world.TRAVEL_MODES[p.travel_mode]['name']}。"
+                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。"
+                "步行3格/tick、骑行6格/tick，消耗饱食度；汽车道路最高12格/tick，不消耗饱食度，油费0.15/格。"
+                "全镇仅一辆共用车，只能一人驾驶，另载3人；需靠近停车点取车。可在商店购买私家车，价格见场所参数。"
+                "仅有合租室友，没有其他参与者。")
+
+    def drop_passengers(self, driver):
+        for pid in list(driver.passengers):
+            p = self.by_pid(pid)
+            if p:
+                self.leave_vehicle(p)
+        driver.passengers.clear()
+
+    def apply_identity(self, p: Player, name: str, color: str, why: str = "", gender: str = "男"):
         """应用身份（LLM 选的或预设的）"""
         old = p.name
         p.name = name
         p.color = color
+        p.gender = gender if gender in ("男", "女") else "男"
         p.identity_done = True
         self.names[p.pid] = name
         self.log("system", f"🎭 {p.emoji} {name} 确定了自己的身份"
-                 + (f"（{why}）" if why else ""), [p.pid])
-        p.remember(f"我叫{name}，住进了合租之家", 8)
+                 + (f"（{why}）" if why else ""), [p.pid],scope="game")
+        p.remember(f"我叫{name}，性别{p.gender}，住进了合租之家", 8)
 
     async def run_identity_phase(self) -> None:
+        self.ensure_recording()
+        recorder=self.recorder
+        token=REQUEST_TRACE.set(lambda data:recorder.append("model",data) if recorder else None)
+        try:
+            await self._run_identity_phase()
+        finally:
+            REQUEST_TRACE.reset(token)
+            self.record_frame()
+
+    async def _run_identity_phase(self) -> None:
         """开局身份阶段：并行让每个玩家（有档案的）自选身份"""
         # 任一玩家有可用档案就走 LLM 身份（每玩家各自的档案）
         any_api = any(self.profile_for(p.pid) for p in self.players)
         if not any_api:
             for i, p in enumerate(self.players):
+                if p.identity_done:continue
                 preset = PRESET_IDENTITIES[i % len(PRESET_IDENTITIES)]
                 self.apply_identity(p, preset["name"], preset["color"])
             return
-        taken: list[str] = []
+        taken: list[str] = [p.name for p in self.players if p.identity_done]
         self.identity_phase = True
-        self.log("system", "🎪 新居民们正在给自己起名字…")
+        self.log("system", "🎪 新居民们正在选择名字、性别与颜色…")
 
         async def one(p: Player):
+            if p.identity_done:return
             prof = self.profile_for(p.pid)
             model = self.model_of.get(p.pid) or (prof.default_model if prof else "")
             if not prof or not model:
@@ -168,33 +407,41 @@ class Simulation:
                 timeout=self.settings.decision_timeout)
             if ident and ident["name"] not in taken:
                 taken.append(ident["name"])
-                self.apply_identity(p, ident["name"], ident["color"], ident.get("why", ""))
+                self.apply_identity(p, ident["name"], ident["color"], ident.get("why", ""), gender=ident.get("gender", "男"))
             else:
                 preset = PRESET_IDENTITIES[len(taken) % len(PRESET_IDENTITIES)]
                 if preset["name"] in taken:
                     preset = {"name": f"小{chr(0x91cc + len(taken))}",
                               "color": preset["color"], "emoji": preset["emoji"]}
                 taken.append(preset["name"])
-                self.apply_identity(p, preset["name"], preset["color"])
+                self.apply_identity(p, preset["name"], preset["color"], gender=ident.get("gender", "男") if ident else "男")
 
         await asyncio.gather(*[one(p) for p in self.players])
         self.identity_phase = False
         self.log("system", "🏘️ 所有居民就位，小镇生活开始！")
 
     # ------------------------------------------------------------ 日志
-    def log(self, type_: str, text: str, players: list | None = None) -> GameEvent:
+    def log(self, type_: str, text: str, players: list | None = None, *, resident_memory: bool = True, scope: str | None = None) -> GameEvent:
+        scope=scope or ('game' if type_ in ('activity','social','combat','dialogue','random') else 'user')
+        if not resident_memory:scope='user'
         self.event_id += 1
         e = GameEvent(id=self.event_id, day=self.day, tick=self.tick,
                       clock=self.clock, wall=time.time(), type=type_,
-                      text=text, players=players or [])
+                      text=text, players=players or [], scope=scope)
         self.events.append(e)
+        if e.scope=="game" and resident_memory and players:
+            for p in self.players:
+                if p.pid in players or p.name in players:
+                    p.remember(text, 6 if type_ in ("combat", "random") else 3)
+
         if len(self.events) > 5000:
             self.events = self.events[-3000:]
+        self.record("event", e.model_dump())
+        if self.recorder:self.record_frame()
         return e
 
     # ------------------------------------------------------------ 主循环
     async def run(self) -> None:
-        self.running = True
         while self.running:
             t0 = time.time()
             await self.step_tick()
@@ -203,6 +450,7 @@ class Simulation:
             await asyncio.sleep(max(0.05, interval - elapsed))
 
     def start(self):
+        self.ensure_recording()
         if not self.running:
             self.running = True
         if self._loop_task is None or self._loop_task.done():
@@ -210,6 +458,12 @@ class Simulation:
 
     def pause(self):
         self.running = False
+        if self._loop_task:
+            self._loop_task.cancel()
+            self._loop_task = None
+        for p in self.players:
+            if p.state == "deciding":
+                p.state = "idle"
         self.log("system", "⏸ 模拟已暂停")
 
     def resume(self):
@@ -219,30 +473,55 @@ class Simulation:
 
     def stop(self):
         self.running = False
+        if self._affinity_task:
+            self._affinity_task.cancel()
+            self._affinity_task = None
         if self._loop_task:
             self._loop_task.cancel()
             self._loop_task = None
+        for p in self.players:
+            if p.state == "deciding":
+                p.state = "idle"
         self.log("system", "⏹ 模拟已停止")
 
     # ------------------------------------------------------------ 单 tick
     async def step_tick(self) -> None:
-        self.tick += 1
-        self.global_tick += 1
-        if self.tick >= 144:
-            self.tick = 0
-            self.day += 1
-            self.log("system", f"🌅 第 {self.day} 天开始了")
+        self.ensure_recording()
+        async with self._tick_lock:
+            recorder=self.recorder
+            token=REQUEST_TRACE.set(lambda data:recorder.append("model",data) if recorder else None)
+            try:
+                await self._step_tick()
+            finally:
+                REQUEST_TRACE.reset(token)
+                self.record_frame()
 
-        # 开局身份阶段未完成时不推进生活
+    async def _step_tick(self) -> None:
         if self.identity_phase:
             return
+        await self.maintain_memories()
 
         # 1. 决策（idle 且不在对话中的玩家）
         idlers = [p for p in self.players
-                  if p.state == "idle" and p.identity_done
+                  if (p.state == "idle" or (p.state == "waiting_model" and time.monotonic() >= p.next_decision_at) or (p.vehicle_driver and self.global_tick % 6 == 0)) and p.identity_done
                   and p._conversation is None]
+        for p in self.players:
+            p.day, p.world_tick, p.hour = self.day, self.global_tick, self.hour
         if idlers:
             await self._decide_batch(idlers)
+
+        # 有绑定模型但尚未得到可执行回答时，暂缓整个逻辑刻；不扣生命和饥饿。
+        if any(p.state in ('waiting_model','deciding') for p in self.players):
+            return
+
+        self.tick += 1
+        self.global_tick += 1
+        from .town_services import update_market
+        update_market(self)
+        if self.tick >= 144:
+            self.tick = 0
+            self.day += 1
+            self.log("system", f"🌅 第 {self.day} 天开始了",scope="game")
 
         # 1.5 推进活跃对话（每 tick 每对话推进一步回合）
         if self.conversations:
@@ -259,10 +538,14 @@ class Simulation:
                     continue
                 await conv.advance()
 
-        # 2. 推进状态机
-        for p in self.players:
+        # 2. 推进状态机：循环轮换先行者，避免固定顺序长期抢占门口。
+        self.repair_positions()
+        order=self.players[self.global_tick%len(self.players):]+self.players[:self.global_tick%len(self.players)] if self.players else []
+        for p in order:
             p.day, p.world_tick, p.hour = self.day, self.global_tick, self.hour
             p.tick(sim=self)
+
+        self.random_events.tick(self)
 
         # 3. 被动消耗
         for p in self.players:
@@ -279,8 +562,25 @@ class Simulation:
                 doing = f"，正在{p.activity['name']}" if p.activity else ""
                 p.remember(f"我在{z}{doing}", 1)
 
+        await self.maintain_memories()
+
         # 6. 好感队列消化（不阻塞）
-        asyncio.get_event_loop().create_task(self._drain_affinity())
+        if self._affinity_task is None or self._affinity_task.done():
+            self._affinity_task = asyncio.create_task(self._drain_affinity())
+
+    async def maintain_memories(self):
+        async def one(p):
+            if not any(p.memory.needs_compaction(tier) for tier in (1,2)):
+                return
+            profile = self.profile_for(p.pid)
+            model = self.model_of.get(p.pid) or (profile.default_model if profile else "")
+            async def selector(candidates, count):
+                return await brain.select_memories_llm(profile, model, p.name, candidates, count,
+                    timeout=self.settings.decision_timeout)
+            promotions = await p.memory.maintain(selector if profile and model else None)
+            for tier, before, after, mode in promotions:
+                self.log("memory", f"🧠 {p.name} 将{before}条{tier}级记忆整理为{after}条{tier+1}级记忆（{mode}提名后抽取80%＋全池随机20%）", [p.pid])
+        await asyncio.gather(*(one(p) for p in self.players))
 
     def _report_encounters(self):
         """同场馆相遇播报（进入新场所遇到人时记事件+记忆）"""
@@ -318,20 +618,44 @@ class Simulation:
         others = [o for o in self.players if o is not p]
         nearby = [o.name for o in p.nearby_players(others)]
         p.state = "deciding"
+        p.decision_status = "等待模型回复"
+        self.log("system",f"🧠 {p.name} 正在等待模型决定下一项活动",[p.pid],resident_memory=False)
+        riding_before = p.vehicle_driver
+        from .town_services import prompt_context
+        p.town_context = prompt_context(self,p)
+        p.transport_context = self.travel_context(p)
+        p.known_names = {o.pid: o.name for o in self.players}
         model = self.model_of.get(p.pid) or prof.default_model
         try:
             d = await brain.decide_llm(
                 prof, model, p, nearby, self.clock,
                 brain.get_system_prompt(self.system_prompt),
                 self.settings.temperature, self.settings.decision_timeout,
-                self.decor_common)
-            self._apply_decision(p, d)
+                self.decor_common, progress=lambda status:self._decision_progress(p,status))
+            if p.state == "deciding" and p.vehicle_driver == riding_before and p in self.players:
+                p.decision_status = "模型已回复"
+                self.record("decision",{"pid":p.pid,**d.model_dump()})
+                self._apply_decision(p, d)
         except Exception as e:                 # noqa: BLE001
+            if p.state != "deciding" or p.vehicle_driver != riding_before or p not in self.players:
+                return
             self._llm_error_count += 1
-            self.log("error", f"⚠️ {p.name} 决策降级（{str(e)[:70]}）", [p.pid])
-            self._apply_rule(p)
+            p.state="waiting_model"
+            p.next_decision_at=time.monotonic()+(15 if getattr(e,'retryable',True) else 60)
+            p.decision_status=f"等待重试：{str(e)[:80]}"
+            self.log("error",f"⏳ {p.name} 暂未获得有效模型决策，稍后重试（{str(e)[:80]}）",[p.pid])
+
+    def _decision_progress(self,p,status):
+        p.decision_status=status
+        self.log("system",f"🧠 {p.name}：{status}",[p.pid],resident_memory=False)
 
     def _apply_rule(self, p: Player, depth: int = 0) -> None:
+        if p.vehicle_driver:
+            driver = self.by_pid(p.vehicle_driver)
+            if driver and driver.state == "moving" and p.stats.satiety > 25:
+                p.state = "riding"
+                return
+            self.leave_vehicle(p)
         if depth > 3:                         # 防递归：直接原地思考
             p.begin_activity("think", self)
             return
@@ -339,43 +663,94 @@ class Simulation:
         d = brain.decide_rule(p, p.nearby_players(others), self.hour)
         self._apply_decision(p, d, depth)
 
+    def _reject_decision(self,p,d,depth):
+        p.requested_duration=None
+        if d.source=='llm':
+            p.state='waiting_model'
+            p.next_decision_at=time.monotonic()+1
+            p.decision_status='模型行动暂不可执行，等待重新选择'
+            p.remember(f"我想{act.ACTIVITIES.get(d.action,{}).get('name',d.action)}，但当时条件不合适，没能进行",4)
+            self.log('error',f'⏳ {p.name} 的{d.action}暂不可执行，将请模型重新选择',[p.pid])
+        else:
+            self._apply_rule(p,depth+1)
+
     def _apply_decision(self, p: Player, d: Decision, depth: int = 0) -> None:
+        p.requested_duration = None
         key = d.action
-        a = act.ACTIVITIES.get(key)
+        if key in ("emoji","transfer"):
+            from .resident_tools import instant_action
+            try:
+                instant_action(self,p,d)
+                p.state="riding" if p.vehicle_driver else "idle";p.plan=d.reason;p.decision=d
+            except ValueError as exc:
+                p.remember(str(exc),3);self._reject_decision(p,d,depth)
+            return
+        if p.vehicle_driver:
+            if key == "stay_in_car":
+                p.state = "riding"
+                return
+            self.leave_vehicle(p)
+        if key in ("leave_car", "stay_in_car"):
+            p.begin_activity("think", self)
+            return
+        try:
+            if d.travel_mode and d.travel_mode != p.travel_mode:
+                self.set_travel_mode(p, d.travel_mode)
+            if key == "buy_car":
+                self.buy_car(p)
+                p.begin_activity("think", self)
+                return
+            if key == "ride":
+                driver = next((o for o in self.players if o.pid == d.target or o.name == d.target), None)
+                self.board_car(p, driver)
+                return
+        except ValueError as exc:
+            p.remember(str(exc), 3)
+            self._reject_decision(p,d,depth)
+            return
+        if key=="eat" and self.meal_until < self.global_tick:
+            d=d.model_copy(update={"action":"eat_out"});key="eat_out"
+        from .town_services import prepare
+        try:
+            a=prepare(self,p,d);key=d.action
+        except ValueError as exc:
+            p.remember(str(exc),3);self._reject_decision(p,d,depth);return
         if not a:
-            self._apply_rule(p, depth + 1)
+            self._reject_decision(p,d,depth)
             return
         p.plan = d.reason
         p.decision = d
+        if key=="computer":p.computer_operation_done=False
 
         if a.get("cost", 0) > p.stats.money:
             p.remember(f"我想{a['name']}但钱不够", 5)
-            self._apply_rule(p, depth + 1)
+            self._reject_decision(p,d,depth)
             return
 
         target = None
+        if key=='home_treat':
+            target=next((o for o in self.players if o.name==d.target or o.pid==d.target),p)
         if a.get("need") == "player":
             target = next((o for o in self.players
                            if (o.name == d.target or o.pid == d.target)
                            and o is not p), None)
             if target is None:
-                self._apply_rule(p, depth + 1)
+                self._reject_decision(p,d,depth)
                 return
 
-        # eat 特殊：家里没饭时引导去咖啡馆
-        if key == "eat" and self.meal_until < self.global_tick:
-            key = "eat_out"
-            a = act.ACTIVITIES[key]
-
+        p.requested_duration = (d.duration_minutes+9)//10 if d.duration_minutes and not a.get("fixed_duration") else None
+        if a.get('_kind')=='job' and p.requested_duration is not None:
+            p.requested_duration=max(a['duration'],p.requested_duration)
         ok = p.begin_activity(key, self, target=target)
         if not ok:
+            p.requested_duration = None
             if key == "love":
                 t = next((o for o in self.players if o.name == d.target), None)
                 if t:
                     p.remember(f"我和{t.name}的好感还不够，恋爱未成", 8)
                     self.log("social", f"💔 {p.name} 向 {t.name} 求爱未成（好感不足）",
                              [p.pid, t.pid])
-            self._apply_rule(p, depth + 1)
+            self._reject_decision(p,d,depth)
         elif d.source == "llm":
             self.log("activity",
                      f"🧠 {p.name} 决定{a['name']}"
@@ -406,17 +781,14 @@ class Simulation:
         """对话结束：好感结算（LLM）+ 基础增量"""
         a, b = conv.a, conv.b
         key = "chat" if conv.kind in ("chat", "follow") else "love"
-        base = 2.0 if key == "chat" else 4.0
-        # 基础好感增量
-        a.affinity[b.pid] = min(100.0, a.affinity.get(b.pid, 50) + base)
-        b.affinity[a.pid] = min(100.0, b.affinity.get(a.pid, 50) + base)
         # LLM 决定的浮动增减
-        self.request_affinity(a, b, key)
-        self.request_affinity(b, a, key)
+        self.request_affinity(a, b, key,conv.elapsed*10)
+        self.request_affinity(b, a, key,conv.elapsed*10)
 
     # ------------------------------------------------------------ 好感队列
-    def request_affinity(self, a: Player, o: Player, activity_key: str):
-        self.affinity_queue.append((a.pid, o.pid, activity_key))
+    def request_affinity(self, a: Player, o: Player, activity_key: str, duration_minutes=None):
+        minutes=duration_minutes if duration_minutes is not None else max(0,a.activity_total-a.activity_left)*10
+        self.affinity_queue.append((a.pid,o.pid,activity_key,minutes))
 
     async def _drain_affinity(self):
         """异步消化好感请求：LLM 决定 a 对 o 的好感增减"""
@@ -425,7 +797,9 @@ class Simulation:
         self._affinity_busy = True
         try:
             while self.affinity_queue:
-                a_pid, o_pid, key = self.affinity_queue.pop(0)
+                request=self.affinity_queue.pop(0)
+                a_pid,o_pid,key=request[:3]
+                hours=(request[3] if len(request)>3 else 30)/60
                 a, o = self.by_pid(a_pid), self.by_pid(o_pid)
                 if not a or not o:
                     continue
@@ -435,12 +809,16 @@ class Simulation:
                 if prof:
                     model = self.model_of.get(a.pid) or prof.default_model
                     what = act.ACTIVITIES.get(key, {}).get("name", key)
-                    delta = await brain.affinity_change_llm(
-                        prof, model, a.name, o.name, what,
-                        f"一起{what}", before,
-                        timeout=min(20.0, self.settings.decision_timeout))
+                    try:
+                        delta = await brain.affinity_change_llm(
+                            prof, model, a.name, o.name, what, f"一起{what}，请评估每小时的好感变化率", before,
+                            timeout=min(20.0, self.settings.decision_timeout))
+                    except asyncio.CancelledError:
+                        self.affinity_queue.insert(0,request)
+                        raise
                 else:
                     delta = random.choice([1, 1, 2, 2, 3])   # 规则模式：温和正增长
+                delta*=hours
                 new_val = max(0.0, min(100.0, before + delta))
                 a.affinity[o.pid] = new_val
                 if delta != 0 and prof:

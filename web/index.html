@@ -4,162 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🏘️ AI 小镇</title>
-<style>
-  :root { color-scheme: light; --green: #2e7d32; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-    background: #f0f2f5; color: #2c3e50;
-    display: grid; grid-template-columns: 1fr 380px;
-    grid-template-rows: 56px 1fr; height: 100vh; overflow: hidden;
-  }
-  header {
-    grid-column: 1/3; background: #fff; border-bottom: 1px solid #e0e4e8;
-    display: flex; align-items: center; padding: 0 14px; gap: 10px; z-index: 5;
-  }
-  header h1 { font-size: 17px; margin-right: auto; }
-  header h1 small { color: #888; font-weight: normal; font-size: 12px; margin-left: 6px; }
-  .btn {
-    border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
-    padding: 6px 13px; cursor: pointer; font-size: 13px; transition: all .15s;
-  }
-  .btn:hover { background: #f3f4f6; }
-  .btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
-  .btn.primary:hover { background: #1b5e20; }
-  .btn.warn { background: #c62828; color: #fff; border-color: #c62828; }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  select, input[type=number] { border: 1px solid #d0d7de; border-radius: 6px; padding: 5px 8px; font-size: 13px; }
-  #clockbox {
-    font-family: Consolas, monospace; background: #1a2332; color: #7ee787;
-    padding: 5px 12px; border-radius: 6px; font-size: 14px; min-width: 130px; text-align: center;
-  }
-  #stage { position: relative; overflow: hidden; background: #dfe8df; }
-  canvas { display: block; margin: 0 auto; }
-  /* 场景切换标签 */
-  #sceneTabs {
-    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-    display: flex; background: #fff; border-radius: 22px; box-shadow: 0 2px 10px rgba(0,0,0,.15);
-    overflow: hidden; z-index: 4;
-  }
-  #sceneTabs button {
-    border: none; background: none; padding: 8px 22px; font-size: 14px; cursor: pointer;
-    color: #666; transition: all .2s;
-  }
-  #sceneTabs button.active { background: var(--green); color: #fff; }
-  #stageTitle {
-    position: absolute; top: 12px; left: 14px; font-size: 13px; color: #555;
-    background: rgba(255,255,255,.85); padding: 4px 10px; border-radius: 6px; z-index: 4;
-  }
-  /* ---------- 侧栏 ---------- */
-  aside { background: #fff; border-left: 1px solid #e0e4e8; display: flex; flex-direction: column; overflow: hidden; }
-  nav { display: flex; border-bottom: 1px solid #e0e4e8; }
-  nav button {
-    flex: 1; padding: 10px 0; border: none; background: none; cursor: pointer;
-    font-size: 13px; color: #666; border-bottom: 2px solid transparent;
-  }
-  nav button.active { color: var(--green); border-bottom-color: var(--green); font-weight: bold; }
-  .panel { flex: 1; overflow-y: auto; padding: 12px; display: none; }
-  .panel.active { display: block; }
-  /* 玩家卡 */
-  .pcard { border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 10px; cursor: pointer; }
-  .pcard:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-  .pcard .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .pcard .head .dot { width: 12px; height: 12px; border-radius: 50%; }
-  .pcard .head b { font-size: 14px; }
-  .pcard .head .model { margin-left: auto; font-size: 10.5px; color: #888; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bar { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 3px 0; }
-  .bar label { width: 34px; color: #666; }
-  .bar .track { flex: 1; height: 8px; background: #eef1f4; border-radius: 4px; overflow: hidden; }
-  .bar .fill { height: 100%; border-radius: 4px; transition: width .4s; }
-  .bar .val { width: 34px; text-align: right; color: #999; font-family: monospace; }
-  .pcard .doing { font-size: 12px; color: #555; background: #f6f8fa; border-radius: 4px; padding: 4px 8px; margin-top: 6px; }
-  .pcard .doing b { color: var(--green); }
-  .pcard .belong { font-size: 11px; color: #999; margin-top: 3px; }
-  /* 关系网络 */
-  #relCanvas { width: 100%; border: 1px solid #e0e4e8; border-radius: 8px; background: #fafcf9; }
-  /* 日志 */
-  .filters { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-  .filters select, .filters input { font-size: 12px; padding: 4px 6px; border: 1px solid #d0d7de; border-radius: 5px; }
-  .filters input { width: 90px; }
-  #logList { font-size: 12.5px; }
-  .ev { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; line-height: 1.5; }
-  .ev .meta { color: #999; font-size: 11px; font-family: monospace; margin-right: 6px; }
-  .ev.combat, .ev.combat .meta { color: #c62828; }
-  .ev.dialogue { background: #f0f7ff; }
-  .ev.system { color: #666; }
-  .ev.error { color: #b58900; }
-  .ev.social { color: #1565c0; }
-  /* 表单 */
-  .form-row { margin-bottom: 12px; }
-  .form-row label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
-  .form-row input, .form-row select, .form-row textarea {
-    width: 100%; padding: 7px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px;
-  }
-  .form-row textarea { font-family: inherit; resize: vertical; }
-  .section-title { font-size: 13px; font-weight: bold; margin: 14px 0 8px; color: #444; }
-  .hint { font-size: 11.5px; color: #999; line-height: 1.5; margin-top: 4px; }
-  .profile-item { border: 1px solid #e0e4e8; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
-  .profile-item.active { border-color: var(--green); background: #f4faf4; }
-  .profile-item .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .profile-item .row b { font-size: 13px; }
-  .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #eef1f4; color: #666; }
-  .tag.openai { background: #e8f4e8; color: #1a7f37; }
-  .tag.anthropic { background: #fdeee2; color: #bc4c00; }
-  .profile-item .ops { margin-left: auto; display: flex; gap: 6px; }
-  .profile-item .ops .btn { padding: 3px 10px; font-size: 11px; }
-  .model-bind { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-  .model-bind span.nm { width: 70px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-bind input { flex: 1; font-size: 12px; padding: 5px; border: 1px solid #d0d7de; border-radius: 5px; }
-  .switch { position: relative; width: 38px; height: 20px; display: inline-block; }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .switch .slider { position: absolute; inset: 0; background: #ccc; border-radius: 20px; cursor: pointer; transition: .2s; }
-  .switch .slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; }
-  .switch input:checked + .slider { background: var(--green); }
-  .switch input:checked + .slider:before { transform: translateX(18px); }
-  .mem-list { font-size: 12px; }
-  .mem-list .mi { padding: 5px 8px; border-bottom: 1px dashed #eee; }
-  .mem-list .mi .t { color: #aaa; font-size: 10.5px; font-family: monospace; }
-  /* toast */
-  #toast {
-    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
-    background: rgba(30,30,30,.92); color: #fff; padding: 8px 18px; border-radius: 20px;
-    font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99;
-  }
-  #toast.show { opacity: 1; }
-  /* 气泡 */
-  .bubble {
-    position: absolute; background: rgba(255,255,255,.96); border: 1px solid #bbb;
-    border-radius: 8px; padding: 3px 8px; font-size: 11.5px; pointer-events: none;
-    white-space: nowrap; transform: translate(-50%, -135%); box-shadow: 0 1px 4px rgba(0,0,0,.18);
-    z-index: 3; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
-  }
-  /* 使用指南 */
-  #guideOverlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 50;
-    display: none; align-items: center; justify-content: center;
-  }
-  #guideOverlay.show { display: flex; }
-  #guideBox {
-    background: #fff; border-radius: 12px; width: min(680px, 92vw); max-height: 84vh;
-    display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.3);
-  }
-  #guideBox .ghead { padding: 16px 22px; border-bottom: 1px solid #eee; display: flex; align-items: center; }
-  #guideBox .ghead b { font-size: 17px; }
-  #guideBox .ghead .btn { margin-left: auto; }
-  #guideBox .gbody { padding: 18px 24px; overflow-y: auto; font-size: 13.5px; line-height: 1.75; }
-  #guideBox .gbody h3 { font-size: 14.5px; margin: 16px 0 6px; color: var(--green); }
-  #guideBox .gbody h3:first-child { margin-top: 0; }
-  #guideBox .gbody p { margin-bottom: 8px; color: #444; }
-  #guideBox .gbody .kbd {
-    background: #eef1f4; border: 1px solid #d0d7de; border-radius: 4px;
-    padding: 1px 7px; font-family: Consolas, monospace; font-size: 12px;
-  }
-</style>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/base.css">
+<link rel="stylesheet" href="/static/pixel-theme.css">
 </head>
 <body>
 <header>
-  <h1>🏘️ AI 小镇 <small id="modeTag">规则引擎模式</small></h1>
-  <div id="clockbox">第1天 00:00</div>
+  <h1>AI 小镇 <small id="modeTag">规则引擎模式</small></h1>
+  <div id="clockbox">第1天 08:00</div>
   <button class="btn primary" id="btnStart">▶ 开始</button>
   <button class="btn" id="btnPause" disabled>⏸ 暂停</button>
   <button class="btn" id="btnStep">⏭ 单步</button>
@@ -172,6 +24,7 @@
     <option value="4">4x</option>
     <option value="8">8x</option>
   </select>
+  <small id="recordingTag" style="color:#617952">○ 尚未录制</small>
   <button class="btn" id="btnGuide" title="使用指南">📖 指南</button>
 </header>
 
@@ -180,8 +33,11 @@
     <button class="active" data-scene="house">🏠 室内·合租之家</button>
     <button data-scene="town">🌤 室外·小镇</button>
   </div>
+  <div id="eventNotifications" aria-live="polite" aria-label="最新游戏事件与提示"></div>
   <div id="stageTitle">公共装饰度：0</div>
-  <canvas id="cv"></canvas>
+  <canvas id="cv" aria-label="AI 居民生活地图，可点击居民查看状态"></canvas>
+  <div class="stage-caption"><b id="sceneCaption">一屋灯火，几位室友。</b><br>像素生活观察簿 · 点击居民查看近况</div>
+  <div class="stage-legend"><span><i></i>模型自主生活</span><span><i></i>共享一个家</span></div>
 </div>
 
 <aside>
@@ -189,19 +45,67 @@
     <button class="active" data-panel="players">居民</button>
     <button data-panel="relations">关系网</button>
     <button data-panel="logs">事件</button>
-    <button data-panel="api">API / 模型</button>
+    <button data-panel="api">模型</button>
     <button data-panel="settings">设置</button>
+    <button data-panel="replays">存档</button>
   </nav>
 
-  <div class="panel active" id="panel-players"><div id="playerList"></div></div>
+  <div class="panel" id="panel-replays">
+    <div class="section-title">世界存档</div>
+    <p class="hint" id="currentSave">正在读取当前存档…</p>
+    <p class="hint">每次保存创建独立条目，包含居民记忆、对话、活动进度、提示词与模型绑定。从此处继续会创建副本，原档保留。</p>
+    <div class="archive-toolbar"><button class="btn primary" id="btnSaveWorld">保存当前</button><button class="btn" id="btnRefreshSaves">刷新列表</button></div>
+    <div id="saveEntries" class="archive-list" aria-label="世界存档列表"></div>
+    <details class="history-recordings"><summary>历史过程记录</summary>
+      <p class="hint">查看独立录制；旧录制没有完整上下文时仅可回放。</p>
+      <button class="btn" id="btnListReplays">刷新记录</button>
+      <div id="replayEntries" class="archive-list" aria-label="历史过程记录列表"></div>
+    </details>
+    <div id="replayControls" hidden>
+      <p id="replayPosition" class="hint"></p>
+      <input id="replaySeek" type="range" min="0" max="0" value="0" style="width:100%" aria-label="回放进度">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn" id="btnPlayReplay">▶ 播放</button>
+        <button class="btn" id="btnStepReplay">下一帧</button>
+        <button class="btn" id="btnExitReplay">返回实时</button>
+        <button class="btn primary" id="btnContinueReplay" disabled>从此帧继续</button>
+      </div>
+      <p class="hint">回放中可查看地图、居民和事件；实时控制已锁定。打开回放前会暂停当前世界。</p>
+    </div>
+  </div>
+
+  <div class="panel active" id="panel-players">
+    <div class="panel-heading"><b>合租日常</b><small>每位室友，都是一个模型</small></div>
+    <div id="playerList"></div>
+    <section class="travel-card" aria-label="居民出行设置">
+      <h3>室友的出行计划</h3>
+      <select id="travelResident" aria-label="选择 AI 居民"></select>
+      <div class="travel-modes" id="travelModes">
+        <button class="btn" data-mode="walk">步行 · 3 格</button>
+        <button class="btn" data-mode="bicycle">骑行 · 6 格</button>
+        <button class="btn" data-mode="car">开车 · 12 格</button>
+      </div>
+      <p id="travelInfo"></p>
+      <div class="vehicle-status"><p id="carStatus"></p>
+        <button class="btn" id="buyCar">购买私家车 · 1000</button>
+        <label for="rideDriver">搭乘附近室友的汽车</label>
+        <select id="rideDriver" aria-label="附近可以搭乘的司机"></select>
+        <div class="vehicle-actions"><button class="btn" id="boardCar">上车</button><button class="btn" id="leaveCar">下车</button></div>
+        <p id="rideInfo"></p>
+      </div>
+      <p>步行、骑行消耗饱食度；驾车与乘车不消耗出行饱食度。汽车仅在道路行驶，离路后步行，每格油费 0.15。司机另可载 3 位室友。</p>
+    </section>
+  </div>
 
   <div class="panel" id="panel-relations">
+    <p class="hint">连线各分一半：靠近谁，就表示谁对另一人的好感。绿色≥80，蓝色≥60，灰色30～59，红色&lt;30；? 表示尚无记录。</p>
     <canvas id="relCanvas" width="340" height="340"></canvas>
     <div class="hint" style="margin-top:6px">连线颜色：红=敌意(<30) 灰=一般 蓝=友好(≥60) 绿=挚友(≥80)；粗细代表好感强度。方向 A→B 用靠 A 端更粗表示。</div>
     <div id="relList" style="margin-top:10px;font-size:12.5px"></div>
   </div>
 
   <div class="panel" id="panel-logs">
+    <div class="event-tabs" role="tablist" aria-label="事件分类"><button class="active" data-scope="game" role="tab" aria-selected="true">游戏事件</button><button data-scope="user" role="tab" aria-selected="false">提示</button></div>
     <div class="filters">
       <select id="fType">
         <option value="">全部类型</option>
@@ -209,6 +113,8 @@
         <option value="social">社交</option>
         <option value="combat">冲突</option>
         <option value="dialogue">对白</option>
+        <option value="random">随机事件</option>
+        <option value="memory">记忆整理</option>
         <option value="system">系统</option>
         <option value="error">异常</option>
       </select>
@@ -270,7 +176,7 @@
       <span style="font-size:13px">聊天时生成对白（关闭则用内置文案）</span>
     </div>
     <div class="form-row" style="margin-top:12px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
-    <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="120" value="25"></div>
+    <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="300" value="90"></div>
     <button class="btn primary" id="btnSaveSettings" style="width:100%">保存设置</button>
 
     <div class="section-title">玩家管理 <span style="font-weight:normal;font-size:11px;color:#999">（未运行时可增减）</span></div>
@@ -285,8 +191,11 @@
 
     <div class="section-title">记忆查看器</div>
     <div class="form-row"><select id="memPlayer" style="width:100%"></select></div>
+    <div class="form-row"><select id="memTier" style="width:100%"><option value="1">一级 · 日常经历</option><option value="2">二级 · 精简记忆</option><option value="3">三级 · 深层记忆（永久）</option></select></div>
+    <div class="hint" id="memStats">模型提名后抽取80%＋全池随机20%；每次仅检索少量记忆。</div>
     <button class="btn" id="btnLoadMem" style="width:100%">读取记忆流</button>
     <div class="mem-list" id="memList" style="margin-top:10px"></div>
+    <button class="btn" id="btnMoreMem" hidden style="width:100%">继续读取</button>
   </div>
 </aside>
 
@@ -298,12 +207,16 @@
       <h3>这是什么？</h3>
       <p>一座由 AI 居民自主生活的合租之家 + 小镇。每个居民由一个大模型扮演，共享同一份提示词，但拥有各自的记忆、数值状态和人际关系——所以他们会表现出不同的性格。</p>
       <h3>30 秒上手</h3>
-      <p>① 点顶部的 <span class="kbd">▶ 开始</span>，居民们先给自己起名字（若已配置 API）；② 看着他们吃饭、上班、打游戏、交朋友；③ 中途随时可 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速 / <span class="kbd">⟲ 重置</span>。</p>
+      <p>① 点顶部的 <span class="kbd">▶ 开始</span>，居民们先选择自己的名字、性别与颜色（若已配置 API）；② 看着他们吃饭、上班、打游戏、交朋友；③ 中途随时可 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速 / <span class="kbd">⟲ 重置</span>。</p>
       <h3>两个场景</h3>
       <p>地图上方有两个标签页：<b>室内·合租之家</b>（5 间卧室、客厅、厨房、餐厅、两个卫生间、洗衣区、大阳台）和<b>室外·小镇</b>（商店、公园、办公楼、电影院、健身房、医院等）。居民从东侧大门出入；两个场景用不同比例尺渲染。</p>
       <h3>接入大模型</h3>
+      <p>游戏角色只有这些合租 AI 居民；室外建筑是活动地点，不会生成其他 NPC。点击居民卡片或地图人物，再到「室友的出行计划」查看出行和车辆。</p>
+      <h3>出行与共用汽车</h3>
+      <p>步行 3 格/tick，骑行 6 格/tick，会消耗饱食度；汽车在道路上最高 12 格/tick，不消耗饱食度，每格油费 0.15。室内一律步行。全镇开局只有一辆共用汽车，每位居民可花 1000 金钱购买一辆私家车。取车需要靠近停车点；司机在车位时，两格内的室友可搭乘，最多另载 3 人。离开道路或回家时自动下车。模型也能自主选择出行、购车和搭乘。</p>
+      <h3>API 设置步骤</h3>
       <p>不配置 API 时居民由内置规则引擎驱动（也能玩）。想要「真 AI」：</p>
-      <p>① 侧栏 <b>API / 模型</b> → 新增档案：填 Base URL、API Key，选上游格式；<br>
+      <p>① 侧栏 <b>模型</b> → 新增档案：填 Base URL、API Key，选上游格式；<br>
       ② 点 <span class="kbd">📋 获取模型列表</span> 直接拉取该网关可用模型，点选即可，不用手填；<br>
       ③ 保存后点「测试」验证连通，然后「启用」；<br>
       ④ 在「玩家模型绑定」里为每个居民先<b>选择 API 档案</b>、再点「载模型」挑选具体模型——不同居民可以走不同网关、用不同模型（比如两个走 A 网关用 DeepSeek / GLM，三个走 B 网关用 Qwen / ERNIE / MiniMax），观察他们的性格差异。</p>
@@ -313,541 +226,25 @@
       <p>饱食度会持续下降，归零开始掉血；血量归零会被送医并扣 30 元；没钱要去办公楼/田地/施工地打工；睡觉恢复精力，夜间睡眠效果更好。居民可以去商店买<b>鲜花💐/盆栽🪴</b>布置自己的房间或公共区域（持续提升心情），也可以送给心上人。</p>
       <h3>观察工具</h3>
       <p><b>居民</b>面板：每个人的数值、当前活动、持有物品；<b>关系网</b>：好感网络图；<b>事件</b>：全部日志（按天/类型/关键词过滤，含 AI 决策理由和对白）；<b>设置</b>：编辑统一提示词、读任意居民的记忆流。</p>
+      <h3>场所、技能与工作</h3>
+      <p>点击室外建筑可查看服务、课程、岗位和商品价格。模拟运行中只读，暂停后可修改参数。咖啡馆喝咖啡和看书，饭店吃饭；在学校学习技能后，可应聘更高技能的工作，也可在家行医、改善料理或在电脑上交易虚拟指数。每100经验升一级，最高5级；工资按实际工作时间支付。</p>
+      <p>职业分为一级、二级；二级要求更高技能，最低班次更短、时薪更高。所有工作缓慢增长对应技能经验，默认每小时3经验；学校教师要求任教学科至少3级，经验率是同学科其他职业的两倍。各技能的生活增益随等级提高，相关工作每级额外节约2%精力。池塘可钓鱼、游泳，小镇花园可散步、赏花、做园艺，收益按实际活动时间计算。</p>
       <h3>省 token 技巧</h3>
       <p>「聊天时生成对白」关闭后，对话改用内置文案，只剩决策调用 LLM。速度调快（8x）会让单位时间内的决策更密集，token 消耗也随之上升。</p>
     </div>
   </div>
 </div>
 
+<dialog id="buildingDialog" class="building-dialog">
+  <div class="building-heading"><h3 id="buildingName"></h3><button class="btn" id="closeBuilding">关闭</button></div>
+  <p class="hint" id="buildingHint"></p>
+  <div id="buildingServices"></div>
+  <button class="btn primary" id="saveBuilding">保存参数</button>
+</dialog>
 <div id="toast"></div>
 
-<script>
-"use strict";
-/* ================= 工具 ================= */
-const $ = id => document.getElementById(id);
-const API = "/api";
-async function jpost(url, body) {
-  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
-  if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
-  return r.json();
-}
-async function jput(url, body) {
-  const r = await fetch(url, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
-  return r.json();
-}
-async function jget(url) { return (await fetch(url)).json(); }
-function toast(msg, ok=true) {
-  const t = $("toast"); t.textContent = msg; t.style.background = ok ? "rgba(30,30,30,.92)" : "#c62828";
-  t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2400);
-}
-
-/* ================= 场景与地图 ================= */
-let curScene = "house";
-let MAPS = {house: null, town: null};      // rows
-let players = [], bubbles = [];
-let decorCommon = 0, identityPhase = false;
-
-const TILE_HOUSE = 30, TILE_TOWN = 22;     // 室内比例尺更大
-const TILE_STYLE = {
-  ".": ["#e8e4d8", ""], "#": ["#c8c0b4", ""], "T": ["#5d8f4e", "🌲"],
-  "W": ["#6ab7d8", "🌊"], "■": ["#8a8578", ""],
-  "h": ["#d9c9b0", "🛏"], "L": ["#c9d6c8", "🛋"], "K": ["#e3c9a8", "🍳"],
-  "D": ["#e8d8c3", "🍽"], "b": ["#b8d4d8", "🚻"], "a": ["#a8d5a2", "🌿"],
-  "w": ["#d4d4e0", "🧺"], "E": ["#b9985f", "🚪"],
-  "S": ["#f2c57c", "🛒"], "P": ["#95b8a6", "🌳"], "O": ["#a3b18a", "🏢"],
-  "M": ["#b8a7d8", "🎬"], "G": ["#b5838d", "🏋"], "C": ["#e8a87c", "☕"],
-  "F": ["#c9a66b", "🌾"], "~": ["#b08968", "🧱"], "B": ["#e0e0e0", "🏥"],
-  "X": ["#8d99ae", "💥"],
-};
-const cv = $("cv"), ctx = cv.getContext("2d");
-
-function tilePx() { return curScene === "house" ? TILE_HOUSE : TILE_TOWN; }
-
-function resize() {
-  const rows = MAPS[curScene]; if (!rows) return;
-  const n = rows.length, tp = tilePx();
-  cv.width = n * tp; cv.height = n * tp;
-  const stage = $("stage");
-  const scale = Math.min((stage.clientWidth - 20) / cv.width, (stage.clientHeight - 60) / cv.height, 1.8);
-  cv.style.width = Math.round(cv.width * scale) + "px";
-  cv.style.height = Math.round(cv.height * scale) + "px";
-}
-window.addEventListener("resize", resize);
-
-function draw() {
-  const rows = MAPS[curScene]; if (!rows) return;
-  const tp = tilePx(), n = rows.length;
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const ch = rows[y][x], st = TILE_STYLE[ch] || TILE_STYLE["."];
-    ctx.fillStyle = st[0]; ctx.fillRect(x*tp, y*tp, tp, tp);
-    if (st[1]) {
-      ctx.font = (tp*0.55|0) + "px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(st[1], x*tp+tp/2, y*tp+tp/2+1);
-    }
-  }
-  // 只画当前场景的玩家
-  for (const p of players) {
-    if (p.scene !== curScene) continue;
-    const px = p.x*tp, py = p.y*tp, r = Math.max(11, tp*0.42);
-    // 影子
-    ctx.beginPath(); ctx.ellipse(px+tp/2, py+tp*0.82, r*0.8, r*0.3, 0, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(0,0,0,.15)"; ctx.fill();
-    // 身体
-    ctx.beginPath(); ctx.arc(px+tp/2, py+tp*0.45, r, 0, Math.PI*2);
-    ctx.fillStyle = p.color; ctx.fill();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = "#fff"; ctx.stroke();
-    ctx.font = (r*1.2|0) + "px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(p.emoji, px+tp/2, py+tp*0.45+1);
-    // 名字
-    ctx.font = "bold " + Math.max(10, tp*0.34|0) + "px sans-serif";
-    ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 3;
-    ctx.strokeText(p.name, px+tp/2, py-4);
-    ctx.fillStyle = "#222"; ctx.fillText(p.name, px+tp/2, py-4);
-    // 活动 emoji 徽章
-    if (p.activity_emoji) {
-      ctx.font = (tp*0.5|0) + "px serif";
-      ctx.fillText(p.activity_emoji, px+tp/2+r*0.95, py+tp*0.45-r*0.95);
-    }
-  }
-}
-
-/* ================= 场景切换 ================= */
-document.querySelectorAll("#sceneTabs button").forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll("#sceneTabs button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    curScene = btn.dataset.scene;
-    if (!MAPS[curScene]) loadMap(curScene);
-    resize(); draw();
-  };
-});
-async function loadMap(scene) {
-  const m = await jget(`${API}/map?scene=${scene}`);
-  MAPS[scene] = m.rows;
-}
-
-/* ================= 玩家面板 ================= */
-const STAT_STYLE = {
-  hp: ["生命", "#e74c3c"], satiety: ["饱食", "#e67e22"], energy: ["精力", "#f1c40f"],
-  mood: ["心情", "#9b59b6"], money: ["金钱", "#27ae60"],
-};
-function renderPlayers() {
-  $("playerList").innerHTML = players.map(p => {
-    const bars = Object.entries(STAT_STYLE).map(([k, [label, color]]) => {
-      const v = k === "money" ? p.stats.money : p.stats[k];
-      const pct = k === "money" ? Math.min(100, v/2) : v;
-      return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(0)}</span></div>`;
-    }).join("");
-    const items = Object.entries(p.items||{}).filter(([,v])=>v>0)
-      .map(([k,v]) => ({flower:"💐",plant:"🪴"}[k]+"×"+v)).join(" ");
-    const decor = (p.decor_room||0) > 0 ? ` · 🌸装饰${p.decor_room.toFixed(0)}` : "";
-    const doing = p.activity
-      ? `<div class="doing">${p.activity_emoji} 正在<b>${p.activity}</b>${p.target_name ? " → " + p.target_name : ""}</div>`
-      : `<div class="doing">💭 ${p.state === "deciding" ? "思考中..." : (p.plan || "闲站着")}</div>`;
-    const sceneTag = p.scene === "house" ? "🏠" : "🌤";
-    return `<div class="pcard">
-      <div class="head"><span class="dot" style="background:${p.color}"></span><b>${p.emoji} ${p.name}</b>
-        <span class="model">${p.model ? "🧠"+p.model.split("/").pop() : "规则"}</span></div>
-      ${bars}${doing}
-      <div class="belong">${sceneTag} ${p.home}${decor}${items ? " · " + items : ""}${p.model ? ` · <span title="${p.model}">${p.model}</span>` : ""}</div>
-    </div>`;
-  }).join("");
-  const sel = $("memPlayer");
-  if (sel) sel.innerHTML = players.map(p => `<option>${p.name}</option>`).join("");
-}
-
-/* ================= 关系网络 ================= */
-function drawRelations() {
-  const c = $("relCanvas"), g = c.getContext("2d");
-  g.clearRect(0, 0, c.width, c.height);
-  const nodes = players, n = nodes.length;
-  if (!n) return;
-  const cx = c.width/2, cy = c.height/2, R = Math.min(cx, cy) - 52;
-  const pos = nodes.map((_, i) => {
-    const ang = -Math.PI/2 + i * 2*Math.PI/n;
-    return [cx + R*Math.cos(ang), cy + R*Math.sin(ang)];
-  });
-  // 边
-  for (let i = 0; i < n; i++) for (let j = i+1; j < n; j++) {
-    const ab = nodes[i].affinity[nodes[j].name], ba = nodes[j].affinity[nodes[i].name];
-    if (ab === undefined && ba === undefined) continue;
-    const a2 = (ab ?? 50), b2 = (ba ?? 50);
-    const avg = (a2 + b2) / 2;
-    const color = avg >= 80 ? "#27ae60" : avg >= 60 ? "#3498db" : avg < 30 ? "#c0392b" : "#95a5a6";
-    const w = 0.8 + Math.abs(avg - 50) / 25;
-    g.beginPath(); g.moveTo(...pos[i]); g.lineTo(...pos[j]);
-    g.strokeStyle = color; g.lineWidth = Math.min(4, w); g.globalAlpha = .75; g.stroke(); g.globalAlpha = 1;
-    // 中点数值
-    const mx = (pos[i][0]+pos[j][0])/2, my = (pos[i][1]+pos[j][1])/2;
-    g.font = "bold 10px monospace"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillStyle = color; g.fillText(avg.toFixed(0), mx, my);
-  }
-  // 节点
-  nodes.forEach((p, i) => {
-    const [x, y] = pos[i];
-    g.beginPath(); g.arc(x, y, 16, 0, Math.PI*2);
-    g.fillStyle = p.color; g.fill(); g.lineWidth = 2.5; g.strokeStyle = "#fff"; g.stroke();
-    g.font = "14px serif"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillStyle = "#fff"; g.fillText(p.emoji, x, y+1);
-    g.font = "bold 11.5px sans-serif"; g.fillStyle = "#333";
-    g.fillText(p.name, x, y + 27);
-  });
-  // 边明细列表
-  const rows = [];
-  for (let i = 0; i < n; i++) for (let j = i+1; j < n; j++) {
-    const ab = nodes[i].affinity[nodes[j].name], ba = nodes[j].affinity[nodes[i].name];
-    if (ab === undefined && ba === undefined) continue;
-    rows.push(`<div class="ev"><span class="meta"></span>${nodes[i].name} ⇄ ${nodes[j].name}：
-      ${ab!==undefined ? ab.toFixed(0) : "?"} / ${ba!==undefined ? ba.toFixed(0) : "?"}</div>`);
-  }
-  $("relList").innerHTML = rows.join("") || '<div class="hint">还没有人际互动</div>';
-}
-
-/* ================= 日志 ================= */
-let allEvents = [];
-function renderEvents(evs) {
-  const list = $("logList");
-  const html = (evs || allEvents).slice(0, 300).map(e => {
-    const cls = ["combat","dialogue","system","error","social"].includes(e.type) ? e.type : "";
-    return `<div class="ev ${cls}"><span class="meta">D${e.day} ${e.clock}</span>${e.text}</div>`;
-  }).join("");
-  list.innerHTML = html || '<div style="color:#999;padding:20px;text-align:center">还没有事件</div>';
-}
-async function queryEvents() {
-  const params = new URLSearchParams();
-  if ($("fType").value) params.set("type_", $("fType").value);
-  if ($("fDayFrom").value) params.set("day_from", $("fDayFrom").value);
-  if ($("fDayTo").value) params.set("day_to", $("fDayTo").value);
-  if ($("fQ").value) params.set("q", $("fQ").value);
-  allEvents = await jget(`${API}/events?` + params.toString());
-  renderEvents(allEvents);
-}
-
-/* ================= WebSocket ================= */
-let ws;
-function connectWS() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onmessage = msg => {
-    const d = JSON.parse(msg.data);
-    if (d.type === "tick") {
-      players = d.players;
-      decorCommon = d.decor_common;
-      identityPhase = d.identity_phase;
-      simRunning = d.running;
-      $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
-      $("modeTag").textContent = identityPhase ? "居民起名中…" : (d.running ? "运行中" : "已暂停");
-      $("stageTitle").textContent = `公共装饰度：${(decorCommon||0).toFixed(0)} · ${players.filter(p=>p.scene===curScene).length} 人在此场景`;
-      renderPlayers(); draw();
-      renderPlayerAdmin();
-      if ($("panel-relations").classList.contains("active")) drawRelations();
-      if (d.events && d.events.length) {
-        allEvents = [...d.events, ...allEvents].slice(0, 500);
-        if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
-      }
-    } else if (d.type === "dialogue") {
-      for (const ln of d.lines) {
-        const m = ln.match(/^(.+?):\s*(.+)$/);
-        if (m) bubbles.push({name: m[1], text: m[2], until: Date.now() + 12000});
-      }
-      allEvents.unshift(d.event);
-      if ($("panel-logs").classList.contains("active")) renderEvents(allEvents);
-    }
-  };
-  ws.onclose = () => setTimeout(connectWS, 2000);
-}
-function renderBubbles() {
-  document.querySelectorAll(".bubble").forEach(b => b.remove());
-  const now = Date.now();
-  bubbles = bubbles.filter(b => b.until > now);
-  const rect = cv.getBoundingClientRect();
-  const scale = cv.width / rect.width;
-  const tp = tilePx();
-  for (const b of bubbles) {
-    const p = players.find(p => p.name === b.name && p.scene === curScene);
-    if (!p) continue;
-    const el = document.createElement("div");
-    el.className = "bubble"; el.textContent = b.text;
-    el.style.left = (cv.offsetLeft + (p.x+0.5)*tp/scale) + "px";
-    el.style.top = (cv.offsetTop + p.y*tp/scale) + "px";
-    $("stage").appendChild(el);
-  }
-}
-setInterval(renderBubbles, 400);
-
-/* ================= 控制 ================= */
-$("btnStart").onclick = async () => { await jpost(`${API}/control`, {cmd:"start"}); setRunning(true); };
-$("btnPause").onclick = async () => { await jpost(`${API}/control`, {cmd:"pause"}); setRunning(false); };
-$("btnStep").onclick = async () => { await jpost(`${API}/control`, {cmd:"step"}); };
-$("btnReset").onclick = async () => {
-  if (!confirm("重置世界？身份阶段会重新进行（模型会重新起名）。")) return;
-  await jpost(`${API}/control`, {cmd:"reset"});
-  MAPS = {house:null, town:null};
-  await loadMap(curScene); resize();
-  allEvents = []; players = [];
-  toast("已重置"); refreshState();
-};
-$("speedSel").onchange = e => jpost(`${API}/control`, {cmd:"speed", speed:+e.target.value});
-function setRunning(r) { $("btnStart").disabled = r; $("btnPause").disabled = !r; }
-
-/* ================= 指南 ================= */
-$("btnGuide").onclick = () => $("guideOverlay").classList.add("show");
-window.closeGuide = () => $("guideOverlay").classList.remove("show");
-$("guideOverlay").onclick = e => { if (e.target.id === "guideOverlay") closeGuide(); };
-
-/* ================= Tab ================= */
-document.querySelectorAll("nav button").forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    $("panel-" + btn.dataset.panel).classList.add("active");
-    if (btn.dataset.panel === "logs") renderEvents(allEvents);
-    if (btn.dataset.panel === "relations") drawRelations();
-  };
-});
-
-/* ================= 档案 ================= */
-let profiles = [], activeProfile = null;
-async function loadProfiles() {
-  const d = await jget(`${API}/profiles`);
-  profiles = d.profiles; activeProfile = d.active;
-  $("profileList").innerHTML = profiles.map(p => `
-    <div class="profile-item ${p.id === activeProfile ? "active" : ""}">
-      <div class="row">
-        <b>${p.name}</b>
-        <span class="tag ${p.format}">${p.format}</span>
-        <div class="ops">
-          ${p.id !== activeProfile ? `<button class="btn" onclick="activateProfile('${p.id}')">启用</button>` : '<span style="color:var(--green);font-size:11px">✓ 当前</span>'}
-          <button class="btn" onclick="testProfile('${p.id}')">测试</button>
-          <button class="btn" onclick="delProfile('${p.id}')">删除</button>
-        </div>
-      </div>
-      <div style="font-size:11px;color:#999;margin-top:4px">${p.base_url} · 默认 ${p.default_model || "-"}</div>
-    </div>`).join("") || '<div class="hint">还没有档案。新增一个，填入网关地址和 Key，小镇居民就会接入大模型。</div>';
-  await loadBinds();
-}
-window.activateProfile = async id => {
-  await jpost(`${API}/profiles/active`, {id});
-  toast("已切换档案"); loadProfiles(); refreshState();
-};
-window.testProfile = async id => {
-  toast("测试中（可能需10~20秒）…");
-  const r = await jpost(`${API}/profiles/test`, {id});
-  toast(r.message, r.ok);
-};
-window.delProfile = async id => {
-  if (!confirm("删除该档案？")) return;
-  await fetch(`${API}/profiles/${id}`, {method:"DELETE"});
-  loadProfiles();
-};
-$("btnAddProfile").onclick = () => {
-  $("profileForm").style.display = "block";
-  $("pfModelList").style.display = "none";
-};
-$("btnCancelProfile").onclick = () => { $("profileForm").style.display = "none"; };
-$("btnSaveProfile").onclick = async () => {
-  const body = {
-    name: $("pfName").value.trim(), format: $("pfFormat").value,
-    base_url: $("pfUrl").value.trim(), api_key: $("pfKey").value.trim(),
-    default_model: $("pfModel").value.trim(),
-  };
-  if (!body.name || !body.base_url || !body.api_key) return toast("名称/地址/Key 不能为空", false);
-  const r = await fetch(`${API}/profiles`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
-  if (!r.ok) return toast("保存失败", false);
-  $("profileForm").style.display = "none";
-  toast("档案已保存"); loadProfiles();
-};
-
-/* --- 获取模型列表 --- */
-$("btnFetchModels").onclick = async () => {
-  const url = $("pfUrl").value.trim(), key = $("pfKey").value.trim(), fmt = $("pfFormat").value;
-  if (!url || !key) return toast("请先填写 API 地址和 Key", false);
-  $("fmStatus").textContent = "获取中…";
-  // 临时保存一个草稿档案来走代理（用draft前缀，保存后删除）——更简单：直接传参查询
-  const r = await fetch(`${API}/models?base_url=${encodeURIComponent(url)}&api_key=${encodeURIComponent(key)}&format=${fmt}`).catch(()=>null);
-  let d = null;
-  if (r && r.ok) d = await r.json();
-  if (!d || !d.ok) {
-    $("fmStatus").textContent = d ? ("获取失败: " + (d.message||"").slice(0,80)) : "请求失败";
-    $("pfModelList").style.display = "none";
-    return;
-  }
-  $("fmStatus").textContent = `获取到 ${d.count} 个模型，点击选择：`;
-  const sel = $("pfModelList");
-  sel.innerHTML = d.models.map(m => `<option>${m}</option>`).join("");
-  sel.style.display = "block";
-  sel.onchange = () => { $("pfModel").value = sel.value; };
-  toast(`获取到 ${d.count} 个模型`);
-};
-
-/* ================= 模型绑定（档案+模型两级选择） ================= */
-let cfgProfiles = [];        // [{id, name, default_model}]
-let modelCache = {};         // profile_id → [model,...]（懒加载缓存）
-
-async function fetchModelsOf(pid_profile) {
-  if (modelCache[pid_profile]) return modelCache[pid_profile];
-  try {
-    const d = await jget(`${API}/models?profile_id=${pid_profile}`);
-    modelCache[pid_profile] = d.ok ? d.models : [];
-  } catch (e) { modelCache[pid_profile] = []; }
-  return modelCache[pid_profile];
-}
-
-async function loadBinds() {
-  const d = await jget(`${API}/config`);
-  cfgProfiles = d.profiles || [];
-  const playersCfg = d.players || [];
-  const act = d.active_profile;
-  $("modelBinds").innerHTML = playersCfg.map(p => {
-    const profId = p.binding?.profile_id || act || "";
-    const model = p.binding?.model || "";
-    const opts = cfgProfiles.map(pr =>
-      `<option value="${pr.id}" ${pr.id === profId ? "selected" : ""}>${pr.name}</option>`).join("");
-    return `<div class="bind-row" data-pid="${p.pid}" style="border:1px solid #e0e4e8;border-radius:8px;padding:8px;margin-bottom:8px">
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-        <b style="font-size:12.5px;width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</b>
-        <select class="bind-prof" style="flex:1;font-size:12px;padding:4px;border:1px solid #d0d7de;border-radius:5px">
-          <option value="">（跟随默认档案）</option>${opts}
-        </select>
-      </div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <select class="bind-model" style="flex:1;font-size:12px;padding:4px;border:1px solid #d0d7de;border-radius:5px">
-          <option value="">${model ? model : "（档案默认模型）"}</option>
-        </select>
-        <button class="btn bind-load" style="padding:3px 8px;font-size:11px;white-space:nowrap">↻ 载模型</button>
-      </div>
-    </div>`;
-  }).join("") || '<div class="hint">还没有玩家</div>';
-
-  // 已有模型选择的直填
-  document.querySelectorAll(".bind-row").forEach(row => {
-    const pid = row.dataset.pid;
-    const cfg = playersCfg.find(p => p.pid === pid);
-    if (cfg?.binding?.model) {
-      const sel = row.querySelector(".bind-model");
-      const opt = document.createElement("option");
-      opt.value = cfg.binding.model; opt.textContent = cfg.binding.model; opt.selected = true;
-      sel.prepend(opt);
-    }
-    // 载模型按钮：拉取该档案模型列表填充下拉
-    row.querySelector(".bind-load").onclick = async e => {
-      const btn = e.target; btn.disabled = true; btn.textContent = "…";
-      const profId = row.querySelector(".bind-prof").value || act || "";
-      if (!profId) { toast("请先选择档案（或启用一个默认档案）", false); btn.disabled = false; btn.textContent = "↻ 载模型"; return; }
-      const models = await fetchModelsOf(profId);
-      const sel = row.querySelector(".bind-model");
-      const cur = sel.value;
-      const def = cfgProfiles.find(p => p.id === profId)?.default_model || "";
-      sel.innerHTML = `<option value="">${def ? "默认：" + def : "（档案默认模型）"}</option>` +
-        models.map(m => `<option value="${m}" ${m === cur ? "selected" : ""}>${m}</option>`).join("");
-      btn.disabled = false; btn.textContent = "↻ 载模型";
-      toast(models.length ? `载入 ${models.length} 个模型` : "该档案无模型或获取失败", !!models.length);
-    };
-  });
-  $("setDialogue").checked = d.settings.dialogue_generation;
-  $("setTemp").value = d.settings.temperature;
-  $("setTimeout").value = d.settings.decision_timeout;
-}
-$("btnSaveBinds").onclick = async () => {
-  const binds = {};
-  document.querySelectorAll(".bind-row").forEach(row => {
-    binds[row.dataset.pid] = {
-      profile_id: row.querySelector(".bind-prof").value,
-      model: row.querySelector(".bind-model").value,
-    };
-  });
-  await jput(`${API}/config`, {player_bindings: binds});
-  toast("绑定已保存"); refreshState();
-};
-$("btnSaveSettings").onclick = async () => {
-  await jput(`${API}/config`, {
-    dialogue_generation: $("setDialogue").checked,
-    temperature: +$("setTemp").value,
-    decision_timeout: +$("setTimeout").value,
-  });
-  toast("设置已保存");
-};
-
-/* ================= 提示词 ================= */
-async function loadPrompt() {
-  const d = await jget(`${API}/prompt`);
-  $("sysPrompt").value = d.system_prompt;
-  $("sysPrompt").dataset.default = d.default_prompt;
-}
-$("btnSavePrompt").onclick = async () => {
-  await jput(`${API}/prompt`, {system_prompt: $("sysPrompt").value});
-  toast("提示词已保存，下次决策生效");
-};
-$("btnResetPrompt").onclick = async () => {
-  $("sysPrompt").value = $("sysPrompt").dataset.default || "";
-  await jput(`${API}/prompt`, {system_prompt: ""});
-  toast("已恢复默认提示词");
-};
-
-/* ================= 玩家管理（未运行时） ================= */
-let simRunning = false;
-function renderPlayerAdmin() {
-  $("playerAdmin").innerHTML = players.map(p => `
-    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed #eee">
-      <span class="dot" style="width:10px;height:10px;border-radius:50%;background:${p.color};display:inline-block"></span>
-      <span style="font-size:12.5px;flex:1">${p.emoji} ${p.name}</span>
-      <button class="btn" style="padding:2px 9px;font-size:11px" ${simRunning ? "disabled" : ""}
-              onclick="removePlayer('${p.name}')">移除</button>
-    </div>`).join("");
-  $("btnAddPlayer").disabled = simRunning;
-}
-window.removePlayer = async name => {
-  if (!confirm(`移除 ${name}？`)) return;
-  try {
-    const r = await fetch(`${API}/players/${encodeURIComponent(name)}`, {method:"DELETE"});
-    if (!r.ok) { const d = await r.json(); throw new Error(d.detail || "失败"); }
-    toast(`${name} 已离开`);
-    await refreshState(); loadBinds(); renderPlayerAdmin();
-  } catch (e) { toast(e.message, false); }
-};
-$("btnAddPlayer").onclick = async () => {
-  const name = $("npName").value.trim();
-  if (!name) return toast("名字不能为空", false);
-  try {
-    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂"});
-    $("npName").value = "";
-    toast(`${name} 已入住`);
-    await refreshState(); loadBinds(); renderPlayerAdmin();
-  } catch (e) { toast(e.message, false); }
-};
-
-/* ================= 记忆 ================= */
-$("btnLoadMem").onclick = async () => {
-  const name = $("memPlayer").value;
-  if (!name) return;
-  const ms = await jget(`${API}/players/${name}/memories`);
-  $("memList").innerHTML = ms.map(m =>
-    `<div class="mi"><span class="t">[D${m.day}·${m.tick}] ⭐${m.importance}</span><br>${m.content}</div>`
-  ).join("") || '<div class="hint">还没有记忆</div>';
-};
-$("btnFilter").onclick = queryEvents;
-
-/* ================= 初始化 ================= */
-async function refreshState() {
-  const d = await jget(`${API}/state`);
-  players = d.players;
-  identityPhase = d.identity_phase;
-  $("clockbox").textContent = `第${d.day}天 ${d.clock}`;
-  $("modeTag").textContent = d.identity_phase ? "居民起名中…"
-    : (d.llm_mode ? `LLM·${d.active_profile}` : "规则引擎模式");
-  setRunning(d.running);
-  renderPlayers(); draw();
-}
-(async function init() {
-  await loadMap("house");
-  resize(); draw();
-  await refreshState();
-  await loadProfiles();
-  await loadPrompt();
-  renderPlayerAdmin();
-  connectWS();
-  queryEvents();
-})();
-</script>
+<script src="/static/pixel-scene.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/town-buildings.js"></script>
 </body>
 </html>

@@ -4,7 +4,8 @@ pydantic v2 BaseModel：既做运行时类型校验，也直接用于 API/WS 序
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------- 数值
@@ -31,6 +32,7 @@ class PlayerSnapshot(BaseModel):
     name: str
     color: str
     emoji: str
+    gender: Literal["男", "女"] = "男"
     scene: str = "house"         # house / town
     x: int = 0
     y: int = 0
@@ -47,10 +49,40 @@ class PlayerSnapshot(BaseModel):
     items: dict[str, int] = Field(default_factory=dict)     # 物品栏
     decor_room: float = 0.0      # 自己卧室装饰度
     identity_done: bool = False  # 开局身份选择是否完成
+    travel_mode: Literal["walk", "bicycle", "car"] = "walk"
+    transport: str = "walk"
+    vehicle_driver: str | None = None
+    passengers: list[str] = Field(default_factory=list)
+    car_id: str | None = None
+    memory_counts: dict[str, int] = Field(default_factory=dict)
+    illness: str = "健康"
+    illness_severity: int = 0
+    activity_minutes_left: int = 0
+    activity_minutes_total: int = 0
+    skills: dict[str, float] = Field(default_factory=dict)
+    stock_shares: int = 0
+    stock_cost: float = 0
+    stock_trades: list[dict] = Field(default_factory=list)
+    computer_files: list[dict] = Field(default_factory=list)
+    transactions: list[dict] = Field(default_factory=list)
+    decision_status: str = ""
+
+
+class Vehicle(BaseModel):
+    id: str
+    owner_id: str | None = None
+    driver_id: str | None = None
+    x: int = 2
+    y: int = 12
 
 
 # ---------------------------------------------------------------- 记忆
 class MemoryItem(BaseModel):
+    id: str = ""
+    tier: Literal[1, 2, 3] = 1
+    selection_weight: float = 1.0
+    selected_by: str = "原始记录"
+    source_count: int = 1
     content: str
     day: int = 1
     tick: int = 0
@@ -60,6 +92,15 @@ class MemoryItem(BaseModel):
 # ---------------------------------------------------------------- 事件
 class GameEvent(BaseModel):
     """事件日志条目 —— 后台『查看一切事情』的数据基础"""
+    scope: Literal['game','user'] = 'user'
+
+    @model_validator(mode='before')
+    @classmethod
+    def classify_legacy_event(cls,data):
+        if isinstance(data,dict) and 'scope' not in data:
+            data={**data,'scope':'game' if data.get('type') in ('activity','social','combat','dialogue','random') else 'user'}
+        return data
+
     id: int = 0
     day: int = 1
     tick: int = 0
@@ -75,7 +116,19 @@ class Decision(BaseModel):
     action: str = ""             # 活动 key（英文）或中文名
     target: str = ""             # 目标玩家名 / 设施名 / 空
     reason: str = ""
+    duration_minutes: int | None = Field(default=None, ge=10, le=1440)
+    shares: int | None = Field(default=None, gt=0, le=1000000, strict=True)
+    emoji: str = ""
+    amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    money_from: str = ""
+    operation: str = "list"
+    location: Literal['','bed','here'] = ''
+    file_id: str = ""
+    title: str = Field(default="", max_length=120)
+    content: str = Field(default="", max_length=20000)
+    offset: int = Field(default=0, ge=0)
     source: str = "rule"         # llm / rule —— 用于对比观察
+    travel_mode: Literal["walk", "bicycle", "car"] | None = None
 
 
 # ---------------------------------------------------------------- API 档案（CCswitch 风格）
@@ -89,10 +142,10 @@ class ApiProfile(BaseModel):
 
 
 class Settings(BaseModel):
-    ticks_per_second: float = 1.0     # 模拟速度（1 tick = 游戏内 10 分钟）
+    ticks_per_second: float = Field(default=1.0, ge=0.1, le=10, allow_inf_nan=False)
     dialogue_generation: bool = True  # 聊天/恋爱时是否额外调用 LLM 生成对白
-    decision_timeout: float = 25.0    # LLM 决策超时秒数，超时走规则引擎
-    temperature: float = 0.8
+    decision_timeout: float = Field(default=90.0, ge=5, le=300, allow_inf_nan=False)
+    temperature: float = Field(default=0.8, ge=0, le=2, allow_inf_nan=False)
 
 
 class AppConfig(BaseModel):

@@ -15,7 +15,21 @@ from __future__ import annotations
 from .models import Stats
 
 # ------------------------------------------------------------------ 被动消耗
-PASSIVE_DRAIN = {"satiety": -0.8, "energy": -0.35, "mood": -0.1}
+PASSIVE_DRAIN = {"satiety": -0.8, "energy": -0.35, "mood": -1.0}
+LOW_ENERGY_MOOD_THRESHOLD = 20.0
+LOW_MOOD_HP_THRESHOLD = 20.0
+LOW_MOOD_HP_DELAY_TICKS = 18  # 连续3小时，每刻10分钟。
+LOW_MOOD_HP_LOSS = 0.5
+
+
+def relationship_mood_per_tick(affinity: float) -> float:
+    """单向好感对本人心情的影响；锚点：80→+6，0→−5。"""
+    score = max(0.0, min(100.0, affinity))
+    if score > 60:
+        return 2.0 + (score - 60.0) * 0.2
+    if score < 30:
+        return -(2.0 + (30.0 - score) * 0.1)
+    return 0.0
 MOVE_EXTRA_ENERGY = -0.25
 STARVE_HP_DAMAGE = -2.0
 
@@ -40,14 +54,14 @@ ACTIVITIES: dict[str, dict] = {
         "scene": "house", "cost": 0,
         "effects": {"satiety": 13, "mood": 2},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "在餐厅吃饭（需先有饭：做饭后60 tick内有效，否则去咖啡馆）",
+        "desc": "在餐厅吃饭（需先有饭：做饭后60 tick内有效，否则去饭店）",
     },
     "eat_out": {
-        "name": "下馆子", "emoji": "🍜", "duration": 3, "need": "facility:C",
+        "name": "下馆子", "emoji": "🍜", "duration": 3, "need": "facility:R",
         "scene": "town", "cost": 10,
         "effects": {"satiety": 15, "mood": 3},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "去镇上咖啡馆吃饭（花 10 元，不用自己做）",
+        "desc": "去镇上饭店吃饭（花 10 元，不用自己做）",
     },
     "watch_tv": {
         "name": "看电视", "emoji": "📺", "duration": 3, "need": "facility:L",
@@ -55,6 +69,16 @@ ACTIVITIES: dict[str, dict] = {
         "effects": {"mood": 3, "energy": 0.8},
         "synergy": True, "synergy_stat": "mood",
         "desc": "客厅大沙发看电视，人多更好看",
+    },
+    "computer": {
+        "name":"使用自己的电脑记录", "emoji":"💻", "duration":1, "need":"own_computer",
+        "scene":"house", "cost":0, "effects":{"energy":-0.3},
+        "desc":"在自己电脑创建、编辑、查看或删除文字记录，可以保存怕忘掉的经历",
+    },
+    "computer_game": {
+        "name":"电脑游戏", "emoji":"🎮", "duration":3, "need":"own_computer",
+        "scene":"house", "cost":0, "effects":{"mood":5,"energy":-2},
+        "desc":"回自己的电脑前打游戏，可指定游戏时长",
     },
     "game": {
         "name": "打游戏", "emoji": "🎮", "duration": 3, "need": "facility:L",
@@ -228,17 +252,19 @@ def facility_chars(key: str) -> list[str]:
         return []
     spec = need.split(":", 1)[1]
     if spec == "ANY":
-        return ["L", "K", "D", "w", "a", "b", "S", "P", "O", "M", "G", "C", "F", "~"]
+        return ["L", "K", "D", "w", "a", "b", "S", "P", "O", "M", "G", "C", "F", "R", "U"]
     return spec.split("|")
 
 
 def activity_menu(scene: str = "any") -> str:
     """给 LLM 的活动菜单（按场景过滤；LLM 会拿到两张图的完整菜单）"""
     lines = []
+    from .town_services import DEFS
     for k, a in ACTIVITIES.items():
-        if a.get("scene") not in ("any", scene):
+        if a.get("legacy"):continue
+        if scene != "any" and a.get("scene") not in ("any", scene):
             continue
-        cost = f", 花费{a['cost']}元" if a.get("cost") else ""
+        cost = "（参数见场所服务）" if k in DEFS else f", 花费{a['cost']}元" if a.get("cost") else ""
         req = []
         if a.get("need") == "player":
             req.append("需目标在身边(填target)")
@@ -247,7 +273,10 @@ def activity_menu(scene: str = "any") -> str:
         if a.get("gives_item"):
             req.append(f"获得{ITEMS[a['gives_item']]['name']}")
         extra = ("；" + "，".join(req)) if req else ""
-        lines.append(f"- {k}: {a['name']}{cost}{extra}")
+        location = {"house": "室内", "town": "室外"}.get(a.get("scene"), "任意地点")
+        if k not in DEFS and a.get('effects'):
+            cost += '，每小时收益率'+str({stat:round(rate*6,2) for stat,rate in a['effects'].items()})
+        lines.append(f"- {k}: {a['name']}（{location}）{cost}{extra}")
     return "\n".join(lines)
 
 
@@ -287,3 +316,8 @@ def synergy_effects(base_effects: dict, stat: str, n: int, avg_aff: float,
         else:
             out[k] = (solo, 0.0)
     return out if not as_delta else {k: d for k, (_, d) in out.items()}
+
+
+# 新场所与技能活动共享原有行走和时长引擎。
+from .town_services import register
+register(ACTIVITIES)

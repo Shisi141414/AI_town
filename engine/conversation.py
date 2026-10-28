@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import random
+import asyncio
 from typing import TYPE_CHECKING
 
 from . import brain
@@ -39,6 +40,8 @@ class Conversation:
         self.kind = kind              # chat / love / follow
         self.sim = sim
         self.history: list[tuple[str, str]] = []   # (说话人名, 台词)
+        self.duration_limit = a.activity_total if a.activity_custom_duration else None
+        self.elapsed = 0
         self.turn_count = 0
         self.phase = "opening"        # opening / a_turn / b_turn / leaving / ended
         self.waiting_on: "Player | None" = self.a  # 正在说话的人
@@ -47,9 +50,31 @@ class Conversation:
 
     # ------------------------------------------------------------ 驱动
     async def advance(self) -> None:
+        saved=self.__dict__.copy()
+        activity_left=self.a.activity_left
+        try:
+            await self._advance()
+            if self.elapsed>saved['elapsed']:
+                key='love' if self.kind=='love' else 'chat'
+                from .activities import ACTIVITIES
+                for speaker,other in ((self.a,self.b),(self.b,self.a)):
+                    for stat,rate in ACTIVITIES[key].get('effects',{}).items():setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
+                    speaker.stats.clamp()
+                    speaker.affinity[other.pid]=min(100,speaker.affinity.get(other.pid,50)+(8 if key=='love' else 4)/6)
+        except asyncio.CancelledError:
+            self.__dict__.update(saved);self.a.activity_left=activity_left
+            raise
+
+    async def _advance(self) -> None:
         """由 Simulation 每 tick 调一次：推进当前 phase"""
         if self.phase == "ended":
             return
+        self.elapsed += 1
+        if self.duration_limit is not None:
+            self.a.activity_left = max(0,self.duration_limit-self.elapsed)
+            if self.elapsed >= self.duration_limit:
+                self._end("planned_duration")
+                return
         if self.phase == "opening":
             self.phase = "a_turn"
             await self._do_turn(self.a, self.b, opener=True)
@@ -59,7 +84,7 @@ class Conversation:
             await self._do_turn(self.b, self.a)
         elif self.phase == "b_turn":
             self.turn_count += 1
-            if self.turn_count >= MAX_TURNS:
+            if self.duration_limit is None and self.turn_count >= MAX_TURNS:
                 self._end("max")
                 return
             self.phase = "a_turn"
@@ -74,13 +99,14 @@ class Conversation:
         prof = self.sim.profile_for(speaker.pid)
         model = self.sim.model_of.get(speaker.pid) or (prof.default_model if prof else "")
         turn = None
-        if prof and model:
+        if prof and model and self.sim.settings.dialogue_generation:
             try:
                 turn = await brain.conv_turn_llm(
                     prof, model, speaker.name, listener.name, self.kind,
                     speaker.affinity.get(listener.pid, 50),
                     speaker.stats.mood, speaker.stats.energy,
-                    self.history, timeout=self.sim.settings.decision_timeout)
+                    self.history, timeout=self.sim.settings.decision_timeout,
+                    memories=speaker.memory.brief(speaker.world_tick, k=4, query=listener.name, budget=1200))
             except Exception:                  # noqa: BLE001
                 turn = None
         if turn is None:
@@ -139,7 +165,7 @@ class Conversation:
         prof = self.sim.profile_for(stayer.pid)
         model = self.sim.model_of.get(stayer.pid) or (prof.default_model if prof else "")
         follow = False
-        if prof and model:
+        if prof and model and self.sim.settings.dialogue_generation:
             try:
                 # 用对话模板问 stayer：TA 说要走，你跟吗？
                 hist = self.history + [(leaver.name, "（起身准备离开）")]
@@ -147,7 +173,8 @@ class Conversation:
                     prof, model, stayer.name, leaver.name, self.kind,
                     stayer.affinity.get(leaver.pid, 50),
                     stayer.stats.mood, stayer.stats.energy,
-                    hist, timeout=self.sim.settings.decision_timeout)
+                    hist, timeout=self.sim.settings.decision_timeout,
+                    memories=stayer.memory.brief(stayer.world_tick, k=4, query=leaver.name, budget=1200))
                 follow = turn["act"] == "follow"
                 if follow and turn["say"]:
                     self._record(stayer, turn["say"])
@@ -199,6 +226,9 @@ class Conversation:
                     p.activity_key = ""
                     p.activity_left = 0
                     p.state = "idle"
+                if getattr(p,'_bed_partner_pid',None):
+                    from .interaction_points import release
+                    release(self.sim,p)
         # 摘要写入记忆
         n_lines = len(self.history)
         if n_lines:

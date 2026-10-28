@@ -5,14 +5,13 @@
   室外 TOWN  —— 小镇场馆
 
 设计原则（吸取 v1 教训）：
-- 室内采用「井字形」结构：两条竖墙 + 两条横墙把 24×24 内区分为九宫格，
-  每道内墙开 2~3 个门洞。九宫格天然保证所有房间互相可达。
-- 阳台为南侧整条房间（九宫格下排），通过门洞与卧室和客厅相通。
+- 室内参考合租平面图，五间 6×4 卧室围绕公共餐厅，客厅与阳台位于右侧。
 - 场景切换：室内东墙门 E(25,12) ⇄ 室外西门 E(1,12)。
 """
 from __future__ import annotations
 
 from collections import deque
+import heapq
 
 SIZE = 26
 
@@ -36,6 +35,8 @@ FACILITY_CHARS: dict[str, dict] = {
     "M": {"name": "电影院", "icon": "🎬"},
     "G": {"name": "健身房", "icon": "🏋"},
     "C": {"name": "咖啡馆", "icon": "☕"},
+    "R": {"name": "饭店", "icon": "🍜"},
+    "U": {"name": "学校", "icon": "🏫"},
     "F": {"name": "田地", "icon": "🌾"},
     "~": {"name": "施工地", "icon": "🧱"},
     "B": {"name": "医院", "icon": "🏥"},
@@ -44,6 +45,7 @@ FACILITY_CHARS: dict[str, dict] = {
     "T": {"name": "树木", "icon": "🌲"},
     ".": {"name": "空地", "icon": ""},
     "W": {"name": "湖", "icon": "🌊"},
+    "J": {"name": "小镇花园", "icon": "🌷"},
     "X": {"name": "损坏", "icon": "💥"},
 }
 
@@ -72,57 +74,46 @@ def _vwall(g, x, y0, y1, holes):
 
 
 # ================================================================== 室内
-def build_house() -> list[list[str]]:
-    """合租大平层（井字形九宫格布局）
+BEDROOM_RECTS = [(4, 1, 9, 4), (1, 6, 6, 9), (1, 11, 6, 14),
+                 (1, 16, 6, 19), (4, 21, 9, 24)]
+BEDROOM_ANCHORS = [(6, 3), (3, 8), (3, 13), (3, 18), (6, 23)]
 
-    坐标规划（内区 1~24）：
-      竖墙 x=7（洞 y=3,12,21）  x=16（洞 y=3,12,21）
-      横墙 y=8（洞 x=3,11,19）  y=17（洞 x=3,11,19）
-    九宫格：
-      [ 卧1 | 卧2 | 卧3 ]     y 1~7
-      [ 厨房 | 客厅 | 餐厅 ]   y 9~16
-      [ 卫1+卫2 | 阳台 | 洗衣+卧4 ] y 18~24   （下排高7格）
-    大门：东墙 (25,12)——与客厅右墙洞对齐；客厅东墙 x=16 洞 y=12 直通。
-    """
-    g = [[FLOOR] * SIZE for _ in range(SIZE)]
-    # 外墙
-    _rect(g, 0, 0, SIZE - 1, 0, WALL)
-    _rect(g, 0, SIZE - 1, SIZE - 1, SIZE - 1, WALL)
-    _rect(g, 0, 0, 0, SIZE - 1, WALL)
-    _rect(g, SIZE - 1, 0, SIZE - 1, SIZE - 1, WALL)
-    # 内墙（井字）
-    _vwall(g, 7, 1, 24, holes=(3, 12, 21))
-    _vwall(g, 16, 1, 24, holes=(3, 12, 21))
-    _hwall(g, 8, 1, 24, holes=(3, 10, 14, 19))
-    _hwall(g, 17, 1, 24, holes=(3, 11, 19))
-    # ---- 上排（y 1~7）：卧1 | 卧2 | 卧3 | 卧4 ----
-    _rect(g, 1, 1, 6, 7, "h")
-    _rect(g, 8, 1, 11, 7, "h")
-    _rect(g, 12, 1, 15, 7, "h")
-    _rect(g, 17, 1, 24, 7, "h")
-    # 上中格分隔墙（最后画，防止被房间填充覆盖）：卧2(x8~11) | 卧3(x12~15)
-    _vwall(g, 12, 1, 7, holes=())
-    # ---- 中排（y 9~16）：厨房 | 客厅 | 餐厅 ----
-    _rect(g, 1, 9, 6, 16, "K")
-    _rect(g, 8, 9, 15, 16, "L")
-    _rect(g, 17, 9, 24, 16, "D")
-    # ---- 下排（y 18~24）：卫1+卫2 | 阳台 | 洗衣+卧5 ----
-    _rect(g, 1, 18, 3, 24, "b")       # 卫生间1
-    _rect(g, 5, 18, 6, 24, "b")       # 卫生间2
-    _rect(g, 8, 18, 15, 24, "a")      # 大阳台
-    _rect(g, 17, 18, 20, 24, "w")     # 洗衣区
-    _rect(g, 22, 18, 24, 24, "h")     # 卧室5
-    # 电视与沙发：客厅内（渲染时在 L 区中央画图标）
-    # 大门：东墙正中 y=12（客厅行），并把 x=16 竖墙的 y=12 洞保持畅通
-    g[12][SIZE - 1] = "E"
-    # 确保餐厅(东中格)也能到大门：x=16 洞 y=12 已开
+
+def build_house() -> list[list[str]]:
+    """参照合租平面图：五个相同的 6×4 卧室围绕公共餐厅。"""
+    g = [[" "] * SIZE for _ in range(SIZE)]
+    # 主体与左侧三卧形成错层外轮廓；空白格属于屋外，不可通行。
+    _rect(g, 3, 0, 25, 25, WALL)
+    _rect(g, 4, 1, 24, 24, FLOOR)
+    _rect(g, 0, 5, 7, 20, WALL)
+    _rect(g, 8, 6, 16, 19, "D")
+    _rect(g, 18, 1, 24, 17, "L")
+    _rect(g, 18, 18, 24, 24, "a")
+    _rect(g, 18, 23, 20, 24, "w")
+    _rect(g, 11, 1, 16, 4, "K")
+    _hwall(g, 5, 3, 17, holes=(8, 13))
+    _vwall(g, 10, 1, 4, holes=())
+    _vwall(g, 17, 1, 10, holes=())
+    _vwall(g, 7, 6, 19, holes=(8, 13, 18))
+    _hwall(g, 10, 0, 7, holes=())
+    _hwall(g, 15, 0, 7, holes=())
+    _hwall(g, 20, 3, 18, holes=(8, 12, 16))
+    _vwall(g, 10, 21, 24, holes=())
+    _vwall(g, 14, 21, 24, holes=())
+    _vwall(g, 18, 21, 24, holes=())
+    _rect(g, 11, 21, 13, 24, "b")
+    _rect(g, 15, 21, 17, 24, "b")
+    _hwall(g, 17, 22, 24, holes=())
+    for rect in BEDROOM_RECTS:
+        _rect(g, *rect, "h")
+    g[12][25] = "E"
     return g
 
 
 # ================================================================== 室外
 def build_town() -> list[list[str]]:
     """小镇 26×26。西侧家门 E(1,12)，十字主干道，四大象限：
-    西北：商店+咖啡馆；东北：办公楼群；西南：公园+湖；东南：健身房+医院+施工地+田地。
+    西北：商店+咖啡馆；东北：事务所和饭店；西南：公园+湖；东南：健身房+医院+施工地+田地。
     电影院在南中。"""
     g = [[FLOOR] * SIZE for _ in range(SIZE)]
     # 外围树带
@@ -138,9 +129,10 @@ def build_town() -> list[list[str]]:
     # 西北：商店 / 咖啡馆
     _rect(g, 2, 2, 7, 5, "S")
     _rect(g, 2, 7, 7, 10, "C")
-    # 东北：办公楼 ×2
+    # 东北：事务所 / 饭店
     _rect(g, 19, 2, 24, 5, "O")
-    _rect(g, 19, 7, 24, 10, "O")
+    _rect(g, 19, 7, 24, 10, "R")
+    _rect(g, 10, 2, 16, 10, "J")
     # 西南：公园 + 湖
     _rect(g, 2, 14, 7, 19, "P")
     _rect(g, 3, 21, 6, 23, "W")
@@ -149,8 +141,10 @@ def build_town() -> list[list[str]]:
     # 东南：健身房 / 医院 / 施工地 / 田地
     _rect(g, 19, 14, 24, 17, "G")
     _rect(g, 19, 19, 24, 21, "B")
-    _rect(g, 10, 20, 13, 23, "~")
-    _rect(g, 15, 20, 24, 23, "F")
+    _rect(g, 10, 20, 13, 23, "U")
+    _rect(g, 14, 22, 24, 22, "#")
+    _rect(g, 15, 23, 17, 24, "F")
+    _rect(g, 19, 23, 24, 24, "F")
     # 点缀树（避开道路与场馆）
     g[1][13] = "T"; g[13][1] = "T"; g[11][24] = "T"; g[13][24] = "T"
     # 家门与主路连通
@@ -176,8 +170,17 @@ def tile(scene: str, x: int, y: int) -> str:
     return WALL
 
 
+_SOLID_CELLS={}
+
+
 def walkable(scene: str, x: int, y: int) -> bool:
-    return tile(scene, x, y) in WALKABLE_CHARS
+    from .collision import blocked_cells
+    ch=tile(scene,x,y)
+    if ch not in WALKABLE_CHARS:return False
+    if scene not in _SOLID_CELLS:
+        original=build_house() if scene=='house' else build_town()
+        _SOLID_CELLS[scene]=blocked_cells(scene,tuple(''.join(row) for row in original))
+    return ch=='X' or (x,y) not in _SOLID_CELLS[scene]
 
 
 def facility_at(scene: str, x: int, y: int) -> dict | None:
@@ -202,13 +205,79 @@ def same_place(p1, p2) -> bool:
     z2 = tile(p2.scene, p2.x, p2.y)
     if z1 in ("#", ".", "E", "X"):
         return max(abs(p1.x - p2.x), abs(p1.y - p2.y)) <= 2
-    return z1 == z2
+    if z1 != z2:
+        return False
+    # 分隔的卧室、办公楼不应隔墙社交。
+    seen = {(p1.x, p1.y)}
+    q = deque(seen)
+    while q:
+        x, y = q.popleft()
+        if (x, y) == (p2.x, p2.y):
+            return True
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            pos = (x + dx, y + dy)
+            if pos not in seen and tile(p1.scene, *pos) == z1:
+                seen.add(pos)
+                q.append(pos)
+    return False
+
+
+TRAVEL_MODES = {
+    "walk": {"name": "步行", "speed": 3, "energy": 1.0, "cost": 0.0},
+    "bicycle": {"name": "骑行", "speed": 6, "energy": 0.7, "cost": 0.0},
+    "car": {"name": "开车", "speed": 12, "energy": 0.15, "cost": 0.15},
+}
+
+
+def movement_mode(scene, start, end, preference, money=100.0):
+    """车辆只在室外道路上使用；入楼和资金不足时改为步行。"""
+    if scene != "town" or preference not in TRAVEL_MODES:
+        return "walk"
+    if preference == "car":
+        road = ("#", "E")
+        if tile(scene, *start) not in road or tile(scene, *end) not in road or money < 0.15:
+            return "walk"
+    return preference
+
+
+def travel_path(scene, sx, sy, tx, ty, mode="walk", blocked=None, allowed=None):
+    """按旅行时间寻路；汽车可选择更快的道路路线。"""
+    if scene != "town" or mode != "car":
+        return bfs_path(scene, sx, sy, tx, ty, blocked=blocked,allowed=allowed)
+    start, goal = (sx, sy), (tx, ty)
+    costs, previous = {start: 0.0}, {start: None}
+    queue = [(0.0, start)]
+    while queue:
+        cost, pos = heapq.heappop(queue)
+        if cost > costs[pos]:
+            continue
+        if pos == goal:
+            path = []
+            while previous[pos] is not None:
+                path.append(pos)
+                pos = previous[pos]
+            return path[::-1]
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            dest = (pos[0] + dx, pos[1] + dy)
+            if not walkable(scene, *dest) or (blocked and dest in blocked):
+                continue
+            actual = movement_mode(scene, pos, dest, mode)
+            new_cost = cost + 1 / TRAVEL_MODES[actual]["speed"]
+            if new_cost < costs.get(dest, float("inf")):
+                costs[dest], previous[dest] = new_cost, pos
+                heapq.heappush(queue, (new_cost, dest))
+    return []
+
+
+def reset_maps():
+    HOUSE[:] = build_house()
+    TOWN[:] = build_town()
 
 
 # ------------------------------------------------------------------ 寻路
 def bfs_path(scene: str, sx: int, sy: int, tx: int, ty: int,
-             limit: int = 2500) -> list[tuple[int, int]]:
-    if not walkable(scene, tx, ty):
+             limit: int = 2500, blocked=None, allowed=None) -> list[tuple[int, int]]:
+    if not walkable(scene, tx, ty) and (not allowed or (tx,ty) not in allowed):
         return []
     if (sx, sy) == (tx, ty):
         return []
@@ -218,7 +287,7 @@ def bfs_path(scene: str, sx: int, sy: int, tx: int, ty: int,
         cx, cy = q.popleft()
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nx, ny = cx + dx, cy + dy
-            if (nx, ny) in prev or not walkable(scene, nx, ny):
+            if (nx, ny) in prev or (not walkable(scene, nx, ny) and (not allowed or (nx,ny) not in allowed)) or (blocked and (nx,ny) in blocked):
                 continue
             prev[(nx, ny)] = (cx, cy)
             if (nx, ny) == (tx, ty):
