@@ -22,7 +22,7 @@ DEFAULT_RULES = {
     'hospital_trigger_hp': 10.0,      # 生命低于此值触发紧急送医
     'hospital_cost': 1200.0,          # 急救费；资产不足需向室友借钱补齐
     'hospital_fee_halfday': 100.0,    # 住院房费（每半天）
-    'hospital_heal_hp': 20.0,         # 每半天住院恢复生命
+    'hospital_heal_multiplier': 2.0,  # 住院每刻生命恢复 = 倍率×自然恢复
     'hospital_mood_gain': 15.0,       # 每半天住院恢复心情
     'post_hospital_hp': 60.0,         # 出院时恢复到（不低于现有值）
     'post_hospital_satiety': 80.0,

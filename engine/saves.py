@@ -137,7 +137,7 @@ class SaveStore:
         from .town_services import merge_parameters,work_experience_rate,JOB_GRADES,DEFS
         sim.town_config=merge_parameters(sim.town_config)
         from .mechanics import DEFAULT_RULES,DEFAULT_HOURS,activity_defaults
-        sim.mechanics={**DEFAULT_RULES,**getattr(sim,'mechanics',{})}
+        sim.mechanics={**DEFAULT_RULES,**{k:v for k,v in getattr(sim,'mechanics',{}).items() if k in DEFAULT_RULES}}
         sim.opening_hours={**DEFAULT_HOURS,**getattr(sim,'opening_hours',{})}
         defaults_activity=activity_defaults()
         sim.activity_config={**defaults_activity,**{key:value for key,value in getattr(sim,'activity_config',{}).items() if key in defaults_activity}}

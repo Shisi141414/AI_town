@@ -118,7 +118,7 @@ def build_user_prompt(p, nearby: list[str], clock: str, decor_common: float = 0.
     menu = act.activity_menu("any",venue_code)
     hospital_note = ""
     if getattr(p, 'hospitalized', False):
-        menu = ("【住院中】你正在诊所住院。房费每半天100元，每半天恢复生命20、心情15，饱食与精力保持满值。\n"
+        menu = ("【住院中】你正在诊所住院。房费每半天100元，生命每刻按自然恢复的2倍持续恢复，每半天心情+15，饱食与精力保持满值。\n"
                 "可选行动：\n"
                 "- hospital_stay：继续住院休养（推荐身体未恢复时选择）\n"
                 "- hospital_leave：办理出院（恢复到生命60/饱食80/精力80/心情40的最低水平，不低于现有值）")

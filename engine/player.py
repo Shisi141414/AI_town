@@ -730,7 +730,10 @@ class Player:
     def passive_drain(self, sim: "Simulation") -> None:
         from . import hospital
         if getattr(self, 'hospitalized', False):
-            # 住院：不做日常消耗，每半天结算房费与恢复
+            # 住院：不做日常消耗；生命每刻按自然恢复的倍率恢复，每半天结算房费
+            self.stats.hp = min(100.0, self.stats.hp
+                                + sim.mechanics['hospital_heal_multiplier']
+                                * sim.mechanics['high_satiety_hp_gain'])
             self.hospital_fee_ticks = self.hospital_fee_ticks + 1
             if self.hospital_fee_ticks >= hospital.HALF_DAY_TICKS:
                 self.hospital_fee_ticks = 0

@@ -160,7 +160,6 @@ def halfday_tick(sim, p, first: bool = False) -> None:
         return
     p.stats.money -= fee
     _tx(sim, p, p, _clinic(sim), fee, f"住院房费（{ '收治急救' if first else '半天' }）")
-    p.stats.hp = min(100.0, p.stats.hp + sim.mechanics['hospital_heal_hp'])
     if first:
         p.stats.hp = max(p.stats.hp, 30.0)     # 收治急救保底脱离危险线
     p.stats.mood = min(100.0, p.stats.mood + sim.mechanics['hospital_mood_gain'])
@@ -168,8 +167,8 @@ def halfday_tick(sim, p, first: bool = False) -> None:
     p.stats.energy = 100.0
     p.stats.clamp()
     label = "收治急救处置" if first else "住院半天"
-    p.remember(f"{label}，付了{fee:.0f}元房费，生命和心情都有恢复", 3)
-    sim.log("system", f"🛏 {p.name} {label}：房费{fee:.0f}元，生命+{sim.mechanics['hospital_heal_hp']:.0f}、心情+{sim.mechanics['hospital_mood_gain']:.0f}（住院期间饱食/精力保持满值）",
+    p.remember(f"{label}，付了{fee:.0f}元房费，生命持续恢复中", 3)
+    sim.log("system", f"🛏 {p.name} {label}：房费{fee:.0f}元，心情+{sim.mechanics['hospital_mood_gain']:.0f}，生命按自然恢复{sim.mechanics['hospital_heal_multiplier']:.0f}倍每刻恢复（住院期间饱食/精力保持满值）",
             [p.name], scope="game")
     p.ask_stay = True                   # 结算后请模型决定是否续住
 

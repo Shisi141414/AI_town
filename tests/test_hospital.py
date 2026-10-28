@@ -43,9 +43,9 @@ class EmergencyTests(unittest.TestCase):
         self.a.passive_drain(self.sim)
         self.assertTrue(self.a.hospitalized)
         self.assertAlmostEqual(self.a.stats.money, 700.0)   # 2000-1200-100
-        # 收治即急救处置：生命+20 心情+15 饱食/精力满
+        # 收治即急救处置：心情+15 饱食/精力满；生命走30保底后每刻0.6×自然恢复
         # （本刻先跑过日常消耗：心情10-1基础-低精力罚(20-(5+1))/10≈7.6，+15→22.6）
-        self.assertAlmostEqual(self.a.stats.hp, 30.0)      # max(8+20, 30保底)
+        self.assertAlmostEqual(self.a.stats.hp, 30.0)      # 30保底；+0.6/刻从下一刻开始
         self.assertAlmostEqual(self.a.stats.mood, 22.6, places=2)
         self.assertAlmostEqual(self.a.stats.satiety, 100.0)
         self.assertAlmostEqual(self.a.stats.energy, 100.0)
@@ -112,9 +112,9 @@ class EmergencyTests(unittest.TestCase):
         self.a.stats.energy = 40.0
         for _ in range(hospital.HALF_DAY_TICKS):
             self.a.passive_drain(self.sim)
-        # 一半天：-100元 +20生命 +15心情 饱食/精力满
+        # 一半天：-100元 +15心情 饱食/精力满；生命每刻0.6×72=43.2
         self.assertAlmostEqual(self.a.stats.money, 400.0)
-        self.assertAlmostEqual(self.a.stats.hp, 70.0)
+        self.assertAlmostEqual(self.a.stats.hp, min(100.0, 50.0 + 43.2))
         self.assertAlmostEqual(self.a.stats.mood, 35.0)
         self.assertAlmostEqual(self.a.stats.satiety, 100.0)
         self.assertAlmostEqual(self.a.stats.energy, 100.0)
@@ -128,8 +128,8 @@ class EmergencyTests(unittest.TestCase):
         for _ in range(hospital.HALF_DAY_TICKS):
             self.a.passive_drain(self.sim)
         self.assertFalse(self.a.hospitalized)
-        # 出院保底：生命60（高于现值50 → 60）；心情默认70高于保底40 → 不降低
-        self.assertAlmostEqual(self.a.stats.hp, 60.0)
+        # 72刻×0.6=43.2 → 50+43.2=93.2（>60保底不调整）；心情默认70>40保底
+        self.assertAlmostEqual(self.a.stats.hp, 93.2)
         self.assertAlmostEqual(self.a.stats.satiety, 80.0)
         self.assertAlmostEqual(self.a.stats.energy, 80.0)
         self.assertAlmostEqual(self.a.stats.mood, 70.0)
