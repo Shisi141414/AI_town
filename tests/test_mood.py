@@ -101,11 +101,11 @@ class PassiveDrainMoodTests(unittest.TestCase):
         self.assertAlmostEqual(self.drain_mood_delta(self.a), -5.0)
 
     def test_low_energy_extra_mood_drain(self):
-        # 精力结算顺序：先被动 -0.35，再判定阈值；10-0.35=9.65 → 罚 (20-9.65)/10
+        # 精力结算顺序：先被动 +1 恢复，再判定阈值；10+1=11 → 罚 (20-11)/10
         self.a.stats.energy = 10.0
-        expected = -1.0 - (20.0 - (10.0 - 0.35)) / 10.0
+        expected = -1.0 - (20.0 - (10.0 + 1.0)) / 10.0
         self.assertAlmostEqual(self.drain_mood_delta(self.a), expected)
-        self.assertAlmostEqual(self.a.stats.energy, 9.65)
+        self.assertAlmostEqual(self.a.stats.energy, 11.0)
 
     def test_sustained_low_mood_damages_hp_after_delay(self):
         self.a.stats.mood = 10.0

@@ -745,6 +745,7 @@ class Player:
         for k, v in act.PASSIVE_DRAIN.items():
             if k == 'mood':v = -sim.mechanics['base_mood_drain']
             if k == 'satiety':v = -sim.mechanics['base_satiety_drain']
+            if k == 'energy':v = sim.mechanics['base_energy_regen']
             if k == "satiety" and (self.vehicle_driver or self.transport == "car"):
                 continue
             if v:

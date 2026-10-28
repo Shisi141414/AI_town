@@ -3,7 +3,8 @@ from copy import deepcopy
 import math
 
 DEFAULT_RULES = {
-    'base_satiety_drain': .4, 'base_mood_drain': 1.0, 'illness_mood_drain': 4.0,
+    'base_satiety_drain': .4, 'base_mood_drain': 1.0, 'base_energy_regen': 1.0,
+    'illness_mood_drain': 4.0,
     'high_satiety_hp_threshold': 80.0, 'high_satiety_hp_gain': .3,
     'work_mood_per_hour': 9.0, 'study_mood_per_hour': 6.0,
     'low_energy_threshold': 20.0, 'low_mood_threshold': 20.0,

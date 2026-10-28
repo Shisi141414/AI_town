@@ -44,9 +44,9 @@ class EmergencyTests(unittest.TestCase):
         self.assertTrue(self.a.hospitalized)
         self.assertAlmostEqual(self.a.stats.money, 700.0)   # 2000-1200-100
         # 收治即急救处置：生命+20 心情+15 饱食/精力满
-        # （本刻先跑过日常消耗：心情10-1基础-低精力罚(20-4.65)/10≈7.47，+15→22.47）
+        # （本刻先跑过日常消耗：心情10-1基础-低精力罚(20-(5+1))/10≈7.6，+15→22.6）
         self.assertAlmostEqual(self.a.stats.hp, 30.0)      # max(8+20, 30保底)
-        self.assertAlmostEqual(self.a.stats.mood, 22.465, places=2)
+        self.assertAlmostEqual(self.a.stats.mood, 22.6, places=2)
         self.assertAlmostEqual(self.a.stats.satiety, 100.0)
         self.assertAlmostEqual(self.a.stats.energy, 100.0)
         # 送进诊所（B）

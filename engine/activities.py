@@ -183,8 +183,8 @@ ACTIVITIES: dict[str, dict] = {
     "think": {
         "name": "思考", "emoji": "🤔", "duration": 3, "need": None,
         "scene": "any", "cost": 0,
-        "effects": {"mood": 2, "energy": -0.5},
-        "desc": "原地沉思（任意地点）",
+        "effects": {"mood": 2, "energy": 3},
+        "desc": "原地沉思（任意地点），恢复精力",
     },
     "wander": {
         "name": "闲逛", "emoji": "🚶", "duration": 2, "need": None,
