@@ -768,6 +768,7 @@ class Player:
         if self.low_mood_ticks >= sim.mechanics['low_mood_delay_ticks']:
             self.stats.hp -= sim.mechanics['low_mood_hp_loss']
         # ---- 紧急送医 / 死亡 ----
+        hospital.clear_refused(sim, self)   # 生命回升过阈值的拒收者解除标记
         if hospital.trigger(sim, self):
             sim._alert_health_loss(self, max(0, hp_before - self.stats.hp))
             hospital.start_emergency(sim, self)

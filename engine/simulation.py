@@ -782,11 +782,15 @@ class Simulation:
     def _apply_decision(self, p: Player, d: Decision, depth: int = 0) -> None:
         p.requested_duration = None
         key = d.action
-        # ---- 住院专属动作 ----
+        # ---- 住院专属动作：住院中只认 stay/leave，其他行动一律视为继续住院 ----
         from . import hospital
-        if key in ('hospital_stay', 'hospital_leave') and getattr(p, 'hospitalized', False):
+        if getattr(p, 'hospitalized', False):
             if key == 'hospital_leave':
                 hospital.discharge(self, p, reason="办理出院")
+                p.state = "idle"
+                return
+            if key != 'hospital_stay':
+                p.remember(f"我正在住院，想做{act.ACTIVITIES.get(key, {}).get('name', key)}但被护士拦下了", 4)
             else:
                 p.remember("我决定继续住院休养", 3)
                 self.log("system", f"🛏 {p.name} 决定继续住院", [p.name], scope="game")

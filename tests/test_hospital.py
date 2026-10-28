@@ -34,16 +34,26 @@ class EmergencyTests(unittest.TestCase):
         self.a = self.sim.players[0]
 
     def test_hp_threshold_triggers_admission_with_cash(self):
-        # 现金足够：直接收治
+        # 现金足够：直接收治（1200急救费 + 首个半天房费100）
         self.a.stats.money = 2000.0
         self.a.stats.hp = 8.0
+        self.a.stats.mood = 10.0
+        self.a.stats.satiety = 5.0
+        self.a.stats.energy = 5.0
         self.a.passive_drain(self.sim)
         self.assertTrue(self.a.hospitalized)
-        self.assertAlmostEqual(self.a.stats.money, 800.0)   # 2000-1200
-        self.assertGreaterEqual(self.a.stats.hp, 30.0)      # 急救处置脱离危险线
+        self.assertAlmostEqual(self.a.stats.money, 700.0)   # 2000-1200-100
+        # 收治即急救处置：生命+20 心情+15 饱食/精力满
+        # （本刻先跑过日常消耗：心情10-1基础-低精力罚(20-4.65)/10≈7.47，+15→22.47）
+        self.assertAlmostEqual(self.a.stats.hp, 30.0)      # max(8+20, 30保底)
+        self.assertAlmostEqual(self.a.stats.mood, 22.465, places=2)
+        self.assertAlmostEqual(self.a.stats.satiety, 100.0)
+        self.assertAlmostEqual(self.a.stats.energy, 100.0)
         # 送进诊所（B）
         from engine import world as w
         self.assertEqual(w.tile('town', self.a.x, self.a.y), 'B')
+        # 流水为标准格式（前端资金往来面板可读）
+        self.assertTrue(all('from' in t and 'amount' in t for t in self.a.transactions))
 
     def test_borrow_enough_admits(self):
         # 现金0、室友有钱：借款凑齐后收治
