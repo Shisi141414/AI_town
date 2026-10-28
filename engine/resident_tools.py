@@ -17,8 +17,12 @@ def computer_seat(p):
 
 
 def computer_context(p):
-    files=[{'id':f['id'],'title':f['title'],'length':len(f['content'])} for f in p.computer_files[:20]]
-    return json.dumps({'files':files,'total':len(p.computer_files),'last_result':p.computer_feedback},ensure_ascii=False)
+    files=p.computer_files[:20]
+    lines=[f'共{len(p.computer_files)}条记录；'+('列表如下：' if files else '暂无记录。')]
+    lines.extend(f"- {f['id']}｜{f['title']}（{len(f['content'])}字）" for f in files)
+    if len(p.computer_files)>20:lines.append('更多记录可用 computer/list 和 offset 翻页。')
+    if p.computer_feedback:lines.append('上次电脑操作结果：'+p.computer_feedback)
+    return '\n'.join(lines)
 
 
 def use_computer(sim,p,d):

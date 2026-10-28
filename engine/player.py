@@ -36,6 +36,10 @@ class Player:
         self.color = color
         self.emoji = emoji
         self.gender = "男"
+        self.driver_license = False
+        self.info_feedback = ""
+        self.pending_memory_activity = ""
+        self.sex_invitation = "无"
         self.skills = {}
         self.stock_shares = 0
         self.stock_cost = 0.0
@@ -48,6 +52,9 @@ class Player:
         self.service_completed = False
         self.dining_tick = -1
         self.work_paid = 0.0
+        self.phone_paid = 0.0
+        self.injury_alert = ''
+        self.last_health_alert_tick = -1
         self.tuition_paid = 0.0
         self.study_awarded = 0.0
         self.skill_xp_gained = 0.0
@@ -68,6 +75,12 @@ class Player:
         self.illness_severity = 0
         self.illness_until = 0
         self.illness_name = ""
+        self.hospitalized = False          # 住院中
+        self.hospital_fee_ticks = 0        # 住院房费计时（每72刻一结算）
+        self.awaiting_admission = False    # 已送医、正在借款凑钱
+        self.ask_stay = False              # 住院后是否需要询问续住
+        self.debt_goal = 0.0               # 需借金额
+        self.loans: dict[str, float] = {}  # 债主pid → 累计借款
         self.affinity: dict[str, float] = {}  # 键改为 pid
         self.scene = "house"
         self.travel_mode = "walk"
@@ -110,7 +123,10 @@ class Player:
         self._final_goal: tuple[int, int] | None = None   # 跨场景的最终目的地
         self._final_scene: str | None = None
         self.model = ""
-        self.items: dict[str, int] = {"flower": 0, "plant": 0}
+        self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0}
+        self.meal_qualities: list[int] = []
+        self.eating_quality = 0
+        self.eating_from_inventory = False
         self.decor_room = 0.0
         self.identity_done = False           # 开局身份是否已确定
         # 出行统计（规则引擎的跨场景加权用）
@@ -150,16 +166,17 @@ class Player:
             speech=(self.speech if self.world_tick - self.speech_tick <= 2 else ""),
             affinity=aff_named, items=dict(self.items),
             decor_room=self.decor_room, identity_done=self.identity_done,
-            travel_mode=self.travel_mode, transport=self.transport,
+            travel_mode=self.travel_mode, driver_license=self.driver_license, transport=self.transport,
             vehicle_driver=self.vehicle_driver, passengers=list(self.passengers), car_id=self.car_id,
             activity_minutes_left=self.activity_left*10, activity_minutes_total=self.activity_total*10, decision_status=self.decision_status,
-            memory_counts=self.memory.counts(), illness=self.health_description, illness_severity=self.illness_severity)
+            memory_counts=self.memory.counts(), illness=self.health_description, illness_severity=self.illness_severity,
+            hospitalized=self.hospitalized, awaiting_admission=self.awaiting_admission)
 
     @property
     def health_description(self):
         from .random_events import SEVERITY_NAMES
         if not self.illness_severity:
-            return "健康"
+            return "未患疾病"
         return f"{self.illness_name}（{SEVERITY_NAMES[self.illness_severity]}，预计还需{max(0,self.illness_until-self.world_tick)}刻恢复，已照护{self.care_minutes}分钟，可去诊所治疗）"
 
     # ------------------------------------------------------------- 记忆助手
@@ -252,8 +269,10 @@ class Player:
             return route_bed_pair(sim,self,target)
 
         # 需要物品
-        if a.get("needs_item") and not any(v > 0 for v in self.items.values()):
-            self.remember(f"我想{a['name']}但没有鲜花/盆栽", 4)
+        needed=a.get('needs_item')
+        if needed and not (any(self.items.get(k,0)>0 for k in ('flower','plant')) if needed=='any' else self.items.get(needed,0)>0):
+            missing='鲜花或盆栽' if needed=='any' else act.ITEMS[needed]['name']
+            self.remember(f"我想{a['name']}但没有{missing}", 4)
             return False
 
         if key=='home_treat':
@@ -268,6 +287,8 @@ class Player:
                 return False
             if max(abs(target.x - self.x), abs(target.y - self.y)) > 6 \
                     and not world.same_place(self, target):
+                return False
+            if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
                 return False
             if key == "love":
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
@@ -337,6 +358,13 @@ class Player:
     def _start_local(self, key: str, sim: "Simulation"):
         from .town_services import action_spec
         a = action_spec(sim,self,key)
+        if a.get('_building'):
+            from .mechanics import open_now
+            code=a['_building']
+            if not open_now(sim.opening_hours[code], sim.hour):
+                self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
+                self.remember(f'{a["name"]}到达时未营业',3)
+                return
         from .interaction_points import LOCAL_ACTIONS,options
         if key in LOCAL_ACTIONS:
             if not self.interaction_slot or self.interaction_slot['key']!=key:
@@ -346,7 +374,7 @@ class Player:
                 self.state='moving';return
         cost = a.get("cost", 0)
         energy_need=max(0,-a.get('effects',{}).get('energy',0))
-        if a.get('_kind') in ('course','job') and self.stats.energy+1e-8<energy_need:
+        if a.get('_kind') in ('course','license_course','job') and self.stats.energy+1e-8<energy_need:
             self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
             self.remember('抵达后精力不足，需先休息再上课或工作',3)
             return
@@ -387,7 +415,13 @@ class Player:
             it = act.ITEMS[a["gives_item"]]
             self.remember(f"我买了{it['name']}", 3)
         if a.get("needs_item"):
-            self._consume_decor_item(key, sim)
+            if a['needs_item']=='any':self._consume_decor_item(key, sim)
+        if key=='eat':
+            self.eating_from_inventory=self.items.get('meal',0)>0
+            self.eating_quality=0
+            if self.eating_from_inventory:
+                self.items['meal']-=1
+                self.eating_quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
         sim.log("activity", f"{self.name} 开始{a['name']} {a['emoji']}（计划{self.activity_total*10}分钟）", [self.name],scope="game")
 
     def _consume_decor_item(self, key: str, sim: "Simulation"):
@@ -456,7 +490,7 @@ class Player:
                 if mode != "car" and self.passengers:
                     sim.drop_passengers(self)
                 spec = world.TRAVEL_MODES[mode]
-                time_cost = 1.0 / spec["speed"]
+                time_cost = 1.0 / sim.mechanics[mode+'_speed']
                 if time_cost > budget + 1e-9:
                     break
                 budget -= time_cost
@@ -464,12 +498,12 @@ class Player:
                 self.blocked_ticks=0
                 self._blocked_cell=None
                 self.transport = mode
-                self.stats.energy += act.MOVE_EXTRA_ENERGY / 3 * spec["energy"]
+                self.stats.energy -= sim.mechanics.get(mode+'_energy_per_tile',0) if mode!='car' else 0.0125
                 self.stats.money = max(0.0, self.stats.money - spec["cost"])
                 if mode == "car":
                     car.x, car.y = self.x, self.y
                 if mode != "car":
-                    self.stats.satiety = max(0.0, self.stats.satiety - (0.18 if mode == "walk" else 0.25))
+                    self.stats.satiety = max(0.0, self.stats.satiety - sim.mechanics[mode+'_satiety_per_tile'])
                 for pid in self.passengers:
                     passenger = sim.by_pid(pid)
                     if passenger:
@@ -499,7 +533,7 @@ class Player:
 
         if self.state == "doing":
             # 对话类活动不结算数值效果（效果在对话结束后统一给）
-            if self.activity_key in ("chat", "love"):
+            if self.activity_key in ("chat", "love", "phone"):
                 return
             self._step_activity(sim)
 
@@ -527,6 +561,8 @@ class Player:
             sim.start_conversation(self, t, key)
         if key == "gift":
             self._resolve_gift(sim, t)
+        if key == "give_meal":
+            self._resolve_give_meal(sim,t)
 
     def _resolve_gift(self, sim: "Simulation", t: "Player"):
         """送礼：物品转手 + 好感大幅提升（LLM 决定的部分在互动结算中）"""
@@ -544,12 +580,20 @@ class Player:
         t.speech = "谢谢！"
         t.speech_tick = t.world_tick
 
+    def _resolve_give_meal(self,sim:"Simulation",t:"Player"):
+        if self.items.get('meal',0)<=0:return
+        self.items['meal']-=1;t.items['meal']=t.items.get('meal',0)+1
+        quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
+        t.meal_qualities.append(quality)
+        sim.log('social',f'🍱 {self.name}把做好的饭菜交给{t.name}',[self.pid,t.pid])
+
     def _resolve_attack(self, sim: "Simulation"):
         t = self.target_player
         if t is None:
             return
         dmg = act.ACTIVITIES["attack"]["damage"]
         t.stats.hp -= dmg
+        sim._alert_health_loss(t,dmg,force=True)
         self.affinity[t.pid] = self.affinity.get(t.pid, 30) - 12
         t.affinity[self.pid] = t.affinity.get(self.pid, 30) - 15
         t.remember(f"被{self.name}攻击了！损失{dmg:.0f}生命", 9)
@@ -558,10 +602,6 @@ class Player:
                 [self.name, t.name])
         t.speech = "好痛！"
         t.speech_tick = t.world_tick
-        t.state = "idle"
-        t.activity = None
-        t.activity_left = 0
-        t.path = []
 
     # ------------------------------------------------------------- 活动结算
     def _step_activity(self, sim: "Simulation"):
@@ -570,10 +610,16 @@ class Player:
         if self.activity_left <= 0:
             self._finish_activity(sim,a)
             return
-        if a.get('_kind') in ('course','job') and self.stats.energy+1e-8<max(0,-a.get('effects',{}).get('energy',0)):
+        if a.get('_kind') in ('course','license_course','job') and self.stats.energy+1e-8<max(0,-a.get('effects',{}).get('energy',0)):
             self.remember('精力不足，结束活动，保留已获得的经验和工资',3)
             self._finish_activity(sim,a);return
         eff: dict = dict(a.get("effects", {}))
+        if a.get('_building'):
+            from .mechanics import open_now
+            if not open_now(sim.opening_hours[a['_building']],sim.hour):
+                self.remember('营业时间结束，活动提前结束',3)
+                self._finish_activity(sim,a)
+                return
         from .town_services import step_effects
         eff=step_effects(sim,self,key,eff)
         if act.is_night(self.hour) and a.get("night_bonus"):
@@ -606,7 +652,7 @@ class Player:
                             [self.name] + [o.name for o in partners])
 
         # ---- 餐厅吃饭需要家里有饭（做饭后 60 tick 内有效）----
-        if key == "eat" and sim.meal_until < self.world_tick:
+        if key == "eat" and not self.eating_from_inventory and sim.meal_until < self.world_tick:
             # 没饭了：转为去咖啡馆
             self.activity = None
             self.activity_key = ""
@@ -634,13 +680,30 @@ class Player:
         if key == "computer":
             from .resident_tools import use_computer
             use_computer(sim,self,self.decision)
+        if key=='cook' and self.activity_left<=0:
+            quality=min(5,int(self.skills.get('cooking',0)//100))
+            self.items['meal']=self.items.get('meal',0)+2
+            self.meal_qualities.extend([quality,quality])
+            sim.log('activity',f'🍱 {self.name}做好饭，留下两份可带走的饭菜',[self.pid])
+        if key=='use_medicine' and self.target_player:
+            target=self.target_player
+            if self.items.get('medicine',0)>0 and self.scene==target.scene and max(abs(self.x-target.x),abs(self.y-target.y))<=3:
+                self.items['medicine']-=1
+                target.stats.hp=min(100,target.stats.hp+20)
+                if target.illness_severity:
+                    if target.illness_severity==1:sim.random_events.recover(sim,target,treated=True)
+                    else:target.illness_severity-=1
+                target.affinity[self.pid]=min(100,target.affinity.get(self.pid,50)+2)
+                sim.log('social',f'💊 {self.name}给{target.name}用了药品',[self.pid,target.pid])
         if key == "destroy" and world.tile(self.scene, self.x, self.y) in act.facility_chars("destroy"):
             world.grid(self.scene)[self.y][self.x] = "X"
         # 社交/协同互动的好感结算：LLM 决定增减
         if key in ("chat", "love"):
             # 对话结束时 Conversation 已写记忆/好感，这里不重复处理
             pass
-        elif key in ("game", "watch_tv", "work", "movie",
+        elif key == 'sex' and self.target_player:
+            sim.request_affinity(self,self.target_player,'sex')
+        elif key in ("watch_tv", "work", "movie",
                      "park", "balcony", "cook", "eat", "exercise", "build"):
             partners = [o for o in sim.players
                         if o is not self and o.scene == self.scene
@@ -649,6 +712,7 @@ class Player:
             for o in partners:
                 sim.request_affinity(self, o, key)
         self.remember(f"我结束了{a['name']}，实际进行了{max(0,self.activity_total-self.activity_left)*10}分钟",2)
+        self.pending_memory_activity = f"刚结束{a['name']}，进行了{max(0,self.activity_total-self.activity_left)*10}分钟"
         self.activity = None
         self.activity_key = ""
         self.target_player = None
@@ -664,46 +728,54 @@ class Player:
 
     # ------------------------------------------------------------- 被动结算
     def passive_drain(self, sim: "Simulation") -> None:
+        from . import hospital
+        if getattr(self, 'hospitalized', False):
+            # 住院：不做日常消耗，每半天结算房费与恢复
+            self.hospital_fee_ticks = self.hospital_fee_ticks + 1
+            if self.hospital_fee_ticks >= hospital.HALF_DAY_TICKS:
+                self.hospital_fee_ticks = 0
+                hospital.halfday_tick(sim, self)
+            self.stats.clamp()
+            return
+        if getattr(self, 'awaiting_admission', False):
+            # 待收治（借款中）：不做消耗，等待结果
+            self.stats.clamp()
+            return
+        hp_before=self.stats.hp
         for k, v in act.PASSIVE_DRAIN.items():
+            if k == 'mood':v = -sim.mechanics['base_mood_drain']
+            if k == 'satiety':v = -sim.mechanics['base_satiety_drain']
             if k == "satiety" and (self.vehicle_driver or self.transport == "car"):
                 continue
             if v:
                 setattr(self.stats, k, getattr(self.stats, k) + v)
         if self.stats.satiety <= 0:
             self.stats.hp += act.STARVE_HP_DAMAGE
+        if self.stats.satiety > sim.mechanics['high_satiety_hp_threshold']:
+            self.stats.hp = min(100.0, self.stats.hp + sim.mechanics['high_satiety_hp_gain'])
         mood_delta = 0.0
         if self.illness_severity:
-            mood_delta -= 4.0
-        if self.stats.energy < act.LOW_ENERGY_MOOD_THRESHOLD:
-            mood_delta -= (act.LOW_ENERGY_MOOD_THRESHOLD - self.stats.energy) / 10.0
+            mood_delta -= sim.mechanics['illness_mood_drain']
+        if self.stats.energy < sim.mechanics['low_energy_threshold']:
+            mood_delta -= (sim.mechanics['low_energy_threshold'] - self.stats.energy) / 10.0
         for other in self.same_zone_players(sim):
-            mood_delta += act.relationship_mood_per_tick(self.affinity.get(other.pid, 50.0))
+            mood_delta += act.relationship_mood_per_tick(self.affinity.get(other.pid, 50.0),sim.mechanics)
         self.stats.mood += mood_delta
         self.stats.clamp()
 
-        self.low_mood_ticks = self.low_mood_ticks + 1 if self.stats.mood < act.LOW_MOOD_HP_THRESHOLD else 0
-        started_harm = self.low_mood_ticks == act.LOW_MOOD_HP_DELAY_TICKS
-        if self.low_mood_ticks >= act.LOW_MOOD_HP_DELAY_TICKS:
-            self.stats.hp -= act.LOW_MOOD_HP_LOSS
-        if self.stats.hp <= 0:
-            sim.leave_vehicle(self)
-            sim.drop_passengers(self)
-            sim.release_car(self)
-            self.stats.hp = 30
-            self.stats.money = max(0.0, self.stats.money - 30)
-            # 送到医院（室外）
-            self.scene = "town"
-            beds = world.find_tiles("town", "B")
-            if beds:
-                bx, by = random.choice(beds)
-                self.x, self.y = sim.free_position("town", bx, by,self)
-            self.activity = None
-            self.state = "idle"
-            self.path = []
-            self._pending_key = ""
-            self.remember("我晕倒了，被送去医院急救（-30元）", 9)
-            sim.log("system", f"🚑 {self.name} 生命归零，被送医急救（-30元）",
-                    [self.name],scope="game")
+        self.low_mood_ticks = self.low_mood_ticks + 1 if self.stats.mood < sim.mechanics['low_mood_threshold'] else 0
+        started_harm = self.low_mood_ticks == sim.mechanics['low_mood_delay_ticks']
+        if self.low_mood_ticks >= sim.mechanics['low_mood_delay_ticks']:
+            self.stats.hp -= sim.mechanics['low_mood_hp_loss']
+        # ---- 紧急送医 / 死亡 ----
+        if hospital.trigger(sim, self):
+            sim._alert_health_loss(self, max(0, hp_before - self.stats.hp))
+            hospital.start_emergency(sim, self)
+        elif self.stats.hp <= 0 and not getattr(self, 'awaiting_admission', False) \
+                and not getattr(self, 'hospitalized', False):
+            sim._alert_health_loss(self, max(0, hp_before - self.stats.hp))
+            hospital.death(sim, self)
+            return
         self.stats.clamp()
         if started_harm:
             sim.log('random', f'😞 {self.name}连续心情低落，健康开始受影响', [self.pid])

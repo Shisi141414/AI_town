@@ -1,7 +1,7 @@
 """家具使用位置：仅对前往/使用该家具的角色开放，普通通行仍受碰撞限制。"""
 from . import world
 
-LOCAL_ACTIONS={'cook','eat','computer','computer_game','stock','sleep','shower','watch_tv','game','balcony'}
+LOCAL_ACTIONS={'cook','eat','computer','computer_game','stock','sleep','shower','watch_tv','balcony'}
 
 
 def bedroom_index(p):
@@ -22,7 +22,7 @@ def options(p,key):
     if key=='cook':return [((13,3),[]),((13,4),[])]
     if key=='eat':return [(q,[q]) for q in ((10,11),(13,11),(10,14),(13,14))]
     if key=='shower':return [(q,[q]) for q in ((13,23),(17,23))]
-    if key in ('watch_tv','game'):
+    if key=='watch_tv':
         cells=[(x,y) for x in range(19,24) for y in (8,9)]
         return [(q,cells) for q in ((20,8),(22,8),(21,8),(23,8))]
     if key=='balcony':return [(q,[]) for q in ((23,23),(24,23),(22,23),(23,24))]
@@ -68,15 +68,15 @@ def release(sim,p):
         p.x,p.y=sim.free_position('house',p.x,p.y,p)
 
 
-def route_bed_pair(sim,a,b):
+def route_bed_pair(sim,a,b,key='love'):
     if b._conversation or b.state not in ('idle','waiting_model') or b.vehicle_driver:return False
     points,cells=bed_points(a)
     occupied=sim.occupied('house',a)-({(b.x,b.y)} if b.scene=='house' else set())
     if any(q in occupied for q in points):return False
     for p,other,point in ((a,b,points[0]),(b,a,points[1])):
-        assign(p,'love',point,cells)
+        assign(p,key,point,cells)
         p._bed_partner_pid=other.pid;p._bed_initiator_pid=a.pid
-        p._pending_target_pid=None;p._pending_key='love'
+        p._pending_target_pid=None;p._pending_key=key
         p.state='moving'
         p._plan_route(sim,'house',*point)
     return True
@@ -89,8 +89,9 @@ def arrive_bed(sim,p):
     p.state='waiting_activity'
     if other.state!='waiting_activity':return
     a=sim.by_pid(p._bed_initiator_pid);b=other if a is p else p
-    if not a or a.affinity.get(b.pid,0)<55 or b.affinity.get(a.pid,0)<55:
+    key=p._pending_key
+    if not a or (key=='love' and (a.affinity.get(b.pid,0)<55 or b.affinity.get(a.pid,0)<55)):
         for q in (p,other):q.state='idle';q._pending_key='';release(sim,q)
         return
-    a._start_local('love',sim);b._start_local('love',sim)
-    sim.start_conversation(a,b,'love')
+    a._start_local(key,sim);b._start_local(key,sim)
+    if key=='love':sim.start_conversation(a,b,'love')

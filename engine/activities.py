@@ -15,20 +15,24 @@ from __future__ import annotations
 from .models import Stats
 
 # ------------------------------------------------------------------ 被动消耗
-PASSIVE_DRAIN = {"satiety": -0.8, "energy": -0.35, "mood": -1.0}
+PASSIVE_DRAIN = {"satiety": -0.4, "energy": -0.35, "mood": -1.0}
 LOW_ENERGY_MOOD_THRESHOLD = 20.0
 LOW_MOOD_HP_THRESHOLD = 20.0
 LOW_MOOD_HP_DELAY_TICKS = 18  # 连续3小时，每刻10分钟。
 LOW_MOOD_HP_LOSS = 0.5
 
 
-def relationship_mood_per_tick(affinity: float) -> float:
+def relationship_mood_per_tick(affinity: float, rules=None) -> float:
     """单向好感对本人心情的影响；锚点：80→+6，0→−5。"""
     score = max(0.0, min(100.0, affinity))
-    if score > 60:
-        return 2.0 + (score - 60.0) * 0.2
-    if score < 30:
-        return -(2.0 + (30.0 - score) * 0.1)
+    from .mechanics import DEFAULT_RULES
+    r=rules or DEFAULT_RULES
+    if score > r['positive_affinity_threshold']:
+        span=max(1,80-r['positive_affinity_threshold'])
+        return r['positive_mood_at_threshold']+(score-r['positive_affinity_threshold'])*(r['positive_mood_at_80']-r['positive_mood_at_threshold'])/span
+    if score < r['negative_affinity_threshold']:
+        span=max(1,r['negative_affinity_threshold'])
+        return -(r['negative_mood_at_threshold']+(r['negative_affinity_threshold']-score)*(r['negative_mood_at_0']-r['negative_mood_at_threshold'])/span)
     return 0.0
 MOVE_EXTRA_ENERGY = -0.25
 STARVE_HP_DAMAGE = -2.0
@@ -37,6 +41,8 @@ STARVE_HP_DAMAGE = -2.0
 ITEMS: dict[str, dict] = {
     "flower": {"name": "鲜花", "emoji": "💐", "price": 12, "decor": 6},
     "plant":  {"name": "盆栽", "emoji": "🪴", "price": 20, "decor": 10},
+    "meal":   {"name": "家常饭菜", "emoji": "🍱", "price": 0, "decor": 0},
+    "medicine": {"name": "药品", "emoji": "💊", "price": 25, "decor": 0},
 }
 
 # ------------------------------------------------------------------ 活动表
@@ -79,13 +85,6 @@ ACTIVITIES: dict[str, dict] = {
         "name":"电脑游戏", "emoji":"🎮", "duration":3, "need":"own_computer",
         "scene":"house", "cost":0, "effects":{"mood":5,"energy":-2},
         "desc":"回自己的电脑前打游戏，可指定游戏时长",
-    },
-    "game": {
-        "name": "打游戏", "emoji": "🎮", "duration": 3, "need": "facility:L",
-        "scene": "house", "cost": 0,
-        "effects": {"mood": 5, "energy": -2},
-        "synergy": True, "synergy_stat": "mood",
-        "desc": "客厅打游戏，多人组队快乐加倍",
     },
     "sleep": {
         "name": "睡觉", "emoji": "😴", "duration": 6, "need": "facility:h",
@@ -200,6 +199,12 @@ ACTIVITIES: dict[str, dict] = {
         "effects": {"mood": 2.5},
         "desc": "找身边的人聊天",
     },
+    "phone": {
+        "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
+        "scene": "any", "cost": 0,
+        "effects": {"mood": 2.5, "money": -50 / 6},
+        "desc": "给室友打电话，可跨地点交谈，拨打者支付话费",
+    },
     "love": {
         "name": "恋爱", "emoji": "💗", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
@@ -207,11 +212,27 @@ ACTIVITIES: dict[str, dict] = {
         "consent_threshold": 55,
         "desc": "向好感足够的人表白/约会",
     },
+    "sex": {
+        "name": "做爱", "emoji": "💕", "duration": 3, "need": "player",
+        "scene": "any", "cost": 0,
+        "effects": {"mood": 3, "energy": -1.5},
+        "desc": "双方分别选择同意后进行；可选自己的床或当前位置",
+    },
     "gift": {
         "name": "送礼", "emoji": "🎁", "duration": 1, "need": "player",
         "scene": "any", "cost": 0, "needs_item": "any",
         "effects": {"mood": 1},
         "desc": "把手里的鲜花/盆栽送给对方（大幅提升好感）",
+    },
+    "give_meal": {
+        "name":"送饭菜", "emoji":"🍱", "duration":1, "need":"player",
+        "scene":"any", "cost":0, "needs_item":"meal", "effects":{"mood":1},
+        "desc":"把做好的饭菜送给附近室友，对方可以稍后吃",
+    },
+    "use_medicine": {
+        "name":"给室友用药", "emoji":"💊", "duration":1, "need":"player",
+        "scene":"any", "cost":0, "needs_item":"medicine", "effects":{"energy":-0.5},
+        "desc":"在室友身边用药品疗伤或缓解疾病",
     },
     "attack": {
         "name": "攻击", "emoji": "⚔️", "duration": 1, "need": "player",
@@ -256,28 +277,60 @@ def facility_chars(key: str) -> list[str]:
     return spec.split("|")
 
 
-def activity_menu(scene: str = "any") -> str:
-    """给 LLM 的活动菜单（按场景过滤；LLM 会拿到两张图的完整菜单）"""
-    lines = []
-    from .town_services import DEFS
+def activity_menu(scene: str = "any", venue_code: str | None = None) -> str:
+    """只给行动目录；场所项目需到场后才能看到。"""
+    sections = {"室内生活": [], "社交互动": [], "随处行动": [], "小镇日常": [], "当前场所": []}
+    from .town_services import DEFS, NAMES
+    effects = {
+        "cook":"在家中厨房；备餐，完成后得到可转交的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
+        "watch_tv":"在家中客厅沙发；放松心情", "computer":"在自己卧室电脑前；保存、查看和修改自己的记录",
+        "computer_game":"在自己卧室电脑前；娱乐、提升心情", "sleep":"在自己卧室床上；恢复精力与身体",
+        "shower":"在家中浴室；放松并恢复精力", "laundry":"在家中洗衣区；洗衣、略有放松",
+        "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
+        "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
+        "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近；散步、略有放松",
+        "chat":"在室友身边；交谈、增进感情", "phone":"在任意地点；与室友通话、增进感情，拨打者支付话费",
+        "love":"在室友身边或床上；约会、增进感情", "sex":"在双方靠近处或床上；亲密相处",
+        "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
+        "give_meal":"在室友身边；把饭菜交给对方食用", "use_medicine":"在室友身边；消耗药品治疗伤病",
+        "destroy":"在公共设施附近；破坏设施、发泄情绪",
+        "home_treat":"在家中；用医学技能照护自己或室友", "stock":"在自己卧室电脑前；交易股票，可能盈亏",
+    }
+    local_effects = {
+        "coffee":"喝咖啡，恢复精力与心情，结伴更亲近", "cafe_read":"阅读，恢复心情与精力",
+        "eat_out":"吃饭，恢复饱食，结伴增进感情", "treat":"治疗疾病、恢复身体",
+        "movie":"观影，提升心情", "exercise":"锻炼，改善身体与心情",
+        "park":"散步，放松心情", "fish":"钓鱼，放松心情", "swim":"游泳，锻炼身体并放松",
+        "garden_walk":"散步，放松心情", "garden_flowers":"赏花，恢复心情与精力",
+        "garden_tend":"园艺，改善身体与心情", "shop":"购物，改善心情",
+        "buy_flower":"买鲜花，用于装饰或送礼", "buy_plant":"买盆栽，用于装饰或送礼",
+        "buy_medicine":"买药品，带给室友疗伤",
+    }
     for k, a in ACTIVITIES.items():
         if a.get("legacy"):continue
+        if k in DEFS and (not venue_code or DEFS[k][0] != venue_code):continue
         if scene != "any" and a.get("scene") not in ("any", scene):
             continue
-        cost = "（参数见场所服务）" if k in DEFS else f", 花费{a['cost']}元" if a.get("cost") else ""
         req = []
         if a.get("need") == "player":
-            req.append("需目标在身边(填target)")
+            req.append("target=室友")
         if a.get("needs_item"):
-            req.append("需持有鲜花或盆栽")
-        if a.get("gives_item"):
-            req.append(f"获得{ITEMS[a['gives_item']]['name']}")
-        extra = ("；" + "，".join(req)) if req else ""
-        location = {"house": "室内", "town": "室外"}.get(a.get("scene"), "任意地点")
-        if k not in DEFS and a.get('effects'):
-            cost += '，每小时收益率'+str({stat:round(rate*6,2) for stat,rate in a['effects'].items()})
-        lines.append(f"- {k}: {a['name']}（{location}）{cost}{extra}")
-    return "\n".join(lines)
+            req.append("需要鲜花或盆栽" if a['needs_item']=='any' else f"需要{ITEMS[a['needs_item']]['name']}")
+        extra = "（"+"；".join(req)+"）" if req else ""
+        group = "当前场所" if k in DEFS else ("社交互动" if a.get("need")=="player" else
+                "室内生活" if a.get("scene")=="house" else
+                "小镇日常" if a.get("scene")=="town" else "随处行动")
+        if k in DEFS:
+            code, _, skill, kind = DEFS[k]
+            purpose = local_effects.get(k) or (
+                "工作、获得工资并积累相关技能经验" if kind == "job" else
+                "学习并提高相应技能" if kind == "course" else
+                "学习驾驶，取得驾照" if kind == "license_course" else "购买物品")
+            detail = f"在{NAMES[code]}；{purpose}"
+        else:
+            detail = effects.get(k, a.get("desc", "在相应地点；进行活动"))
+        sections[group].append(f"- {k}: {a['name']}{extra}｜{detail}")
+    return "\n\n".join(f"{title}：\n"+"\n".join(rows) for title,rows in sections.items() if rows)
 
 
 # ------------------------------------------------------------------ 协同增益

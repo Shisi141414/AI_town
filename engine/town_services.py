@@ -1,6 +1,5 @@
 """小镇服务、课程、岗位与技能。参数按世界隔离，活动开始后使用已确认的条款。"""
 from copy import deepcopy
-import json
 import math
 import random
 
@@ -16,7 +15,9 @@ DEFS={
  'job_waiter':('R','餐厅服务员',None,'job'), 'job_chef':('R','厨师','cooking','job'),
  'job_reception':('B','诊所接待',None,'job'), 'job_nurse':('B','护理助理','medicine','job'), 'job_doctor':('B','门诊医师','medicine','job'),
  **{'study_'+k:('U','学习'+v,k,'course') for k,v in SKILLS.items()},
+ 'license_driving':('U','驾照课程',None,'license_course'),
  'buy_flower':('S','鲜花',None,'goods'), 'buy_plant':('S','盆栽',None,'goods'), 'car':('S','私家汽车',None,'goods'),
+ 'buy_medicine':('B','药品',None,'goods'),
  'shop':('S','零食杂物',None,'service'), 'movie':('M','看电影',None,'service'), 'exercise':('G','健身',None,'service'), 'park':('P','散步',None,'service'),
  'fish':('W','池塘钓鱼',None,'service'),'swim':('W','池塘游泳',None,'service'),
  'garden_walk':('J','花园散步',None,'service'),'garden_flowers':('J','花园赏花',None,'service'),'garden_tend':('J','花园园艺',None,'service'),
@@ -33,7 +34,9 @@ for key,code,mins,energy,wage,level in [
  DEFAULTS[code][key]=dict(minutes=mins,energy_cost=energy,hourly_wage=wage,min_level=level)
 for skill,mins,energy,fee in [('computer',120,18,60),('science',150,22,55),('literature',90,10,30),('medicine',180,26,80),('economics',120,16,65),('cooking',90,15,40)]:
  DEFAULTS['U']['study_'+skill]=dict(minutes=mins,energy_cost=energy,price=fee,xp=100)
+DEFAULTS['U']['license_driving']=dict(minutes=120,energy_cost_per_hour=12,price=80)
 DEFAULTS['S']={'buy_flower':dict(price=12),'buy_plant':dict(price=20),'car':dict(price=1000),'shop':dict(minutes=20,price=6,mood_gain=6)}
+DEFAULTS['B']['buy_medicine']=dict(price=25)
 DEFAULTS['M']={'movie':dict(minutes=30,price=12,mood_gain=18,energy_cost=1.5)}
 DEFAULTS['G']={'exercise':dict(minutes=30,price=0,mood_gain=12,energy_cost=15,hp_gain=3.6)}
 DEFAULTS['P']={'park':dict(minutes=30,price=0,mood_gain=10.5,energy_cost=1.5)}
@@ -123,19 +126,24 @@ def register(activities):
  for key,(code,name,skill,kind) in DEFS.items():
   if key=='car':continue
   if key not in activities:
-   activities[key]={'name':name,'emoji':'📚' if kind=='course' else '💼' if kind=='job' else '☕','duration':1,'need':'facility:'+code,'scene':'town','cost':0,'effects':{},'desc':name}
+   activities[key]={'name':name,'emoji':'📚' if kind=='course' else '🚗' if kind=='license_course' else '💼' if kind=='job' else '☕','duration':1,'need':'facility:'+code,'scene':'town','cost':0,'effects':{},'desc':name}
   if kind=='job':activities[key]['name']=name
  activities['home_treat']={'name':'在家行医','emoji':'🩺','duration':3,'need':'home_patient','scene':'house','cost':0,'effects':{'energy':-1},'desc':'医学1级起，可在家治疗自己或target室友，能力取决于医学等级'}
  activities['stock']={'name':'电脑股票交易','emoji':'📈','duration':1,'need':'own_computer','scene':'house','cost':0,'effects':{'energy':-.5},'desc':'经济学1级可在自己电脑买卖虚拟小镇指数，operation=buy/sell，shares填正整数；可能亏损'}
+ activities['buy_medicine']['gives_item']='medicine'
+ activities['buy_medicine']['emoji']='💊'
  # 原施工工作仅为旧决策兼容，新的模型菜单不提供。
  activities['build']['legacy']=True
- for key in ('buy_flower','buy_plant','shop','gift','attack','decorate_room','decorate_common'):
+ for key in ('buy_flower','buy_plant','buy_medicine','shop','gift','give_meal','use_medicine','attack','decorate_room','decorate_common'):
   activities[key]['fixed_duration']=True
 
 def action_spec(sim,p,key):
  from .activities import ACTIVITIES
  if p.service_spec and p.service_spec.get('_key')==key:return deepcopy(p.service_spec)
- return deepcopy(ACTIVITIES[key])
+ a=deepcopy(ACTIVITIES[key])
+ if key in sim.activity_config:
+  a.update(deepcopy(sim.activity_config[key]))
+ return a
 
 def prepare(sim,p,d):
  from .activities import ACTIVITIES
@@ -144,14 +152,15 @@ def prepare(sim,p,d):
  if key=='build':d.action=key='work'
  if key in DEFS and key!='car':
   code,name,skill,kind=DEFS[key];v=sim.town_config[code][key]
+  if kind=='license_course' and p.driver_license:raise ValueError('已经取得驾照')
   if kind=='job' and skill and level(p,skill)<v['min_level']:raise ValueError(f'{name}需要{SKILLS[skill]}{v["min_level"]}级')
   if key.startswith('study_') and level(p,skill)>=5:raise ValueError('这门技能已经达到5级')
   energy=v.get('energy_cost_per_hour',0)
-  if kind=='course':energy*=1-.03*level(p,'science')
+  if kind in ('course','license_course'):energy*=1-.03*level(p,'science')
   if kind=='job':energy*=1-.02*level(p,skill)
-  if kind in ('course','job') and p.stats.energy<energy/6:raise ValueError('当前精力不足以完成这项课程或工作，请先休息')
+  if kind in ('course','license_course','job') and p.stats.energy<energy/6:raise ValueError('当前精力不足以完成这项课程或工作，请先休息')
   n=int(v.get('minutes',10)//10)
-  a=deepcopy(ACTIVITIES[key]);a.update(name=name,need='facility:'+code,duration=n,cost=v.get('price',0),effects={},synergy=False,_key=key,_kind=kind,_terms=deepcopy(v),_skill=skill,fixed_duration=kind=='goods')
+  a=deepcopy(ACTIVITIES[key]);a.update(name=name,need='facility:'+code,duration=n,cost=v.get('price',0),effects={},synergy=False,_key=key,_kind=kind,_terms=deepcopy(v),_skill=skill,_building=code,fixed_duration=kind in ('goods','license_course'))
   if code=='W':a['need']='pond_shore';a['emoji']='🏊' if key=='swim' else '🎣'
   if code=='J':a['emoji']='🌷' if key=='garden_flowers' else '🌿'
   for field,stat in [('energy_gain_per_hour','energy'),('mood_per_hour','mood'),('satiety_per_hour','satiety'),('hp_per_hour','hp')]:
@@ -160,6 +169,9 @@ def prepare(sim,p,d):
   if kind=='job':
    a['effects']['money']=v['hourly_wage']/6
    a['_work_xp_per_hour']=work_experience_rate(sim,key)
+   a['effects']['mood']=-sim.mechanics['work_mood_per_hour']/6
+  elif kind in ('course','license_course'):
+   a['effects']['mood']=-sim.mechanics['study_mood_per_hour']/6
   p.service_spec=a
  elif key in ('stock','home_treat'):
   skill='economics' if key=='stock' else 'medicine'
@@ -173,17 +185,42 @@ def prepare(sim,p,d):
  return action_spec(sim,p,key) if key in ACTIVITIES else None
 
 def prompt_context(sim,p):
- lines=['技能：'+json.dumps({SKILLS[k]:{'等级':level(p,k),'经验':p.skills.get(k,0)} for k in SKILLS},ensure_ascii=False)]
- for key,(code,name,skill,kind) in DEFS.items():
-  v=sim.town_config[code][key]
-  info=f'{key} {NAMES[code]}·{name} '+json.dumps(v,ensure_ascii=False)
-  if skill:info+=' 技能:'+SKILLS[skill]
-  if kind=='job':info+=f' 工作经验率:{work_experience_rate(sim,key):g}/小时，等级:{JOB_GRADES[key]["grade"]}'
-  lines.append(info)
- lines.append(f'医学每级可在家处理相应病重等级并恢复生命；烹饪提高自制餐饱食、心情和精力；理学每级降低课程精力消耗3%；文学让阅读更愉快；计算机让电脑游戏更愉快；经济学1级解锁电脑股票交易。每100经验升一级，最高5级。所有数值收益按每小时收益率乘实际活动时间计算，学习中断保留已学经验，每次选课开始时按price一次性付清学费，中途不再扣费。工作可延长，班次不能短于岗位要求；消费和商品一次性价格单独列出，一小时为6刻。')
- lines.append('各职业均在工作时积累对应学科技能经验；教师经验率固定为同学科普通职业的两倍，由学校对应课程的work_xp_per_hour统一设置。教师必须具备所教学科3级（二级教师5级），不需要其他游戏参与者。所有岗位每级相关技能额外节约2%精力，最多10%；二级岗位要求更高技能，但最低班次更短、时薪更高。医学每级每小时恢复16生命、为室友治疗时每级每小时增加4好感；烹饪每级每小时额外恢复4.8饱食、1.8精力和1.8心情；文学阅读及计算机游戏每级每小时额外增加1.2心情。经济学的工作效率随等级提高，虚拟股票仍可能亏损。')
- lines.append(f'虚拟小镇指数现价{sim.market_price:.2f}元/份；我持有{p.stock_shares}份，持仓成本{p.stock_cost:.2f}元；无杠杆，不保证收益。')
+ known_skills=[f'{name}{level(p,key)}级（{p.skills.get(key,0):g}经验）' for key,name in SKILLS.items() if level(p,key)>0]
+ lines=['技能：'+('；'.join(known_skills) if known_skills else '暂未掌握技能'),
+        '驾照：'+('已有' if p.driver_license else '未取得')]
+ from .world import zone_of
+ zone=zone_of(p.scene,p.x,p.y)
+ lines.append('小镇场所（名称/代码）：'+'；'.join(f'{name} {code}' for code,name in NAMES.items()))
+ if p.scene=='town':
+  for code,name in NAMES.items():
+   if not onsite(p,code):continue
+   hours=sim.opening_hours[code]
+   lines.append(f'{name}营业时间：{hours[0]:02d}:00–{hours[1]:02d}:00')
+   lines.append(f'当前{zone}的项目：'+'；'.join(f'{key} {DEFS[key][1]}' for key in sim.town_config[code] if key!='car'))
+   if code=='S':lines.append('商店商品：'+'、'.join(f'{DEFS[key][1]} {row["price"]:g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods'))
+   break
+ if p.info_feedback:lines.append('上次询问所得：'+p.info_feedback)
+ lines.append(f'我的股票持仓：{p.stock_shares}份，成本{p.stock_cost:.2f}元')
  return '\n'.join(lines)
+
+
+def inspect(sim,p,key):
+ if key not in DEFS or key=='car':raise ValueError('请先到场并从当地项目目录选择项目')
+ code,name,skill,kind=DEFS[key]
+ if not onsite(p,code):raise ValueError('请先到对应场所查询')
+ row=sim.town_config[code][key]
+ visible={'minutes':'默认/最低分钟','price':'一次性费用','hourly_wage':'时薪','min_level':'技能等级要求','xp_per_hour':'每小时经验'}
+ details='，'.join(f'{label}{row[field]:g}' for field,label in visible.items() if field in row)
+ if skill:details+=f'，相关技能{SKILLS[skill]}'
+ return f'{NAMES[code]}·{name}({key})：{details}。工作和学习会消耗精力、心情。'
+
+
+def onsite(p,code):
+ from . import world
+ if p.scene!='town':return False
+ if world.tile('town',p.x,p.y)==code:return True
+ if code=='W':return any(world.tile('town',p.x+dx,p.y+dy)=='W' for dx,dy in ((0,1),(0,-1),(1,0),(-1,0)))
+ return False
 
 def step_effects(sim,p,key,eff):
  elapsed=p.activity_total-p.activity_left+1
@@ -202,7 +239,7 @@ def step_effects(sim,p,key,eff):
   p.skill_xp_gained=round(p.skill_xp_gained+p.skills[skill]-old_xp,6)
   if level(p,skill)>before:sim.log('activity',f'📚 {p.name}的{SKILLS[skill]}达到{level(p,skill)}级',[p.pid])
  if key in ('cook','eat'):
-  quality=level(p,'cooking') if key=='cook' else sim.meal_quality
+  quality=level(p,'cooking') if key=='cook' else (p.eating_quality if p.eating_from_inventory else sim.meal_quality)
   eff['satiety']=eff.get('satiety',0)+quality*.8
   eff['energy']=eff.get('energy',0)+quality*.3
   eff['mood']=eff.get('mood',0)+quality*.3
@@ -217,7 +254,8 @@ def step_effects(sim,p,key,eff):
   other=p.target_player
   p.affinity[other.pid]=min(100,p.affinity.get(other.pid,30)+2)
   other.affinity[p.pid]=min(100,other.affinity.get(p.pid,30)+p.gift_affinity_per_tick)
- if key=='cafe_read':eff['mood']=eff.get('mood',0)+level(p,'literature')*.2
+ if key=='cafe_read' and random.random()<min(1,level(p,'literature')*sim.mechanics['literature_mood_chance_per_level']):
+  eff['mood']=eff.get('mood',0)+sim.mechanics['literature_mood_bonus']
  if key=='computer_game':eff['mood']=eff.get('mood',0)+level(p,'computer')*.2
  if key in ('eat_out','coffee'):
   p.social_activity_tick[key]=sim.global_tick
@@ -249,6 +287,12 @@ def world_same(a,b):
 def finish(sim,p,key):
  if p.service_completed:return
  p.service_completed=True
+ if key=='license_driving':
+  if p.activity_left<=0 and p.activity_total>=p.activity['duration']:
+   p.driver_license=True
+   sim.log('activity',f'🚗 {p.name}完成驾照课程，取得驾驶资格',[p.pid])
+  else:sim.log('activity',f'🚗 {p.name}中断驾照课程，尚未取得驾照',[p.pid])
+  return
  if key.startswith('study_'):
   skill=key[6:]
   sim.log('activity',f'📚 {p.name}结束{SKILLS[skill]}学习，本次获得{p.skill_xp_gained:g}经验（{level(p,skill)}级）',[p.pid])

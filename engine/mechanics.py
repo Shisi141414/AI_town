@@ -1,0 +1,99 @@
+"""World-specific tunable rules. All rates are per ten-minute tick unless named per_hour."""
+from copy import deepcopy
+import math
+
+DEFAULT_RULES = {
+    'base_satiety_drain': .4, 'base_mood_drain': 1.0, 'illness_mood_drain': 4.0,
+    'high_satiety_hp_threshold': 80.0, 'high_satiety_hp_gain': .3,
+    'work_mood_per_hour': 9.0, 'study_mood_per_hour': 6.0,
+    'low_energy_threshold': 20.0, 'low_mood_threshold': 20.0,
+    'low_mood_delay_ticks': 18, 'low_mood_hp_loss': .5,
+    'walk_speed': 1, 'bicycle_speed': 4, 'car_speed': 12,
+    'walk_satiety_per_tile': .6, 'bicycle_satiety_per_tile': .4,
+    'walk_energy_per_tile': .65, 'bicycle_energy_per_tile': .35,
+    'literature_mood_chance_per_level': .1, 'literature_mood_bonus': 2.0,
+    'disease_daily_chance': .02, 'affinity_daily_chance': .04,
+    'disease_worsen_chance': .03,
+    'positive_affinity_threshold': 60, 'positive_mood_at_threshold': 2,
+    'positive_mood_at_80': 6, 'negative_affinity_threshold': 30,
+    'negative_mood_at_threshold': 2, 'negative_mood_at_0': 5,
+    # ---- 急救与住院 ----
+    'hospital_trigger_hp': 10.0,      # 生命低于此值触发紧急送医
+    'hospital_cost': 1200.0,          # 急救费；资产不足需向室友借钱补齐
+    'hospital_fee_halfday': 100.0,    # 住院房费（每半天）
+    'hospital_heal_hp': 20.0,         # 每半天住院恢复生命
+    'hospital_mood_gain': 15.0,       # 每半天住院恢复心情
+    'post_hospital_hp': 60.0,         # 出院时恢复到（不低于现有值）
+    'post_hospital_satiety': 80.0,
+    'post_hospital_energy': 80.0,
+    'post_hospital_mood': 40.0,
+}
+
+DEFAULT_HOURS = {
+    'C': [7, 22], 'R': [10, 22], 'U': [8, 20], 'B': [0, 24],
+    'O': [9, 18], 'S': [8, 21], 'M': [10, 23], 'G': [6, 22],
+    'P': [0, 24], 'F': [6, 19], 'W': [6, 19], 'J': [6, 21],
+}
+
+
+def validate_rules(values):
+    if not isinstance(values, dict) or set(values) != set(DEFAULT_RULES):
+        raise ValueError('机制参数不完整')
+    out = {}
+    for key, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f'{key} 必须为有限数字')
+        limit = 1 if 'chance' in key else 24 if key.endswith('speed') else 1440 if key.endswith('ticks') else 5000 if key.startswith('hospital') else 100
+        if not 0 <= value <= limit:
+            raise ValueError(f'{key} 超出范围 0～{limit}')
+        if key.endswith(('speed', 'ticks')) and (int(value) != value or value < 1):
+            raise ValueError(f'{key} 必须为正整数')
+        out[key] = value
+    if out['positive_affinity_threshold'] >= 80 or out['negative_affinity_threshold'] <= 0:
+        raise ValueError('好感阈值需要分别低于80、且高于0')
+    return out
+
+
+def validate_hours(values):
+    if not isinstance(values, dict) or set(values) != set(DEFAULT_HOURS):
+        raise ValueError('营业时间不完整')
+    out = {}
+    for code, hours in values.items():
+        if not isinstance(hours, list) or len(hours) != 2 or any(type(v) is not int for v in hours):
+            raise ValueError(f'{code} 营业时间必须为整数小时')
+        if not 0 <= hours[0] < 24 or not 1 <= hours[1] <= 24 or hours[0] == hours[1]:
+            raise ValueError(f'{code} 营业时间无效')
+        out[code] = hours[:]
+    return out
+
+
+def open_now(hours, hour):
+    start, end = hours
+    return start <= hour < end if start < end else hour >= start or hour < end
+
+
+def activity_defaults():
+    from .activities import ACTIVITIES
+    from .town_services import DEFS
+    return {key: {'duration': row['duration'], 'cost': row.get('cost', 0),
+                  'effects': deepcopy(row.get('effects', {}))}
+            for key, row in ACTIVITIES.items() if key not in DEFS and not row.get('legacy')}
+
+
+def validate_activities(values):
+    defaults = activity_defaults()
+    if not isinstance(values, dict) or set(values) != set(defaults):
+        raise ValueError('活动参数不完整')
+    for key, row in values.items():
+        if not isinstance(row, dict) or set(row) != set(defaults[key]) or set(row['effects']) != set(defaults[key]['effects']):
+            raise ValueError(f'{key} 活动字段不完整')
+        for field, value in row.items():
+            fields = value if field == 'effects' else {field: value}
+            for name, number in fields.items():
+                if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or abs(number) > 1000:
+                    raise ValueError(f'{key}.{name} 必须为有限数字')
+        if type(row['duration']) is not int or not 1 <= row['duration'] <= 144:
+            raise ValueError(f'{key} 时长必须为 1～144 刻')
+        if row['cost'] < 0:
+            raise ValueError(f'{key} 费用不能为负')
+    return deepcopy(values)

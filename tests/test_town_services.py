@@ -14,7 +14,7 @@ from engine.town_services import prepare,defaults,level,update_market
 
 class TownServiceTests(unittest.TestCase):
  def setUp(self):
-  world.reset_maps();self.sim=Simulation();self.sim.spawn_players(3);self.a,self.b=self.sim.players[:2]
+  world.reset_maps();self.sim=Simulation();self.sim.spawn_players(3);self.sim.tick=72;self.a,self.b=self.sim.players[:2]
  def tearDown(self):
   self.sim.finish_recording()
   for p in self.sim.players:p.memory.close()
@@ -77,15 +77,19 @@ class TownServiceTests(unittest.TestCase):
   with self.assertRaises(ValueError):prepare(self.sim,self.a,Decision(action='home_treat',target=self.b.name))
  def test_cooking_skill_improves_meal_and_saved_quality(self):
   self.a.skills['cooking']=200;self.a.stats.satiety=0;self.a.stats.energy=10;self.a.stats.mood=10
-  self.start('cook');self.finish()
+  self.start('cook');energy_at_stove=self.a.stats.energy;self.finish()
   self.assertEqual(self.sim.meal_quality,2)
-  self.assertGreater(self.a.stats.satiety,56);self.assertGreater(self.a.stats.energy,10)
+  self.assertGreater(self.a.stats.satiety,56);self.assertGreater(self.a.stats.energy,energy_at_stove)
   self.b.stats.satiety=0;self.b.stats.energy=10;self.b.stats.mood=10
   self.sim._apply_decision(self.b,Decision(action='eat'))
   for _ in range(200):
+   if self.b.state=='doing':break
+   self.b.tick(self.sim)
+  energy_at_table=self.b.stats.energy
+  for _ in range(200):
    self.b.tick(self.sim)
    if self.b.state=='idle':break
-  self.assertGreater(self.b.stats.satiety,39);self.assertGreater(self.b.stats.energy,10)
+  self.assertGreater(self.b.stats.satiety,39);self.assertGreater(self.b.stats.energy,energy_at_table)
  def test_stock_skill_gate_buy_sell_and_failed_transactions(self):
   with self.assertRaises(ValueError):prepare(self.sim,self.a,Decision(action='stock',operation='buy',shares=1))
   self.a.skills['economics']=100
@@ -112,12 +116,16 @@ class TownServiceTests(unittest.TestCase):
     self.assertEqual(level(p,'computer'),1)
    finally:
     for p in branch.players:p.memory.close()
- def test_prompt_includes_actual_terms_and_skill_abilities(self):
+ def test_prompt_discloses_terms_only_at_the_shop(self):
   from engine.town_services import prompt_context
   self.sim.town_config['S']['car']['price']=1234
   self.a.town_context=prompt_context(self.sim,self.a)
   text=brain.build_user_prompt(self.a,[],self.sim.clock)
-  for term in ('1234','study_science','job_doctor','home_treat','shares','烹饪'):self.assertIn(term,text)
+  for term in ('home_treat','shares','action=visit','action=inspect'):self.assertIn(term,text)
+  self.assertNotIn('烹饪0级',text)
+  for term in ('1234','study_science','job_doctor'):self.assertNotIn(term,text)
+  self.a.scene='town';self.a.x,self.a.y=next(q for q in world.find_tiles('town','S') if world.walkable('town',*q))
+  self.assertIn('1234',prompt_context(self.sim,self.a))
   for key in ('study_computer','job_chef','coffee','stock','home_treat'):
    self.assertEqual(brain.parse_decision(json.dumps({'action':key})).action,key)
   self.assertEqual(brain.parse_decision('{"action":"stock","shares":3,"operation":"buy"}').shares,3)
@@ -186,7 +194,7 @@ class BuildingApiTests(unittest.TestCase):
  def tearDown(self):
   server.sim.stop();self.client.__exit__(None,None,None);self.patch.stop();self.temp.cleanup()
  def test_edit_paused_lock_running_and_validation(self):
-  catalog=self.client.get('/api/town/buildings').json();self.assertEqual(len(catalog['U']['parameters']),18)
+  catalog=self.client.get('/api/town/buildings').json();self.assertEqual(len(catalog['U']['parameters']),19)
   values=catalog['C']['parameters'];values['coffee']['price']=9
   self.assertEqual(self.client.put('/api/town/buildings/C',json={'parameters':values}).status_code,200)
   server.sim.running=True

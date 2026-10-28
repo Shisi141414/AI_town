@@ -298,6 +298,62 @@ async def town_buildings():
     return catalog(sim)
 
 
+@app.get('/api/mechanics')
+async def mechanics_view():
+    from engine.town_services import catalog,prompt_context
+    from engine.mechanics import activity_defaults
+    from engine.activities import ACTIVITIES
+    resident=sim.players[0] if sim.players else None
+    sample=''
+    if resident:
+        resident.town_context=prompt_context(sim,resident)
+        resident.transport_context=sim.travel_context(resident)
+        resident.user_prompt_template=sim.user_prompt_template
+        nearby=[o.name for o in resident.nearby_players([o for o in sim.players if o is not resident])]
+        try:sample=brain.build_user_prompt(resident,nearby,sim.clock,sim.decor_common)
+        except (ValueError,KeyError) as exc:sample=f'提示词模板错误：{exc}'
+    return {'rules':sim.mechanics,'hours':sim.opening_hours,'activities':sim.activity_config,
+            'activity_names':{key:ACTIVITIES[key]['name'] for key in activity_defaults()},
+            'buildings':catalog(sim),'prompt_template':sim.user_prompt_template or brain.USER_TEMPLATE,
+            'system_prompt':brain.get_system_prompt(sim.system_prompt),'prompt_preview':sample,
+            'resident_name':resident.name if resident else ''}
+
+
+class MechanicsUpdate(BaseModel):
+    rules: dict
+    hours: dict
+    activities: dict
+    prompt_template: str
+
+
+@app.put('/api/mechanics')
+async def mechanics_update(update:MechanicsUpdate):
+    from engine.mechanics import validate_rules,validate_hours,validate_activities
+    from string import Formatter
+    async with _control_lock:
+        if sim.running or sim.identity_phase or sim._tick_lock.locked() or (_identity_task and not _identity_task.done()):
+            raise HTTPException(409,'模拟运行中只能查看，请先暂停')
+        try:
+            rules=validate_rules(update.rules);hours=validate_hours(update.hours)
+            activities=validate_activities(update.activities)
+            template=update.prompt_template.strip()
+            if len(template)>20000:raise ValueError('提示词模板不能超过20000字')
+            allowed={'day','clock','daypart','name','gender','scene_name','hp','satiety','energy','mood','money','illness','location','transport','items','nearby','sex_invitation','affinity','decor_common','memories','menu','computer','town','transactions'}
+            fields={field for _,field,_,_ in Formatter().parse(template) if field}
+            if not fields <= allowed or not {'town','menu','memories'} <= fields:
+                raise ValueError('提示词只能使用原有占位符，且必须保留 {town}、{menu}、{memories}')
+        except (ValueError,KeyError) as exc:raise HTTPException(400,str(exc))
+        old=(sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template)
+        sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template=rules,hours,activities,template
+        try:save_store().checkpoint(sim,'修改机制')
+        except Exception:
+            sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template=old
+            raise
+        sim.record('configuration',{'mechanics':rules,'opening_hours':hours,'activity_config':activities,'user_prompt_template':template})
+        sim.log('system','机制参数已更新',resident_memory=False)
+        return {'ok':True}
+
+
 class BuildingParameters(BaseModel):
     parameters: dict[str,dict[str,float]]
 

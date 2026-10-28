@@ -12,6 +12,7 @@ from engine.town_services import DEFS, JOB_GRADES, defaults, prepare, prompt_con
 class CareerAndLeisureTests(unittest.TestCase):
     def setUp(self):
         world.reset_maps(); self.sim=Simulation(); self.sim.spawn_players(3)
+        self.sim.tick=72
         self.p,self.other=self.sim.players[:2]
 
     def tearDown(self):
@@ -172,12 +173,15 @@ class CareerAndLeisureTests(unittest.TestCase):
                 self.assertAlmostEqual(self.p.stats.mood-start,expected)
                 if key.startswith('garden_'):self.assertEqual(world.tile('town',self.p.x,self.p.y),'J')
 
-    def test_model_can_select_new_actions_and_receives_exact_rules(self):
+    def test_model_can_select_new_actions_and_discovers_local_rules(self):
         for key in (*JOB_GRADES,'fish','swim','garden_walk','garden_flowers','garden_tend'):
             self.assertEqual(brain.parse_decision('{"action":"'+key+'"}').action,key)
         context=prompt_context(self.sim,self.p)
-        for text in ('两倍','work_xp_per_hour','job_teacher_computer','job_programmer_2','fish','swim','garden_tend'):
-            self.assertIn(text,context)
+        self.assertIn('事务所',context)
+        self.assertNotIn('job_teacher_computer',context)
+        self.p.scene='town';self.p.x,self.p.y=next(q for q in world.find_tiles('town','U') if world.walkable('town',*q))
+        self.assertIn('job_teacher_computer',prompt_context(self.sim,self.p))
+        self.assertNotIn('hourly_wage',prompt_context(self.sim,self.p))
 
 
 if __name__=='__main__':unittest.main()

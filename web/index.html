@@ -25,6 +25,7 @@
     <option value="8">8x</option>
   </select>
   <small id="recordingTag" style="color:#617952">○ 尚未录制</small>
+  <button class="btn" id="btnMechanics" title="查看和调整游戏机制">⚙ 机制</button>
   <button class="btn" id="btnGuide" title="使用指南">📖 指南</button>
 </header>
 
@@ -81,8 +82,8 @@
       <h3>室友的出行计划</h3>
       <select id="travelResident" aria-label="选择 AI 居民"></select>
       <div class="travel-modes" id="travelModes">
-        <button class="btn" data-mode="walk">步行 · 3 格</button>
-        <button class="btn" data-mode="bicycle">骑行 · 6 格</button>
+        <button class="btn" data-mode="walk">步行 · 1 格</button>
+        <button class="btn" data-mode="bicycle">骑行 · 4 格</button>
         <button class="btn" data-mode="car">开车 · 12 格</button>
       </div>
       <p id="travelInfo"></p>
@@ -207,13 +208,13 @@
       <h3>这是什么？</h3>
       <p>一座由 AI 居民自主生活的合租之家 + 小镇。每个居民由一个大模型扮演，共享同一份提示词，但拥有各自的记忆、数值状态和人际关系——所以他们会表现出不同的性格。</p>
       <h3>30 秒上手</h3>
-      <p>① 点顶部的 <span class="kbd">▶ 开始</span>，居民们先选择自己的名字、性别与颜色（若已配置 API）；② 看着他们吃饭、上班、打游戏、交朋友；③ 中途随时可 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速 / <span class="kbd">⟲ 重置</span>。</p>
+      <p>① 点顶部的 <span class="kbd">▶ 开始</span>，居民们先选择自己的名字、性别与颜色（若已配置 API）；② 看着他们吃饭、上班、玩电脑游戏、交朋友；③ 中途随时可 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速 / <span class="kbd">⟲ 重置</span>。</p>
       <h3>两个场景</h3>
       <p>地图上方有两个标签页：<b>室内·合租之家</b>（5 间卧室、客厅、厨房、餐厅、两个卫生间、洗衣区、大阳台）和<b>室外·小镇</b>（商店、公园、办公楼、电影院、健身房、医院等）。居民从东侧大门出入；两个场景用不同比例尺渲染。</p>
       <h3>接入大模型</h3>
       <p>游戏角色只有这些合租 AI 居民；室外建筑是活动地点，不会生成其他 NPC。点击居民卡片或地图人物，再到「室友的出行计划」查看出行和车辆。</p>
       <h3>出行与共用汽车</h3>
-      <p>步行 3 格/tick，骑行 6 格/tick，会消耗饱食度；汽车在道路上最高 12 格/tick，不消耗饱食度，每格油费 0.15。室内一律步行。全镇开局只有一辆共用汽车，每位居民可花 1000 金钱购买一辆私家车。取车需要靠近停车点；司机在车位时，两格内的室友可搭乘，最多另载 3 人。离开道路或回家时自动下车。模型也能自主选择出行、购车和搭乘。</p>
+      <p>步行默认 1 格/tick，骑行 4 格/tick，都会消耗饱食度和精力；汽车在道路上最高 12 格/tick，不消耗饱食度。室内一律步行。全镇开局只有一辆共用汽车，也可以在商店购车。只有完成学校驾照课程的居民才能驾驶；无驾照可以乘车。司机在车位时，两格内的室友可搭乘，最多另载 3 人。</p>
       <h3>API 设置步骤</h3>
       <p>不配置 API 时居民由内置规则引擎驱动（也能玩）。想要「真 AI」：</p>
       <p>① 侧栏 <b>模型</b> → 新增档案：填 Base URL、API Key，选上游格式；<br>
@@ -221,7 +222,7 @@
       ③ 保存后点「测试」验证连通，然后「启用」；<br>
       ④ 在「玩家模型绑定」里为每个居民先<b>选择 API 档案</b>、再点「载模型」挑选具体模型——不同居民可以走不同网关、用不同模型（比如两个走 A 网关用 DeepSeek / GLM，三个走 B 网关用 Qwen / ERNIE / MiniMax），观察他们的性格差异。</p>
       <h3>社交机制</h3>
-      <p>居民一起打游戏、吃饭、工作有<b>协同加成</b>（效果随人数提升），但好感度会调制加成——关系差的人一起做事反而互相拖累。每次互动后，模型自己决定好感变化多少（-5~+5），送鲜花/盆栽能大幅提升好感。在「关系网」面板可以看到实时的好感网络图。</p>
+      <p>居民一起吃饭、工作有<b>协同加成</b>（效果随人数提升），但好感度会调制加成——关系差的人一起做事反而互相拖累。每次互动后，模型自己决定好感变化多少（-5~+5），送鲜花/盆栽能大幅提升好感。在「关系网」面板可以看到实时的好感网络图。成年居民也可互相提出做爱的邀请，只有双方分别选择同意才会进行。</p>
       <h3>生活循环</h3>
       <p>饱食度会持续下降，归零开始掉血；血量归零会被送医并扣 30 元；没钱要去办公楼/田地/施工地打工；睡觉恢复精力，夜间睡眠效果更好。居民可以去商店买<b>鲜花💐/盆栽🪴</b>布置自己的房间或公共区域（持续提升心情），也可以送给心上人。</p>
       <h3>观察工具</h3>
@@ -241,10 +242,28 @@
   <div id="buildingServices"></div>
   <button class="btn primary" id="saveBuilding">保存参数</button>
 </dialog>
+<dialog id="mechanicsDialog" class="mechanics-dialog">
+  <div class="building-heading"><h3>游戏机制</h3><button class="btn" id="closeMechanics">关闭</button></div>
+  <p id="mechanicsHint" class="hint"></p>
+  <div class="mechanics-scroll">
+    <details open><summary>基础消耗、心情、移动与文学概率</summary><div id="mechanicsRules" class="building-fields"></div></details>
+    <details><summary>各场所营业时间</summary><div id="mechanicsHours" class="building-fields"></div></details>
+    <details><summary>所有室内与独立活动</summary><div id="mechanicsActivities"></div></details>
+    <details><summary>所有建筑服务、课程、岗位与商品</summary><div id="mechanicsBuildings"></div></details>
+    <details><summary>当前发送给模型的提示词</summary>
+      <p class="hint">下方是首位居民本次决策的完整用户提示词预览；系统提示词另列。实际内容随其位置、记忆、状态而变化。暂停后可编辑用户提示词格式，保留占位符。</p>
+      <label>系统提示词（请到“设置”修改）<textarea id="mechanicsSystem" readonly></textarea></label>
+      <label>实际用户提示词预览 <span id="mechanicsResident"></span><textarea id="mechanicsPreview" readonly></textarea></label>
+      <label>用户提示词格式<textarea id="mechanicsTemplate"></textarea></label>
+    </details>
+  </div>
+  <button class="btn primary" id="saveMechanics">保存机制</button>
+</dialog>
 <div id="toast"></div>
 
 <script src="/static/pixel-scene.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/town-buildings.js"></script>
+<script src="/static/mechanics.js?v=20261028-hp-regen"></script>
 </body>
 </html>

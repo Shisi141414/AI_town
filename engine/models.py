@@ -50,13 +50,16 @@ class PlayerSnapshot(BaseModel):
     decor_room: float = 0.0      # 自己卧室装饰度
     identity_done: bool = False  # 开局身份选择是否完成
     travel_mode: Literal["walk", "bicycle", "car"] = "walk"
+    driver_license: bool = False
     transport: str = "walk"
     vehicle_driver: str | None = None
     passengers: list[str] = Field(default_factory=list)
     car_id: str | None = None
     memory_counts: dict[str, int] = Field(default_factory=dict)
-    illness: str = "健康"
+    illness: str = "未患疾病"
     illness_severity: int = 0
+    hospitalized: bool = False
+    awaiting_admission: bool = False
     activity_minutes_left: int = 0
     activity_minutes_total: int = 0
     skills: dict[str, float] = Field(default_factory=dict)
@@ -123,6 +126,7 @@ class Decision(BaseModel):
     money_from: str = ""
     operation: str = "list"
     location: Literal['','bed','here'] = ''
+    memory_note: str = Field(default="", max_length=300)
     file_id: str = ""
     title: str = Field(default="", max_length=120)
     content: str = Field(default="", max_length=20000)

@@ -90,10 +90,14 @@ function renderPlayers() {
       return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(k === "money" ? 2 : 0)}</span></div>`;
     }).join("");
     const items = Object.entries(p.items||{}).filter(([,v])=>v>0)
-      .map(([k,v]) => ({flower:"💐",plant:"🪴"}[k]+"×"+v)).join(" ");
+      .map(([k,v]) => ({flower:"💐",plant:"🪴",meal:"🍱",medicine:"💊"}[k]+"×"+v)).join(" ");
     const decor = (p.decor_room||0) > 0 ? ` · 🌸装饰${p.decor_room.toFixed(0)}` : "";
     const doing = p.activity
       ? `<div class="doing">${esc(p.activity_emoji)} 正在<b>${esc(p.activity)}</b> · 剩余${p.activity_minutes_left||0}分钟${p.target_name ? " → " + esc(p.target_name) : ""}</div>`
+      : p.hospitalized
+      ? `<div class="doing">🏥 住院治疗中 · 房费100元/半天（生命+20 心情+15）</div>`
+      : p.awaiting_admission
+      ? `<div class="doing">📞 正在向室友借钱凑急救费…</div>`
       : `<div class="doing">💭 ${p.state === "riding" ? "搭乘室友的汽车" : p.state === "moving" ? "前往目的地 · " + esc(({walk:"步行",bicycle:"骑行",car:"驾车",passenger:"乘车"})[p.transport]||"步行") : ["deciding","waiting_model"].includes(p.state) ? esc(p.decision_status||"等待模型回复…") : esc(p.plan || "休息片刻")}</div>`;
     const sceneTag = p.scene === "house" ? "🏠" : "🌤";
     return `<div class="pcard ${p.pid === selectedPid ? "selected" : ""}" data-pid="${esc(p.pid)}">
@@ -575,10 +579,11 @@ function renderTravel() {
   if(sel.innerHTML!==options)sel.innerHTML=options;
   sel.value=selectedPid||before;
   const p=players.find(p=>p.pid===selectedPid);
-  for(const b of document.querySelectorAll("#travelModes button")){b.disabled=replayMode||!p||!!p.vehicle_driver;b.classList.toggle("active",p?.travel_mode===b.dataset.mode);}
+  for(const b of document.querySelectorAll("#travelModes button")){b.disabled=replayMode||!p||!!p.vehicle_driver||(b.dataset.mode==='car'&&!p.driver_license);b.classList.toggle("active",p?.travel_mode===b.dataset.mode);}
   if(!p)return;
   const owner=vehicles.find(v=>v.owner_id===p.pid),shared=vehicles.find(v=>!v.owner_id),driver=players.find(p=>p.pid===shared?.driver_id);
-  $("travelInfo").textContent=p.vehicle_driver ? `正在搭乘 ${players.find(o=>o.pid===p.vehicle_driver)?.name||"室友"} 的汽车。` : p.scene==="house" ? "室内始终步行。可以提前安排室外出行；汽车须在家门口可用。" : "设置该 AI 居民的出行方式，正在进行的路线也会更新。";
+  $("travelInfo").textContent=p.vehicle_driver ? `正在搭乘 ${players.find(o=>o.pid===p.vehicle_driver)?.name||"室友"} 的汽车。` : p.scene==="house" ? "室内始终步行。可以提前安排室外出行。" : "设置该 AI 居民的出行方式，正在进行的路线也会更新。";
+  if(!p.vehicle_driver&&!p.driver_license)$("travelInfo").textContent+=' 开车需要先在学校完成驾照课程；乘车无需驾照。';
   $("carStatus").textContent=`共用车：${driver?driver.name+" 使用中":"停在 ("+(shared?.x??2)+", "+(shared?.y??12)+")"}。${owner?"已拥有私家车。":"尚无私家车。"}`;
   const carPrice=townConfig?.S?.car?.price??1000;
   $("buyCar").disabled=replayMode||!!owner||p.stats.money<carPrice;

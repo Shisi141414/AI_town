@@ -54,6 +54,11 @@ class Simulation:
         self.global_tick = 0
         from .town_services import defaults
         self.town_config = defaults()
+        from .mechanics import DEFAULT_RULES, DEFAULT_HOURS, activity_defaults
+        self.mechanics = dict(DEFAULT_RULES)
+        self.opening_hours = {k: v[:] for k, v in DEFAULT_HOURS.items()}
+        self.activity_config = activity_defaults()
+        self.user_prompt_template = ""
         self.meal_quality = 0
         self.market_price = 10.0
         self.market_last_tick = 0
@@ -70,10 +75,14 @@ class Simulation:
         self.dialogue_log: list[dict] = []      # 兼容保留
         self.conversations: list[Conversation] = []   # 活跃对话
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
+        self.loan_queue: list[tuple] = []       # (borrower_pid, lender_pid) 急救借款
+        self.sex_proposals: dict[str, dict] = {}
         self._affinity_busy = False
+        self._loan_busy = False
         self._loop_task: asyncio.Task | None = None
         self._tick_lock = asyncio.Lock()
         self._affinity_task: asyncio.Task | None = None
+        self._loan_task: asyncio.Task | None = None
         self._llm_error_count = 0
         self.identity_phase = False             # 是否在开局身份阶段
         self.model_of: dict[str, str] = {}      # pid → 模型（server 同步进来）
@@ -273,7 +282,7 @@ class Simulation:
             if p.scene == "house":
                 nearby = abs(car.x - 2) + abs(car.y - 12) <= 2
             else:
-                nearby = max(abs(car.x - p.x), abs(car.y - p.y)) <= 2
+                nearby = p.scene == 'town'  # 先预约空车，寻路会走到停车点再驾驶。
             if nearby:
                 car.driver_id, p.car_id = p.pid, car.id
                 return car
@@ -284,6 +293,8 @@ class Simulation:
             raise ValueError("请先下车再选择出行方式")
         if mode not in world.TRAVEL_MODES:
             raise ValueError("未知出行方式")
+        if mode == "car" and not p.driver_license:
+            raise ValueError("驾驶汽车需要先在学校取得驾照；没有驾照仍可乘车")
         if mode == "car" and not p.car_id and not self.reserve_car(p):
             raise ValueError("附近没有可用汽车；共用车可能被占用或停在其他地点")
         if mode != "car":
@@ -344,11 +355,8 @@ class Simulation:
         names = {o.pid: o.name for o in self.players}
         cars = "；".join(f"{'共用车' if not v.owner_id else names.get(v.owner_id,'已离开室友')+'的私家车'}停在({v.x},{v.y})，"
                         + (f"由{names.get(v.driver_id,'室友')}使用" if v.driver_id else "空闲") for v in self.vehicles)
-        return (f"当前位置({p.x},{p.y})，当前出行偏好：{world.TRAVEL_MODES[p.travel_mode]['name']}。"
-                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。"
-                "步行3格/tick、骑行6格/tick，消耗饱食度；汽车道路最高12格/tick，不消耗饱食度，油费0.15/格。"
-                "全镇仅一辆共用车，只能一人驾驶，另载3人；需靠近停车点取车。可在商店购买私家车，价格见场所参数。"
-                "仅有合租室友，没有其他参与者。")
+        return (f"当前位置({p.x},{p.y})。"
+                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。")
 
     def drop_passengers(self, driver):
         for pid in list(driver.passengers):
@@ -499,16 +507,53 @@ class Simulation:
     async def _step_tick(self) -> None:
         if self.identity_phase:
             return
+        for target_pid,proposal in list(self.sex_proposals.items()):
+            if self.global_tick >= proposal['expires']:
+                self._decline_sex(target_pid,'邀请已过期')
         await self.maintain_memories()
 
-        # 1. 决策（idle 且不在对话中的玩家）
+        # 1. 决策（idle 且不在对话中的玩家；住院/待收治者走住院专属决策）
         idlers = [p for p in self.players
                   if (p.state == "idle" or (p.state == "waiting_model" and time.monotonic() >= p.next_decision_at) or (p.vehicle_driver and self.global_tick % 6 == 0)) and p.identity_done
-                  and p._conversation is None]
+                  and p._conversation is None
+                  and not getattr(p, 'hospitalized', False)
+                  and not getattr(p, 'awaiting_admission', False)]
         for p in self.players:
             p.day, p.world_tick, p.hour = self.day, self.global_tick, self.hour
         if idlers:
             await self._decide_batch(idlers)
+
+        # 1.5 住院决策：是否继续住院（每半天结算一次后询问，平时不问）
+        inpatients = [p for p in self.players
+                      if getattr(p, 'hospitalized', False) and p.identity_done]
+        for p in inpatients:
+            if p.state == 'idle' and getattr(p, 'ask_stay', False):
+                p.ask_stay = False
+                prof = self.profile_for(p.pid)
+                if prof:
+                    model = self.model_of.get(p.pid) or prof.default_model
+                    p.state = 'deciding'
+                    p.decision_status = '考虑是否继续住院'
+                    try:
+                        d = await brain.decide_llm(
+                            prof, model, p, [], self.clock,
+                            brain.get_system_prompt(self.system_prompt),
+                            self.settings.temperature, self.settings.decision_timeout,
+                            self.decor_common,
+                            progress=lambda status, _p=p: self._decision_progress(_p, status))
+                        if p.state == 'deciding' and p in self.players:
+                            self.record("decision", {"pid": p.pid, **d.model_dump()})
+                            self._apply_decision(p, d)
+                    except Exception:                     # noqa: BLE001
+                        p.state = 'idle'                 # 失败则默认继续住院
+                        p.next_decision_at = time.monotonic() + 15
+                else:
+                    # 规则模式：钱够且生命没满就续住
+                    if p.stats.hp >= 95 or p.stats.money < self.mechanics['hospital_fee_halfday']:
+                        from . import hospital
+                        hospital.discharge(self, p, reason="自动出院")
+                    else:
+                        p.plan = '住院休养中'
 
         # 有绑定模型但尚未得到可执行回答时，暂缓整个逻辑刻；不扣生命和饥饿。
         if any(p.state in ('waiting_model','deciding') for p in self.players):
@@ -522,6 +567,7 @@ class Simulation:
             self.tick = 0
             self.day += 1
             self.log("system", f"🌅 第 {self.day} 天开始了",scope="game")
+        tick_health_start={p.pid:p.stats.hp for p in self.players}
 
         # 1.5 推进活跃对话（每 tick 每对话推进一步回合）
         if self.conversations:
@@ -530,26 +576,31 @@ class Simulation:
                     self.conversations.remove(conv)
                     continue
                 # 双方还在同一地点才继续；走散则结束
-                if conv.a.scene != conv.b.scene or (
+                if conv.kind != 'phone' and (conv.a.scene != conv.b.scene or (
                         max(abs(conv.a.x - conv.b.x), abs(conv.a.y - conv.b.y)) > 3
-                        and not world.same_place(conv.a, conv.b)):
+                        and not world.same_place(conv.a, conv.b))):
                     conv._end("separated")
                     self.conversations.remove(conv)
                     continue
+                before={p.pid:p.stats.hp for p in self.players}
                 await conv.advance()
+                self._interrupt_health_losses(before)
 
         # 2. 推进状态机：循环轮换先行者，避免固定顺序长期抢占门口。
         self.repair_positions()
         order=self.players[self.global_tick%len(self.players):]+self.players[:self.global_tick%len(self.players)] if self.players else []
         for p in order:
             p.day, p.world_tick, p.hour = self.day, self.global_tick, self.hour
+            before={q.pid:q.stats.hp for q in self.players}
             p.tick(sim=self)
+            self._interrupt_health_losses(before)
 
         self.random_events.tick(self)
 
         # 3. 被动消耗
         for p in self.players:
             p.passive_drain(self)
+        self._interrupt_health_losses(tick_health_start)
 
         # 4. 相遇播报（每 6 tick 检查一次，避免刷屏）
         if self.tick % 6 == 0:
@@ -567,6 +618,50 @@ class Simulation:
         # 6. 好感队列消化（不阻塞）
         if self._affinity_task is None or self._affinity_task.done():
             self._affinity_task = asyncio.create_task(self._drain_affinity())
+        # 6.5 借款队列消化（不阻塞；离线入队的请求在这里补启动）
+        if self.loan_queue:
+            self._kick_loan_queue()
+
+    def _interrupt_health_losses(self,before):
+        for p in self.players:
+            previous=before.get(p.pid,p.stats.hp)
+            if p.stats.hp < previous-1e-8:
+                self._alert_health_loss(p,previous-p.stats.hp)
+
+    def _alert_health_loss(self,p,lost,*,force=False):
+        """受伤结束已排定的行动，让下一刻进入正常的模型决策流程。"""
+        if getattr(p,'last_health_alert_tick',-1)==self.global_tick:return
+        # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
+        active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
+        if not active:return
+        p.last_health_alert_tick=self.global_tick
+        prior=(p.activity or {}).get('name') or p._pending_key or p.plan or '当前行动'
+        p.injury_alert=f'刚失去{lost:.2f}点生命，{prior}已中断；请先评估伤情，再决定下一步。'
+        if p.pid in self.sex_proposals:self._decline_sex(p.pid,'受伤后中断')
+        if p._conversation and p._conversation.phase!='ended':p._conversation._end('injury')
+        partner=self.by_pid(p._bed_partner_pid) if p._bed_partner_pid else None
+        if partner and partner._bed_partner_pid==p.pid and partner._conversation is None:
+            self._cancel_timed_action(partner)
+            partner.remember(f'{p.name}受伤，我们的共同活动中断了',5)
+        self._cancel_timed_action(p)
+        self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点，已中断{prior}并重新考虑行动',[p.pid])
+
+    def _cancel_timed_action(self,p):
+        from .interaction_points import release
+        from .town_services import finish
+        if p.activity and p.activity.get('_kind') in ('job','course','license_course'):
+            finish(self,p,p.activity_key)
+        if p.vehicle_driver:self.leave_vehicle(p)
+        if p.car_id:
+            self.drop_passengers(p);self.release_car(p)
+            p.transport='walk';p.travel_mode='walk'
+        p.state='idle';p.activity=None;p.activity_key='';p.activity_left=0
+        p.requested_duration=None;p.target_player=None;p._pending_key='';p._pending_target_pid=None
+        p.path=[];p.route_goal=None;p._final_goal=None;p._final_scene=None
+        p.interaction_resume=False
+        release(self,p)
+        if p.scene=='town' and world.tile('town',p.x,p.y)=='W':
+            p.x,p.y=self.free_position('town',p.x,p.y,p)
 
     async def maintain_memories(self):
         async def one(p):
@@ -624,6 +719,10 @@ class Simulation:
         from .town_services import prompt_context
         p.town_context = prompt_context(self,p)
         p.transport_context = self.travel_context(p)
+        p.user_prompt_template = self.user_prompt_template
+        proposal=self.sex_proposals.get(p.pid)
+        sender=self.by_pid(proposal['from']) if proposal else None
+        p.sex_invitation=(f'{sender.name}邀请你做爱；若愿意，选择action=sex、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
         p.known_names = {o.pid: o.name for o in self.players}
         model = self.model_of.get(p.pid) or prof.default_model
         try:
@@ -634,8 +733,13 @@ class Simulation:
                 self.decor_common, progress=lambda status:self._decision_progress(p,status))
             if p.state == "deciding" and p.vehicle_driver == riding_before and p in self.players:
                 p.decision_status = "模型已回复"
+                if p.pending_memory_activity:
+                    if d.memory_note.strip():p.remember('我的活动后感想：'+d.memory_note.strip(),6)
+                    p.pending_memory_activity=''
+                p.info_feedback=''
                 self.record("decision",{"pid":p.pid,**d.model_dump()})
                 self._apply_decision(p, d)
+                if p.state!='waiting_model':p.injury_alert=''
         except Exception as e:                 # noqa: BLE001
             if p.state != "deciding" or p.vehicle_driver != riding_before or p not in self.players:
                 return
@@ -650,6 +754,7 @@ class Simulation:
         self.log("system",f"🧠 {p.name}：{status}",[p.pid],resident_memory=False)
 
     def _apply_rule(self, p: Player, depth: int = 0) -> None:
+        p.injury_alert=''
         if p.vehicle_driver:
             driver = self.by_pid(p.vehicle_driver)
             if driver and driver.state == "moving" and p.stats.satiety > 25:
@@ -677,6 +782,46 @@ class Simulation:
     def _apply_decision(self, p: Player, d: Decision, depth: int = 0) -> None:
         p.requested_duration = None
         key = d.action
+        # ---- 住院专属动作 ----
+        from . import hospital
+        if key in ('hospital_stay', 'hospital_leave') and getattr(p, 'hospitalized', False):
+            if key == 'hospital_leave':
+                hospital.discharge(self, p, reason="办理出院")
+            else:
+                p.remember("我决定继续住院休养", 3)
+                self.log("system", f"🛏 {p.name} 决定继续住院", [p.name], scope="game")
+            p.state = "idle"
+            return
+        if key != 'sex' and p.pid in self.sex_proposals:
+            self._decline_sex(p.pid,'对方选择了其他行动')
+        if key == 'sex':
+            self._sex_decision(p,d)
+            return
+        if key == 'inspect':
+            from .town_services import inspect
+            try:
+                p.info_feedback=inspect(self,p,d.target)
+                p.state='idle';p.plan='查询'+d.target
+            except ValueError as exc:
+                p.info_feedback=str(exc);p.state='idle'
+            return
+        if key == 'visit':
+            from .town_services import NAMES
+            code=next((c for c,name in NAMES.items() if d.target in (c,name)),None)
+            if not code:
+                p.info_feedback='请选择目录中的场所代码或名称';p.state='idle';return
+            if code=='W':
+                positions=[(x+dx,y+dy) for x,y in world.find_tiles('town','W') for dx,dy in ((0,1),(0,-1),(1,0),(-1,0)) if world.walkable('town',x+dx,y+dy)]
+            else:positions=[q for q in world.find_tiles('town',code) if world.walkable('town',*q)]
+            if not positions:p.info_feedback='场所暂不可到达';p.state='idle';return
+            ref=(p.x,p.y) if p.scene=='town' else (1,12)
+            tx,ty=min(positions,key=lambda q:abs(q[0]-ref[0])+abs(q[1]-ref[1]))
+            try:
+                if d.travel_mode and d.travel_mode!=p.travel_mode:self.set_travel_mode(p,d.travel_mode)
+                p._pending_key='';p.plan='前往'+NAMES[code]
+                p._plan_route(self,'town',tx,ty)
+            except ValueError as exc:p.info_feedback=str(exc);p.state='idle'
+            return
         if key in ("emoji","transfer"):
             from .resident_tools import instant_action
             try:
@@ -684,6 +829,21 @@ class Simulation:
                 p.state="riding" if p.vehicle_driver else "idle";p.plan=d.reason;p.decision=d
             except ValueError as exc:
                 p.remember(str(exc),3);self._reject_decision(p,d,depth)
+            return
+        if key == 'phone':
+            target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
+            rate=-float(self.activity_config.get('phone',{}).get('effects',act.ACTIVITIES['phone']['effects']).get('money',-50/6))
+            if not target or target.state not in ('idle','waiting_model') or p._conversation or target._conversation or p.vehicle_driver or target.vehicle_driver or p.car_id or target.car_id:
+                p.info_feedback='请指定一位当前有空、未乘车的室友';p.state='idle';return
+            if p.stats.money + 1e-8 < max(0,rate):
+                p.info_feedback='话费不足，暂时无法拨打';p.state='idle';return
+            p.decision=d;p.target_player=target;p.plan=d.reason or '给室友打电话'
+            p.requested_duration=(d.duration_minutes+9)//10 if d.duration_minutes else act.ACTIVITIES['phone']['duration']
+            p._start_local('phone',self)
+            target.target_player=p;target.requested_duration=p.activity_total
+            target._start_local('phone',self)
+            p.phone_paid=0.0
+            self.start_conversation(p,target,'phone')
             return
         if p.vehicle_driver:
             if key == "stay_in_car":
@@ -697,6 +857,8 @@ class Simulation:
             if d.travel_mode and d.travel_mode != p.travel_mode:
                 self.set_travel_mode(p, d.travel_mode)
             if key == "buy_car":
+                if p.scene!='town' or world.tile(p.scene,p.x,p.y)!='S':
+                    raise ValueError('请先到商店再购买汽车')
                 self.buy_car(p)
                 p.begin_activity("think", self)
                 return
@@ -708,7 +870,7 @@ class Simulation:
             p.remember(str(exc), 3)
             self._reject_decision(p,d,depth)
             return
-        if key=="eat" and self.meal_until < self.global_tick:
+        if key=="eat" and p.items.get('meal',0)<=0 and self.meal_until < self.global_tick:
             d=d.model_copy(update={"action":"eat_out"});key="eat_out"
         from .town_services import prepare
         try:
@@ -757,6 +919,53 @@ class Simulation:
                      + (f"（对象:{d.target}）" if d.target else "")
                      + f" —— {d.reason}", [p.pid])
 
+    def _decline_sex(self,target_pid,reason):
+        proposal=self.sex_proposals.pop(target_pid,None)
+        if not proposal:return
+        sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
+        if sender and sender.state=='waiting_consent':
+            sender.state='idle';sender.plan='亲密邀请结束'
+        if sender and target:
+            self.log('social',f'{sender.name}向{target.name}发出的亲密邀请未继续：{reason}',[sender.pid,target.pid])
+
+    def _sex_decision(self,p,d):
+        target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
+        if not target or p.scene!=target.scene or p.vehicle_driver or target.vehicle_driver:
+            p.state='idle';p.info_feedback='请指定同场景、未乘车的室友';return
+        proposal=self.sex_proposals.get(p.pid)
+        if proposal and proposal['from']==target.pid:
+            sender=target
+            if sender.state!='waiting_consent' or self.global_tick>=proposal['expires']:
+                self._decline_sex(p.pid,'邀请已过期');p.state='idle';return
+            location=proposal['location']
+            if location=='here' and max(abs(p.x-sender.x),abs(p.y-sender.y))>2:
+                self._decline_sex(p.pid,'双方尚未靠近');p.state='idle';p.info_feedback='请先靠近对方';return
+            if location=='bed' and p.scene!='house':
+                self._decline_sex(p.pid,'双方尚未回家');p.state='idle';return
+            sender.requested_duration=proposal['duration'];p.requested_duration=proposal['duration']
+            sender.target_player=p;p.target_player=sender;p.decision=d
+            self.sex_proposals.pop(p.pid,None)
+            if location=='bed':
+                from .interaction_points import route_bed_pair
+                p.state='idle'
+                if not route_bed_pair(self,sender,p,'sex'):
+                    sender.state='idle';p.state='idle';p.info_feedback='床位暂不可用';return
+            else:
+                sender._start_local('sex',self);p._start_local('sex',self)
+            self.log('social',f'{sender.name}与{p.name}互相同意亲密相处',[sender.pid,p.pid])
+            return
+        if p.pid in self.sex_proposals:self._decline_sex(p.pid,'选择了另一位室友')
+        if target.state not in ('idle','waiting_model') or target._conversation or p._conversation:
+            p.state='idle';p.info_feedback='对方现在没有空回应邀请';return
+        location=d.location or 'here'
+        if location=='bed' and p.scene!='house':
+            p.state='idle';p.info_feedback='床上活动需要双方先回家';return
+        if location=='here' and max(abs(p.x-target.x),abs(p.y-target.y))>2:
+            p.state='idle';p.info_feedback='当前位置需要双方先靠近';return
+        self.sex_proposals[target.pid]={'from':p.pid,'location':location,'duration':(d.duration_minutes+9)//10 if d.duration_minutes else 3,'expires':self.global_tick+12}
+        p.state='waiting_consent';p.decision=d;p.plan=f'等待{target.name}回应亲密邀请'
+        self.log('social',f'{p.name}邀请{target.name}亲密相处，等待对方自己决定',[p.pid,target.pid])
+
     # ------------------------------------------------------------ 对话
     def start_conversation(self, initiator: Player, target: Player, kind: str):
         """发起回合制对话（由 player._start_social 调用）"""
@@ -773,14 +982,14 @@ class Simulation:
         initiator._conversation = conv
         target._conversation = conv
         self.conversations.append(conv)
-        kind_cn = {"chat": "聊天", "love": "约会"}[kind]
+        kind_cn = {"chat": "聊天", "love": "约会", "phone": "打电话"}[kind]
         self.log("social", f"💬 {initiator.name} 找 {target.name} {kind_cn}",
                  [initiator.pid, target.pid])
 
     def on_conversation_end(self, conv: Conversation):
         """对话结束：好感结算（LLM）+ 基础增量"""
         a, b = conv.a, conv.b
-        key = "chat" if conv.kind in ("chat", "follow") else "love"
+        key = "love" if conv.kind == "love" else "phone" if conv.kind == "phone" else "chat"
         # LLM 决定的浮动增减
         self.request_affinity(a, b, key,conv.elapsed*10)
         self.request_affinity(b, a, key,conv.elapsed*10)
@@ -830,3 +1039,72 @@ class Simulation:
                                3)
         finally:
             self._affinity_busy = False
+
+    def _kick_loan_queue(self):
+        """有新借款请求时启动异步消化（不阻塞主循环）。
+        无运行事件循环（测试/离线调用）时只入队，由主循环下轮消化。"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._loan_task is None or self._loan_task.done():
+            self._loan_task = loop.create_task(self._drain_loans())
+
+    async def _drain_loans(self):
+        """异步消化急救借款：室友的模型决定借多少，逐笔入账。"""
+        from . import hospital
+        if self._loan_busy or not self.loan_queue:
+            return
+        self._loan_busy = True
+        try:
+            while self.loan_queue:
+                request = self.loan_queue.pop(0)
+                borrower_pid, lender_pid = request
+                p, lender = self.by_pid(borrower_pid), self.by_pid(lender_pid)
+                if not p or not lender or not getattr(p, 'awaiting_admission', False):
+                    continue
+                need = max(0.0, p.debt_goal - sum(p.loans.values()))
+                if need <= 0:
+                    continue
+                aff = lender.affinity.get(p.pid, 50.0)
+                amount = 0
+                prof = self.profile_for(lender.pid)
+                if prof:
+                    model = self.model_of.get(lender.pid) or prof.default_model
+                    try:
+                        amount = await brain.loan_amount_llm(
+                            prof, model, lender.name, p.name, need, p.stats.money,
+                            aff, lender.stats.money,
+                            timeout=min(25.0, self.settings.decision_timeout))
+                    except asyncio.CancelledError:
+                        self.loan_queue.insert(0, request)
+                        raise
+                else:
+                    # 规则模式兜底：好感越高越肯借，最多借出一半现金
+                    amount = min(int(lender.stats.money * aff / 200), int(need))
+                amount = max(0, min(amount, int(lender.stats.money), int(need)))
+                if amount > 0:
+                    hospital.pay(self, p, lender, amount)
+                    self.log("social", f"💳 {lender.name} 借给 {p.name} {amount:.0f}元急救费",
+                             [lender.pid, p.pid])
+                    lender.remember(f"{p.name}生命垂危，我借给TA{amount:.0f}元急救费", 7)
+                    if p in self.players and lender in self.players:
+                        p.affinity[lender.pid] = min(100.0, p.affinity.get(lender.pid, 50) + 5)
+                        lender.affinity[p.pid] = min(100.0, lender.affinity.get(p.pid, 50) + 3)
+                else:
+                    lender.remember(f"{p.name}向我借钱急救，我犹豫了，没有借", 6)
+                # 借够了：立即收治，剩余排队请求作废
+                if p in self.players and sum(p.loans.values()) >= p.debt_goal - 1e-9:
+                    hospital.admit(self, p, note="（借款补齐费用）")
+                    self.loan_queue = [r for r in self.loan_queue if r[0] != borrower_pid]
+            # 队列清空：复查所有待收治者
+            for q in self.players:
+                if getattr(q, 'awaiting_admission', False):
+                    borrowed = sum(q.loans.values())
+                    if borrowed >= q.debt_goal - 1e-9:
+                        hospital.admit(self, q, note="（借款补齐费用）")
+                    else:
+                        q.awaiting_admission = False
+                        hospital.refuse(self, q, q.debt_goal - borrowed)
+        finally:
+            self._loan_busy = False

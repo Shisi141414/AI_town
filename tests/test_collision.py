@@ -33,6 +33,7 @@ class CollisionTests(unittest.TestCase):
                 for cell in world.bfs_path(scene,*start,*end):self.assertTrue(world.walkable(scene,*cell))
     def test_fast_car_cannot_tunnel_through_resident(self):
         a,b=self.a,self.b
+        a.driver_license=True
         a.scene=b.scene='town';a.x,a.y=2,12;b.x,b.y=6,12
         self.sim.set_travel_mode(a,'car');a._plan_route(self.sim,'town',24,12)
         visited=[]

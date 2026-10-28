@@ -42,7 +42,7 @@ class InteractionPointTests(unittest.TestCase):
                     self.assertTrue(world.walkable('house',p.x,p.y))
 
     def test_cook_meal_shower_couch_and_sun_use_exact_points(self):
-        for key in ('cook','eat','shower','watch_tv','game','balcony'):
+        for key in ('cook','eat','shower','watch_tv','balcony'):
             with self.subTest(key=key):
                 self.sim._apply_decision(self.p,Decision(action=key))
                 self.arrive(self.p)

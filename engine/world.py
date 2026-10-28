@@ -223,8 +223,8 @@ def same_place(p1, p2) -> bool:
 
 
 TRAVEL_MODES = {
-    "walk": {"name": "步行", "speed": 3, "energy": 1.0, "cost": 0.0},
-    "bicycle": {"name": "骑行", "speed": 6, "energy": 0.7, "cost": 0.0},
+    "walk": {"name": "步行", "speed": 1, "energy": 1.0, "cost": 0.0},
+    "bicycle": {"name": "骑行", "speed": 4, "energy": 0.7, "cost": 0.0},
     "car": {"name": "开车", "speed": 12, "energy": 0.15, "cost": 0.15},
 }
 

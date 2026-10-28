@@ -1,0 +1,149 @@
+"""受伤决策与可转交的食物、药品。"""
+import asyncio
+import unittest
+from unittest.mock import patch
+
+from engine import brain, world
+from engine.models import Decision
+from engine.simulation import Simulation
+
+
+class AlertFoodMedicineTests(unittest.TestCase):
+    def setUp(self):
+        world.reset_maps()
+        self.sim=Simulation()
+        self.sim.spawn_players(2)
+        self.a,self.b=self.sim.players
+        for p in self.sim.players:p.identity_done=True
+
+    def tearDown(self):
+        self.sim.finish_recording()
+        for p in self.sim.players:p.memory.close()
+
+    def arrive(self,p,limit=180):
+        for _ in range(limit):
+            if p.state=='doing':return
+            p.tick(self.sim)
+        self.fail(f'{p.name}未到达行动位置')
+
+    def finish(self,p,limit=150):
+        for _ in range(limit):
+            if p.state=='idle':return
+            p.tick(self.sim)
+        self.fail(f'{p.name}活动未结束')
+
+    def test_starvation_interrupts_timer_and_next_tick_requests_decision(self):
+        self.a.requested_duration=12
+        self.a._start_local('think',self.sim)
+        self.a.stats.satiety=0
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.state,'idle')
+        self.assertIsNone(self.a.activity)
+        self.assertIn('生命',self.a.injury_alert)
+        self.assertIn('紧急情况',brain.build_user_prompt(self.a,[],self.sim.clock))
+        chosen=[]
+        async def choose(idlers):chosen.extend(idlers)
+        with patch.object(self.sim,'_decide_batch',side_effect=choose):
+            asyncio.run(self.sim.step_tick())
+        self.assertIn(self.a,chosen)
+
+    def test_sleep_healing_more_than_illness_damage_keeps_timer(self):
+        self.a.stats.hp=50
+        self.a.illness_severity=1
+        self.a.illness_until=1000
+        self.a.requested_duration=60
+        self.a._start_local('sleep',self.sim)
+        self.arrive(self.a)
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.activity_key,'sleep')
+        self.assertEqual(self.a.injury_alert,'')
+
+    def test_starving_resident_can_keep_walking_toward_food(self):
+        self.a.stats.satiety=0
+        self.a._plan_route(self.sim,'house',13,3)
+        self.assertEqual(self.a.state,'moving')
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.state,'moving')
+        self.assertTrue(self.a.path)
+
+    def test_attack_interrupts_bed_activity_and_releases_slot(self):
+        self.b.requested_duration=12
+        self.b._start_local('sleep',self.sim)
+        self.arrive(self.b)
+        self.assertIsNotNone(self.b.interaction_slot)
+        self.a.target_player=self.b
+        before=self.b.stats.hp
+        self.a._resolve_attack(self.sim)
+        self.assertLess(self.b.stats.hp,before)
+        self.assertEqual(self.b.state,'idle')
+        self.assertIsNone(self.b.interaction_slot)
+        self.assertTrue(world.walkable('house',self.b.x,self.b.y))
+
+    def test_cooked_meal_can_be_given_and_eaten_later(self):
+        self.a.skills['cooking']=200
+        self.a._start_local('cook',self.sim)
+        self.arrive(self.a)
+        self.finish(self.a)
+        self.assertEqual(self.a.items['meal'],2)
+        self.assertEqual(self.a.meal_qualities,[2,2])
+        self.a.x,self.a.y=10,11
+        self.b.x,self.b.y=11,11
+        self.sim._apply_decision(self.a,Decision(action='give_meal',target=self.b.name))
+        self.arrive(self.a)
+        self.assertEqual(self.b.items['meal'],1)
+        self.assertEqual(self.b.meal_qualities,[2])
+        self.finish(self.a)
+        self.b.stats.satiety=0
+        self.sim.meal_until=0
+        self.sim._apply_decision(self.b,Decision(action='eat'))
+        self.arrive(self.b)
+        self.finish(self.b)
+        self.assertGreater(self.b.stats.satiety,0)
+        self.assertEqual(self.b.items['meal'],0)
+
+    def test_clinic_medicine_can_treat_roommate(self):
+        self.a.scene='town'
+        self.a.x,self.a.y=next(q for q in world.find_tiles('town','B') if world.walkable('town',*q))
+        self.a.stats.money=100
+        self.sim._apply_decision(self.a,Decision(action='buy_medicine'))
+        self.arrive(self.a)
+        self.finish(self.a)
+        self.assertEqual(self.a.items['medicine'],1)
+        self.assertEqual(self.a.stats.money,75)
+        self.a.scene=self.b.scene='house'
+        self.a.x,self.a.y=10,11
+        self.b.x,self.b.y=11,11
+        self.b.stats.hp=40
+        self.b.illness_severity=1
+        self.sim._apply_decision(self.a,Decision(action='use_medicine',target=self.b.name))
+        self.arrive(self.a)
+        self.finish(self.a)
+        self.assertEqual(self.a.items['medicine'],0)
+        self.assertGreaterEqual(self.b.stats.hp,60)
+        self.assertEqual(self.b.illness_severity,0)
+
+    def test_daily_hunger_drain_is_reduced(self):
+        before=self.a.stats.satiety
+        self.a.passive_drain(self.sim)
+        self.assertAlmostEqual(before-self.a.stats.satiety,0.4)
+        self.assertEqual(self.sim.mechanics['walk_satiety_per_tile'],0.6)
+        self.assertEqual(self.sim.mechanics['bicycle_satiety_per_tile'],0.4)
+
+    def test_fullness_restores_health_only_above_threshold(self):
+        self.a.stats.hp=60
+        self.a.stats.satiety=81
+        self.a.passive_drain(self.sim)
+        self.assertAlmostEqual(self.a.stats.hp,60.3)
+        self.a.stats.satiety=80.4
+        self.a.passive_drain(self.sim)
+        self.assertAlmostEqual(self.a.stats.hp,60.3)
+        self.sim.mechanics['high_satiety_hp_threshold']=70
+        self.sim.mechanics['high_satiety_hp_gain']=.8
+        self.a.passive_drain(self.sim)
+        self.assertAlmostEqual(self.a.stats.hp,61.1)
+        self.a.stats.hp=99.9
+        self.a.passive_drain(self.sim)
+        self.assertEqual(self.a.stats.hp,100)
+
+
+if __name__=='__main__':unittest.main()

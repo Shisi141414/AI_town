@@ -1,0 +1,25 @@
+const {chromium}=require('playwright');
+(async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{
+ const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:8301/');
+ await page.locator('#btnMechanics').click();
+ await page.locator('#mechanicsDialog[open]').waitFor();
+ const preview=await page.locator('#mechanicsPreview').inputValue();
+ const headings=['# 本次决定','## 当前情况','## 已知信息','## 可选行动','## 行动方法','## 输出格式'];
+ if(headings.map(h=>preview.indexOf(h)).some((at,i,all)=>at<0||(i&&at<=all[i-1])))throw Error('Prompt sections out of order');
+ if(!preview.includes('action=visit')||!preview.includes('action=emoji')||!preview.includes('action=computer'))throw Error('Prompt discovery or tools absent');
+ if(preview.includes('job_programmer')||preview.includes('hourly_wage'))throw Error('Remote job details leaked');
+ if(await page.locator('#mechanicsRules input').count()<10)throw Error('Rule fields missing');
+ if(await page.locator('#mechanicsHours input').count()!==24)throw Error('Hours fields missing');
+ if(!await page.locator('#mechanicsActivities').textContent().then(t=>t.includes('做饭')&&t.includes('睡觉')))throw Error('Activity list incomplete');
+ const activities=await page.locator('#mechanicsActivities').textContent();
+ if(!activities.includes('做爱')||!activities.includes('电脑游戏')||activities.includes('打游戏'))throw Error('Intimacy or game activity list wrong');
+ await page.locator('input[data-mechanic="rules.walk_speed"]').fill('2');
+ await page.locator('#saveMechanics').click();
+ await page.waitForFunction(()=>document.querySelector('input[data-mechanic="rules.walk_speed"]').value==='2');
+ if((await page.request.get('http://127.0.0.1:8301/api/mechanics').then(r=>r.json())).rules.walk_speed!==2)throw Error('Rule did not persist');
+ await page.locator('#closeMechanics').click();
+ if(errors.length)throw Error(errors.join('; '));
+ console.log('mechanics browser ok');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});

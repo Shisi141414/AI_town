@@ -52,15 +52,28 @@ class Conversation:
     async def advance(self) -> None:
         saved=self.__dict__.copy()
         activity_left=self.a.activity_left
+        phone_rate=max(0,-float((self.a.activity or {}).get('effects',{}).get('money',-50/6))) if self.kind=='phone' else 0
+        phone_effects=dict((self.a.activity or {}).get('effects',{})) if self.kind=='phone' else None
         try:
+            if self.kind=='phone':
+                due=round(phone_rate*(self.elapsed+1),2)
+                if self.a.stats.money+1e-8 < due-getattr(self.a,'phone_paid',0):
+                    self._end('insufficient_money')
+                    return
             await self._advance()
             if self.elapsed>saved['elapsed']:
-                key='love' if self.kind=='love' else 'chat'
+                key='love' if self.kind=='love' else 'phone' if self.kind=='phone' else 'chat'
                 from .activities import ACTIVITIES
                 for speaker,other in ((self.a,self.b),(self.b,self.a)):
-                    for stat,rate in ACTIVITIES[key].get('effects',{}).items():setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
+                    for stat,rate in (phone_effects if phone_effects is not None else ACTIVITIES[key].get('effects',{})).items():
+                        if stat!='money':setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
                     speaker.stats.clamp()
                     speaker.affinity[other.pid]=min(100,speaker.affinity.get(other.pid,50)+(8 if key=='love' else 4)/6)
+                if key=='phone':
+                    due=round(phone_rate*self.elapsed,2)
+                    charge=due-getattr(self.a,'phone_paid',0)
+                    self.a.stats.money=round(self.a.stats.money-charge,2)
+                    self.a.phone_paid=due
         except asyncio.CancelledError:
             self.__dict__.update(saved);self.a.activity_left=activity_left
             raise
@@ -160,6 +173,9 @@ class Conversation:
     async def _resolve_leaving(self) -> None:
         """leaver 走了；另一人决定 follow 还是放行"""
         leaver = self.leaver
+        if self.kind=='phone':
+            self._end('natural')
+            return
         stayer = self.b if leaver is self.a else self.a
         # stayer 决定
         prof = self.sim.profile_for(stayer.pid)
@@ -209,7 +225,7 @@ class Conversation:
 
     def _log_line(self, speaker: "Player", say: str, closing: bool = False):
         if say:
-            kind_cn = {"chat": "聊天", "love": "约会", "follow": "边走边聊"}[self.kind]
+            kind_cn = {"chat": "聊天", "love": "约会", "follow": "边走边聊", "phone": "通话"}[self.kind]
             self.sim.log("dialogue", f"{speaker.name}：{say}（与{kind_cn}）",
                          [self.a.pid, self.b.pid])
 
@@ -221,7 +237,7 @@ class Conversation:
             if p._conversation is self:
                 p._conversation = None
                 # 聊完就地恢复空闲（或继续之前的活动）
-                if p.state == "doing" and p.activity_key in ("chat", "love"):
+                if p.state == "doing" and p.activity_key in ("chat", "love", "phone"):
                     p.activity = None
                     p.activity_key = ""
                     p.activity_left = 0
@@ -232,7 +248,7 @@ class Conversation:
         # 摘要写入记忆
         n_lines = len(self.history)
         if n_lines:
-            kind_cn = {"chat": "聊天", "love": "约会", "follow": "交谈"}[self.kind]
+            kind_cn = {"chat": "聊天", "love": "约会", "follow": "交谈", "phone": "通话"}[self.kind]
             excerpt = "；".join(f"{w}：“{s}”" for w, s in self.history[:4])
             memo = f"我和{self.b.name}{kind_cn}了{n_lines}句：{excerpt}"
             self.a.remember(memo, 6)

@@ -29,40 +29,49 @@ DEFAULT_SYSTEM_PROMPT = """你是一个和几位室友合租的普通年轻人�
 你的身体状态、记忆和人际关系会实时变化，请根据它们做出当下最合理的决定。
 没有标准答案，像活人一样权衡：饿了要吃饭、累了要休息、缺钱要工作、
 也可以娱乐、社交、恋爱，甚至发脾气搞破坏——一切由你。
-和室友处好关系有实际好处：一起吃饭/打游戏/工作都有加成，关系差则会互相拖累。"""
+和室友处好关系有实际好处：一起吃饭/工作都有加成，关系差则会互相拖累。"""
 
-USER_TEMPLATE = """【现在是第{day}天 {clock}（{daypart}），你在{scene_name}】
-【我的身份】性别{gender}
-【我的状态】生命{hp:.0f}/100 饱食{satiety:.0f}/100 精力{energy:.0f}/100 心情{mood:.0f}/100 金钱{money:.0f}元
-【健康状况】{illness}
-【我的位置】{location}
-【出行与车辆】{transport}
-【我的物品】{items}
-【身边的人（同一区域）】{nearby}
-【我对别人的好感（0~100）】{affinity}
-【家里公共区域装饰度】{decor_common:.0f}（越高大家心情越好）
-【我最近的记忆】
+USER_TEMPLATE = """# 本次决定
+你是合租在小镇的成年居民。现在是第{day}天 {clock}（{daypart}）。根据自己的状态、记忆和眼前能获取的信息，选择下一步行动。
+
+## 当前情况
+- 基本信息：姓名{name}；性别{gender}
+- 地点：{scene_name}·{location}；公共区域装饰度：{decor_common:.0f}
+- 身体：生命{hp:.0f}/100，饱食{satiety:.0f}/100，精力{energy:.0f}/100，心情{mood:.0f}/100；{illness}
+- 金钱：{money:.0f}元；物品：{items}
+- 附近室友：{nearby}；我对室友的好感：{affinity}
+- 亲密邀请：{sex_invitation}
+- 出行与车辆：{transport}
+
+## 已知信息
+近期记忆：
 {memories}
-【场所服务、技能和持仓】
+
+场所、技能与查询结果：
 {town}
-【我的电脑记录】
+
+我的电脑记录：
 {computer}
-【最近资金往来】
+
+最近资金流动（理由只在记忆中）：
 {transactions}
-【可选行动】（场景不符的行动需要先出门走到对应地点）
+
+## 可选行动
+下列 key 可填入 action。需要去小镇场所时，先用 visit；到场后才会看到当地项目。
 {menu}
 
-请决定接下来做什么，只输出一行 JSON（不要markdown代码块）：
-可以在 JSON 中附加 travel_mode（walk / bicycle / car）选择室外出行方式，留空保持原方式。
-可附加 duration_minutes（10～1440分钟，按10分钟向上取整），例如睡眠8小时填480、游戏2小时填120。到达后开始计时，期间无需重新决策；突发急救或对方离开可中断。
-额外行动：emoji（向target发送一个emoji，emoji填❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔之一）。
-你可以按自己的意愿转移金钱：action=transfer，target填收款人，amount填金额，money_from填付款人（默认自己）；付款或收款的一方必须是你，余额不足不能转移，reason由你自行说明。
-使用自己的电脑：action=computer，operation填list/create/edit/read/delete，file_id填已有记录编号，title填标题，content填正文；read可用offset按字符分段读取，list可用offset翻页（每页20条）。记录不会随记忆整理而消失，你可以主动记录怕忘记的事。电脑游戏为computer_game，可指定duration_minutes。
-室内做饭必须在灶台前、吃饭在餐椅、电脑活动在自己桌前、睡眠在自己床上、洗澡在卫浴使用位、看电视和客厅游戏在沙发、晒太阳在阳台空位。系统会带你前往空闲使用位，被占用时会等待，不会在任意地面完成这些活动。love可选location=bed在自己床上亲密相处（仍需双方好感达标且对方空闲），或location=here在当前位置互动；床上双方使用相邻位置，不重叠。
-额外行动：home_treat（医学1级起，在家为自己治疗；target也可填在家的室友），stock（经济学1级起，到自己的电脑前交易虚拟指数，operation填buy/sell，shares填正整数，可能亏损）。
-额外行动：buy_car（按商店当前售价购车）；ride（搭乘两格内、车旁室友的汽车，target填司机名字）；
-stay_in_car（继续搭乘）；leave_car（下车）。乘车时选择其他活动也会先下车。
-{{"action": "动作key", "target": "目标玩家名或空", "reason": "15字内的理由", "travel_mode": null, "duration_minutes": 120}}"""
+## 行动方法
+- 探索：action=visit 的 target 填场所代码或名称；抵达后用 action=inspect 的 target 填当地项目 key，可询问该项目的时薪、最低时间、学费等明确规则。查询占用一次决策。小镇没有其他参与者。
+- 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
+- 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。action=computer 用 operation=list/create/read/edit/delete；create 填 title、content，read/edit/delete 填 file_id，list/read 可用 offset。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
+- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点通话；话费每小时50元，由拨打者按实际时间支付。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；sex 需双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；sex 需双方靠近）。对方可以拒绝。
+- 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell 和 shares 交易，可能亏损。
+- 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
+- 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。
+
+## 输出格式
+只输出一个 JSON 对象，不要代码块或解释。action 必填，其余字段按行动需要填写；reason 简短说明你的理由。
+{{"action":"行动key","target":"目标或空","reason":"简短理由","duration_minutes":120}}"""
 
 DAYPARTS = ((5, "凌晨"), (8, "早晨"), (11, "上午"), (13, "中午"),
             (17, "下午"), (20, "傍晚"), (23, "晚上"), (25, "深夜"))
@@ -104,18 +113,32 @@ def build_user_prompt(p, nearby: list[str], clock: str, decor_common: float = 0.
     nearby_s = "、".join(nearby) if nearby else "（附近没人）"
     items = "、".join(f"{act.ITEMS[k]['name']}×{v}" for k, v in p.items.items() if v > 0) or "无"
     mem = p.memory.brief(p.world_tick, k=8, query=world.zone_of(p.scene,p.x,p.y)+" "+p.plan)
-    menu = act.activity_menu("any")
-    return USER_TEMPLATE.format(
-        day=p.day, clock=clock, daypart=daypart(p.hour), gender=p.gender,
+    from .town_services import NAMES,onsite
+    venue_code=next((code for code in NAMES if onsite(p,code)),None)
+    menu = act.activity_menu("any",venue_code)
+    hospital_note = ""
+    if getattr(p, 'hospitalized', False):
+        menu = ("【住院中】你正在诊所住院。房费每半天100元，每半天恢复生命20、心情15，饱食与精力保持满值。\n"
+                "可选行动：\n"
+                "- hospital_stay：继续住院休养（推荐身体未恢复时选择）\n"
+                "- hospital_leave：办理出院（恢复到生命60/饱食80/精力80/心情40的最低水平，不低于现有值）")
+        hospital_note = "（住院中，无法进行日常活动）"
+    template=getattr(p,'user_prompt_template',None) or USER_TEMPLATE
+    prompt=template.format(
+        day=p.day, clock=clock, daypart=daypart(p.hour), name=p.name, gender=p.gender,
         scene_name=world.SCENE_NAMES.get(p.scene, p.scene),
         hp=p.stats.hp, satiety=p.stats.satiety,
         energy=p.stats.energy, mood=p.stats.mood, money=p.stats.money,
-        illness=p.health_description, location=world.zone_of(p.scene, p.x, p.y), transport=getattr(p, "transport_context", "步行"),
-        items=items, nearby=nearby_s, affinity=aff,
+        illness=p.health_description + hospital_note, location=world.zone_of(p.scene, p.x, p.y), transport=getattr(p, "transport_context", ""),
+        items=items, nearby=nearby_s, sex_invitation=getattr(p,'sex_invitation','无'), affinity=aff,
         decor_common=decor_common, memories=mem, menu=menu,
         computer=computer_context(p),
         town=getattr(p,"town_context",""),
         transactions=json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False))
+    if getattr(p,'injury_alert',''):
+        alert='## 紧急情况\n'+p.injury_alert+'\n\n'
+        prompt=prompt.replace('## 输出格式',alert+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+alert
+    return prompt
 
 
 def json_objects(text):
@@ -177,7 +200,7 @@ def parse_decision(text: str) -> Decision | None:
         target=d.get('target',d.get('对象',''))
         mode=d.get('travel_mode')
         try:
-            extra={k:d[k] for k in ("emoji","amount","money_from","operation","file_id","title","content","offset","shares","location") if k in d}
+            extra={k:d[k] for k in ("emoji","amount","money_from","operation","file_id","title","content","offset","shares","location","memory_note") if k in d}
             result=Decision(**extra,action=action,target=target if isinstance(target,str) else '',
             reason=str(d.get('reason',d.get('理由','')))[:120],source='llm',duration_minutes=duration,
                 travel_mode=mode if mode in ('walk','bicycle','car') else None)
@@ -188,8 +211,9 @@ def parse_decision(text: str) -> Decision | None:
 
 def _norm_action(raw: str) -> str:
     raw = raw.strip().lower()
-    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"game","上班":"work","休息":"think","晒太阳":"balcony"}.get(raw,raw)
-    if raw in ("buy_car", "ride", "stay_in_car", "leave_car", "emoji", "transfer"):
+    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony"}.get(raw,raw)
+    if raw in ("buy_car", "ride", "stay_in_car", "leave_car", "emoji", "transfer", "inspect", "visit",
+               "hospital_stay", "hospital_leave"):
         return raw
     if raw in act.ACTIVITIES:
         return raw
@@ -242,7 +266,7 @@ async def decide_llm(profile: ApiProfile, model: str, p, nearby: list[str],
         if d:
             names=set(getattr(p,'known_names',{}).values())|set(getattr(p,'known_names',{}))
             if act.ACTIVITIES.get(d.action,{}).get('need')=='player' and (not d.target or d.target not in names or d.target in (p.name,p.pid)):
-                feedback='\n上次行动需要一位实际存在的室友作为target，请从身边的人中选择或改选单人活动。'
+                feedback='\n上次行动需要一位实际存在的室友作为target，请从已知室友中选择或改选单人活动。'
             elif d.action not in DEFS and act.ACTIVITIES.get(d.action,{}).get('cost',0)>p.stats.money:
                 feedback='\n上次活动费用超过当前余额，请改选负担得起的活动。'
             else:
@@ -299,7 +323,7 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
 
 
 # ================================================================== 回合制对话
-CONV_TURN_TEMPLATE = """【背景】你是{self_name}，正在和{other_name}面对面{kind}。
+CONV_TURN_TEMPLATE = """【背景】你是{self_name}，正在和{other_name}{kind}。
 【你对TA的好感】{aff:.0f}/100
 【你的状态】心情{mood:.0f}/100 精力{energy:.0f}/100
 【对话记录】（"我"是你的话，"{other_name}"是TA的话）
@@ -314,7 +338,7 @@ CONV_TURN_TEMPLATE = """【背景】你是{self_name}，正在和{other_name}面
 只输出一行 JSON：
 {{"say": "你要说的话", "act": "stay 或 leave 或 follow"}}"""
 
-CONV_KIND_CN = {"chat": "聊天", "love": "约会", "follow": "边走边聊"}
+CONV_KIND_CN = {"chat": "面对面聊天", "love": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
 
 # 规则模式对话库（无 API 时兜底）
 RULE_OPENERS = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
@@ -378,6 +402,7 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     if s.satiety < 30:
         # 在家→厨房做/餐厅吃；在镇上→咖啡馆
         if p.scene == "house":
+            if p.items.get('meal',0)>0:return Decision(action='eat',reason='吃一份做好的饭菜',source='rule')
             return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
         return Decision(action="eat_out", reason="饿了，下馆子", source="rule")
     threshold = 30 if act.is_night(clock_hour) else 18
@@ -388,7 +413,7 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
         return Decision(action="sleep", reason="夜深了，回家睡觉", source="rule")
     # 夜间不困但在室外 → 也回家（家里有电视游戏）
     if act.is_night(clock_hour) and p.scene == "town" and random.random() < 0.6:
-        return Decision(action="game", reason="回家打游戏", source="rule")
+        return Decision(action="computer_game", reason="回家玩电脑游戏", source="rule")
     if s.money < 20:
         return Decision(action="work", reason="手头紧，去赚点钱", source="rule")
     if s.mood < 25:
@@ -408,7 +433,7 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
                 return Decision(action="decorate_room", reason="睡前把房间弄漂亮点",
                                 source="rule")
             return random.choice([
-                Decision(action="game", reason="夜深了，打会儿游戏", source="rule"),
+                Decision(action="computer_game", reason="夜深了，玩会儿电脑游戏", source="rule"),
                 Decision(action="sleep", reason="夜深了，睡觉", source="rule"),
             ])
         return Decision(action="wander", reason="夜里在外面走走", source="rule")
@@ -464,3 +489,31 @@ async def select_memories_llm(profile, model, name, candidates, count, timeout=2
     if not isinstance(data, dict) or not isinstance(data.get("keep"), list):
         raise ValueError("无有效记忆筛选结果")
     return data["keep"]
+
+
+# ================================================================== 急救借款
+LOAN_TEMPLATE = """你是{lender_name}。室友{borrower_name}生命垂危被送医，急救费{need:.0f}元，
+TA自己只剩{borrower_cash:.0f}元，打电话向你借{need:.0f}元。
+你对TA的好感是{aff:.0f}/100，你手头有{lender_cash:.0f}元。
+
+结合你的性格和你们的关系，你愿意借多少？（可以分文不借，也可以倾囊相助）
+只输出一个 0～{cap:.0f} 之间的整数。"""
+
+
+async def loan_amount_llm(profile: ApiProfile, model: str, lender_name: str,
+                           borrower_name: str, need: float, borrower_cash: float,
+                           aff: float, lender_cash: float, timeout: float = 25.0) -> int:
+    """室友（模型）决定借给急救者多少钱。失败返回 0。"""
+    prompt = LOAN_TEMPLATE.format(lender_name=lender_name, borrower_name=borrower_name,
+                                  need=need, borrower_cash=borrower_cash,
+                                  aff=aff, lender_cash=lender_cash)
+    try:
+        text = await _run_in_thread(chat, profile, model,
+                                    "你在一个模拟游戏中扮演角色的内心，只输出一个数字。",
+                                    prompt, 0.8, 10, timeout)
+        m = re.search(r"\d+", text)
+        if not m:
+            return 0
+        return max(0, min(int(m.group(0)), int(lender_cash)))
+    except Exception:                        # noqa: BLE001
+        return 0

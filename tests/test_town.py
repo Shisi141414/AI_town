@@ -21,6 +21,7 @@ class EngineTests(unittest.TestCase):
         self.sim.spawn_players(5)
         asyncio.run(self.sim.run_identity_phase())
         self.p = self.sim.players[0]
+        for resident in self.sim.players:resident.driver_license=True
 
     def on_road(self, p=None):
         p = p or self.p
@@ -28,7 +29,7 @@ class EngineTests(unittest.TestCase):
         return p
 
     def test_walk_and_bicycle_speed_and_hunger(self):
-        for mode, speed in (("walk", 3), ("bicycle", 6)):
+        for mode, speed in (("walk", 1), ("bicycle", 4)):
             with self.subTest(mode=mode):
                 p = self.on_road()
                 self.sim.set_travel_mode(p, mode)
@@ -70,10 +71,10 @@ class EngineTests(unittest.TestCase):
         a._plan_route(self.sim, "town", 24, 12)
         a.tick(self.sim)
         self.sim.set_travel_mode(a, "walk")
-        with self.assertRaises(ValueError):
-            self.sim.set_travel_mode(b, "car")
-        b.x, b.y = a.x, a.y
+        # 空车可远程预约，实际驾驶仍须先走到停车点。
         self.sim.set_travel_mode(b, "car")
+        self.assertNotEqual((b.x,b.y),(self.sim.vehicles[0].x,self.sim.vehicles[0].y))
+        b.x, b.y = a.x, a.y
         self.assertEqual(b.car_id, "shared-car")
 
     def test_purchase_1000_and_private_ownership(self):
@@ -132,7 +133,7 @@ class EngineTests(unittest.TestCase):
         p.stats.money = 0
         p._plan_route(self.sim, "town", 24, 12)
         p.tick(self.sim)
-        self.assertEqual(p.x, 5)
+        self.assertEqual(p.x, 3)
         self.assertEqual(p.stats.money, 0)
         self.assertEqual(self.sim.vehicles[0].x, 2)
 
@@ -225,6 +226,7 @@ class EngineTests(unittest.TestCase):
         self.sim._apply_decision(self.p, d)
         self.assertEqual(self.p.travel_mode, "bicycle")
         self.p.stats.money = 1000
+        self.p.scene='town';self.p.x,self.p.y=next(q for q in world.find_tiles('town','S') if world.walkable('town',*q))
         self.sim._apply_decision(self.p, Decision(action="buy_car"))
         self.assertEqual(len(self.sim.vehicles), 2)
         prompt = brain.build_user_prompt(self.p, [], "08:00")
@@ -233,6 +235,7 @@ class EngineTests(unittest.TestCase):
 
     def test_mock_model_purchase_runs_through_async_decision(self):
         self.p.stats.money = 1000
+        self.p.scene='town';self.p.x,self.p.y=next(q for q in world.find_tiles('town','S') if world.walkable('town',*q))
         self.sim.profile = ApiProfile(id="stub",name="stub",api_key="fake",default_model="stub-model")
         with patch("engine.brain.chat",return_value='{"action":"buy_car","reason":"想买自己的车"}') as chat:
             asyncio.run(self.sim._decide_one(self.p))
@@ -255,6 +258,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.sim.global_tick, 0)
 
     def test_eating_out_uses_restaurant_and_building_does_not_become_walkthrough(self):
+        self.sim.tick=72
         p=self.on_road();p.x=18
         self.sim._apply_decision(p,Decision(action='eat_out'))
         for _ in range(100):
@@ -313,7 +317,7 @@ class EngineTests(unittest.TestCase):
 
     def test_both_scenes_in_model_menu(self):
         prompt = brain.build_user_prompt(self.p,[],"08:00")
-        self.assertIn("- work:",prompt)
+        self.assertIn("action=visit",prompt)
         self.assertIn("- sleep:",prompt)
 
     def test_two_day_rule_simulation(self):
@@ -546,6 +550,7 @@ class ApiTests(unittest.TestCase):
 
     def test_ride_endpoint_and_duplicate_car_purchase(self):
         a,b=server.sim.players[:2]
+        a.driver_license=True
         a.scene,b.scene="town","town"
         a.x,b.x,a.y,b.y=2,2,12,12
         self.client.put(f"/api/players/{a.pid}/travel",json={"mode":"car"})

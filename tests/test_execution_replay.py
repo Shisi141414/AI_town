@@ -48,7 +48,7 @@ class ExecutionTests(unittest.TestCase):
 
     def test_no_decision_call_during_two_hour_game(self):
         self.p.requested_duration=12
-        self.p._start_local('game',self.sim)
+        self.p._start_local('computer_game',self.sim)
         for _ in range(100):
             if self.p.state=='doing':break
             self.p.tick(self.sim)
@@ -62,7 +62,7 @@ class ExecutionTests(unittest.TestCase):
     def test_tolerant_parser_handles_fences_multiple_objects_aliases_and_hours(self):
         cases=[
             ('说明```json\n{"action":"sleep","duration_hours":8}\n```',480,'sleep'),
-            ('{"meta":1} {"action":"玩游戏","duration":"2小时"} {"extra":2}',120,'game'),
+            ('{"meta":1} {"action":"玩游戏","duration":"2小时"} {"extra":2}',120,'computer_game'),
             ("{'action':'睡眠8小时','reason':'休息',}",480,'sleep'),
             ('{"decision":{"activity":"work","duration_minutes":25,}}',30,'work'),
             ('{"action":{"name":"sleep","duration_hours":8}}',480,'sleep'),

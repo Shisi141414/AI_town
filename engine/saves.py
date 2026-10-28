@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','_llm_error_count','model_of','binding_of','names','town_config','meal_quality','market_price','market_last_tick')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','user_prompt_template','meal_quality','market_price','market_last_tick')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -136,6 +136,17 @@ class SaveStore:
         sim.__dict__.update(unpack(data['state'],players))
         from .town_services import merge_parameters,work_experience_rate,JOB_GRADES,DEFS
         sim.town_config=merge_parameters(sim.town_config)
+        from .mechanics import DEFAULT_RULES,DEFAULT_HOURS,activity_defaults
+        sim.mechanics={**DEFAULT_RULES,**getattr(sim,'mechanics',{})}
+        sim.opening_hours={**DEFAULT_HOURS,**getattr(sim,'opening_hours',{})}
+        defaults_activity=activity_defaults()
+        sim.activity_config={**defaults_activity,**{key:value for key,value in getattr(sim,'activity_config',{}).items() if key in defaults_activity}}
+        for p in sim.players:
+            if p._pending_key=='game':
+                p._pending_key='';p.interaction_slot=None;p.path=[];p.state='idle'
+        for p in sim.players:
+            if not p.driver_license and p.travel_mode=='car':
+                sim.drop_passengers(p);sim.release_car(p);p.travel_mode='walk'
         for p in sim.players:
             for contract in (p.activity,p.service_spec):
                 key=(contract or {}).get('_key')
