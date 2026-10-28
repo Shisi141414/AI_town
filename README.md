@@ -70,11 +70,3 @@ POST/DELETE /api/players 动态玩家管理
 GET  /api/players/{name}/memories    记忆流
 WS   /ws                 每 tick 推送快照+事件+对白
 ```
-
-## 隐私
-
-`config.json`（含 API Key）与 `API.txt` 已列入 `.gitignore`，不会进入版本库。请勿将密钥提交到公共仓库。
-
----
-
-*构建：claude · 2026-10*
