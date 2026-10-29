@@ -125,6 +125,7 @@ class Decision(BaseModel):
     amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     money_from: str = ""
     operation: str = "list"
+    query: str = Field(default="", max_length=60)   # computer/search 的搜索词
     location: Literal['','bed','here'] = ''
     memory_note: str = Field(default="", max_length=300)
     file_id: str = ""
