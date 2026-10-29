@@ -692,8 +692,10 @@ class Simulation:
             profile = self.profile_for(p.pid)
             model = self.model_of.get(p.pid) or (profile.default_model if profile else "")
             async def selector(candidates, count):
+                roommates = "、".join(f"{o.name}（{o.gender}）" for o in self.players if o is not p)
                 return await brain.select_memories_llm(profile, model, p.name, candidates, count,
-                    timeout=self.settings.decision_timeout)
+                    timeout=self.settings.decision_timeout,
+                    gender_note=f"室友性别：{roommates}" if roommates else "")
             promotions = await p.memory.maintain(selector if profile and model else None)
             for tier, before, after, mode in promotions:
                 self.log("memory", f"🧠 {p.name} 将{before}条{tier}级记忆整理为{after}条{tier+1}级记忆（{mode}提名后抽取80%＋全池随机20%）", [p.pid])

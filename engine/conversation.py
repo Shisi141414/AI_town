@@ -144,7 +144,8 @@ class Conversation:
                     prof, model, speaker.name, listener.name, self.kind,
                     speaker.affinity.get(listener.pid, 50),
                     self.history, timeout=self.sim.settings.decision_timeout,
-                    memories=speaker.memory.brief(speaker.world_tick, k=4, query=listener.name, budget=1200))
+                    memories=speaker.memory.brief(speaker.world_tick, k=4, query=listener.name, budget=1200),
+                    other_gender=listener.gender)
             except Exception:                  # noqa: BLE001
                 turn = None
         if turn is None:
@@ -214,7 +215,8 @@ class Conversation:
                     prof, model, stayer.name, leaver.name, self.kind,
                     stayer.affinity.get(leaver.pid, 50),
                     hist, timeout=self.sim.settings.decision_timeout,
-                    memories=stayer.memory.brief(stayer.world_tick, k=4, query=leaver.name, budget=1200))
+                    memories=stayer.memory.brief(stayer.world_tick, k=4, query=leaver.name, budget=1200),
+                    other_gender=leaver.gender)
                 follow = turn["act"] == "follow"
                 if follow and turn["say"]:
                     self._record(stayer, turn["say"])
@@ -295,7 +297,7 @@ class Conversation:
                 try:
                     memo = await brain.summarize_dialogue_llm(
                         prof, model, p.name, other.name, kind_cn, self.history,
-                        timeout=self.sim.settings.decision_timeout)
+                        timeout=self.sim.settings.decision_timeout, other_gender=other.gender)
                     p.remember(memo or self._fallback_memo(p, other, kind_cn, n_lines), 6)
                 except Exception:                  # noqa: BLE001
                     p.remember(self._fallback_memo(p, other, kind_cn, n_lines), 6)
