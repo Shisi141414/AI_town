@@ -105,8 +105,10 @@ class ActivityRuleTests(unittest.TestCase):
         self.sim._apply_decision(caller,Decision(action='phone',target=recipient.name,duration_minutes=10))
         conversation=caller._conversation
         with patch.object(conversation,'_rule_turn',return_value={'say':'你好','act':'stay'}):
-            asyncio.run(conversation.advance())
-        self.assertEqual(caller.stats.money,17)
+            asyncio.run(conversation.advance())   # opening→a说话
+            asyncio.run(conversation.advance())   # b说话
+            asyncio.run(conversation.advance())   # 第1轮完成 → 收 3/10=0.3 元
+        self.assertAlmostEqual(caller.stats.money,19.7)
         self.assertEqual(recipient.stats.money,100)
 
 

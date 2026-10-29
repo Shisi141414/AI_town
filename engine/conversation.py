@@ -40,45 +40,52 @@ class Conversation:
         self.kind = kind              # chat / love / follow
         self.sim = sim
         self.history: list[tuple[str, str]] = []   # (说话人名, 台词)
-        # 对话（chat/follow）不占活动时长：10轮以内不消耗时间，见 _step_tick 冻结逻辑
+        # 对话与电话不占活动时长：10轮以内不消耗时间，见 _step_tick 冻结逻辑
         self.duration_limit = (a.activity_total if a.activity_custom_duration else None) \
-            if kind in ('love', 'phone') else None
+            if kind == 'love' else None
         self.elapsed = 0
         self.turn_count = 0
         self.phase = "opening"        # opening / a_turn / b_turn / leaving / ended
         self.waiting_on: "Player | None" = self.a  # 正在说话的人
         self.followed = 0             # 被追赶次数
+        self._billed_rounds = 0       # 电话已计费轮数
         self.ended_reason = ""        # natural / leave / follow_rejected / max
 
     # ------------------------------------------------------------ 驱动
+    def _phone_fee_per_round(self) -> float:
+        """每轮话费：电话 10 轮 ≈ 1 刻，话费按刻价折算到轮。
+        优先用机制面板对 phone 活动effects.money 的自定义费率。"""
+        override = self.sim.activity_overrides.get('phone', {}).get('effects', {}).get('money')
+        per_tick = -override if override is not None else max(0.0, self.sim.mechanics['phone_fee_per_tick'])
+        return round(max(0.0, per_tick) / 10, 2)
+
     async def advance(self) -> None:
         saved=self.__dict__.copy()
         activity_left=self.a.activity_left
-        phone_effects=dict((self.a.activity or {}).get('effects',{})) if self.kind=='phone' else None
-        if phone_effects is not None and 'money' not in self.sim.activity_overrides.get('phone',{}).get('effects',{}):
-            phone_effects['money']=-self.sim.mechanics['phone_fee_per_tick']
-        phone_rate=max(0,-phone_effects.get('money',0)) if phone_effects is not None else 0
         try:
             if self.kind=='phone':
-                if self.a.stats.money+1e-8 < phone_rate:
+                fee=self._phone_fee_per_round()
+                if self.a.stats.money+1e-8 < fee:
                     self._end('insufficient_money')
                     return
             await self._advance()
-            if self.elapsed>saved['elapsed'] and self.kind in ('love','phone'):
-                key='love' if self.kind=='love' else 'phone'
+            # 电话：每完成一轮收一轮话费；无数值增减、无固定好感变化
+            if self.kind=='phone' and self.turn_count>getattr(self,'_billed_rounds',0):
+                self._billed_rounds=self.turn_count
+                fee=self._phone_fee_per_round()
+                self.a.stats.money=round(max(0.0,self.a.stats.money-fee),2)
+                self.a.stats.clamp()
+                self.a.phone_paid=round(getattr(self.a,'phone_paid',0)+fee,2)
+            if self.elapsed>saved['elapsed'] and self.kind=='love':
+                key='love'
                 from .activities import ACTIVITIES
                 base_effects=(self.a.activity or {}).get('effects',ACTIVITIES[key].get('effects',{}))
                 for speaker,other in ((self.a,self.b),(self.b,self.a)):
-                    for stat,rate in (phone_effects if phone_effects is not None else base_effects).items():
-                        if stat!='money' or key!='phone':
-                            setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
+                    for stat,rate in base_effects.items():
+                        setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
                     speaker.stats.clamp()
-                    affinity_rate=(speaker.activity or {}).get('_joint_affinity_per_tick',(8 if key=='love' else 4)/6)
+                    affinity_rate=(speaker.activity or {}).get('_joint_affinity_per_tick',8/6)
                     speaker.affinity[other.pid]=max(0,min(100,speaker.affinity.get(other.pid,50)+affinity_rate))
-                if key=='phone':
-                    self.a.stats.money=round(self.a.stats.money+phone_effects.get('money',0),2)
-                    self.a.stats.clamp()
-                    self.a.phone_paid=round(getattr(self.a,'phone_paid',0)+phone_rate,2)
         except asyncio.CancelledError:
             self.__dict__.update(saved);self.a.activity_left=activity_left
             raise
@@ -235,6 +242,11 @@ class Conversation:
     def _end(self, reason: str):
         self.phase = "ended"
         self.ended_reason = reason
+        # 立即从活跃列表移除：不等下一轮（可能被等待模型的时钟暂停挡住）
+        try:
+            self.sim.conversations.remove(self)
+        except ValueError:
+            pass
         # 双方解除对话状态
         for p in (self.a, self.b):
             if p._conversation is self:

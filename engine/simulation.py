@@ -754,7 +754,7 @@ class Simulation:
         p.known_names = {o.pid: o.name for o in self.players}
         p.known_roommates = [(o.name, o.gender) for o in others]
         from .activity_rules import catalog as activity_catalog
-        p.phone_fee_per_tick = max(0,-activity_catalog(self)['phone']['effects']['money'])
+        p.phone_fee_per_tick = max(0, -activity_catalog(self)['phone']['effects'].get('money', -self.mechanics['phone_fee_per_tick']))
         model = self.model_of.get(p.pid) or prof.default_model
         try:
             d = await brain.decide_llm(
@@ -882,10 +882,11 @@ class Simulation:
         if key == 'phone':
             target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
             from .activity_rules import catalog as activity_catalog
-            rate=max(0,-activity_catalog(self)['phone']['effects']['money'])
+            per_tick=max(0,-activity_catalog(self)['phone']['effects'].get('money',-self.mechanics['phone_fee_per_tick']))
+            per_round=round(per_tick/10,2)          # 每轮话费（10轮≈1刻）
             if not target or target.state not in ('idle','waiting_model') or p._conversation or target._conversation or p.vehicle_driver or target.vehicle_driver or p.car_id or target.car_id:
                 p.info_feedback='请指定一位当前有空、未乘车的室友';p.state='idle';return
-            if p.stats.money + 1e-8 < max(0,rate):
+            if p.stats.money + 1e-8 < per_round:
                 p.info_feedback='话费不足，暂时无法拨打';p.state='idle';return
             p.decision=d;p.target_player=target;p.plan=d.reason or '给室友打电话'
             p.requested_duration=(d.duration_minutes+9)//10 if d.duration_minutes else act.ACTIVITIES['phone']['duration']

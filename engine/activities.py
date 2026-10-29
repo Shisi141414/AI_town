@@ -201,8 +201,8 @@ ACTIVITIES: dict[str, dict] = {
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
-        "effects": {"mood": 2.5},
-        "desc": "给室友打电话，可跨地点交谈，拨打者支付话费",
+        "effects": {},
+        "desc": "给室友打电话，可跨地点对话（交流信息、商量事情，无数值变化），拨打者按通话轮数支付话费",
     },
     "love": {
         "name": "恋爱", "emoji": "💗", "duration": 3, "need": "player",
@@ -287,7 +287,7 @@ def activity_description_defaults() -> dict[str, str]:
         "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近；散步、略有放松",
-        "chat":"在室友身边；交流信息、分享近况、商量事情（无数值变化，几乎不耗时间）", "phone":"在任意地点；与室友通话、增进感情，拨打者支付话费",
+        "chat":"在室友身边；交流信息、分享近况、商量事情（无数值变化，几乎不耗时间）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
         "love":"在室友身边或床上；约会、增进感情", "sex":"在双方靠近处或床上；亲密相处",
         "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
         "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",

@@ -52,7 +52,7 @@ class MechanicsDiscoveryTests(unittest.TestCase):
         self.assertNotIn('出行偏好',prompt)
         self.assertNotIn('营业时间',prompt)
         self.assertIn('特别建议用自己的电脑记录',prompt)
-        self.assertIn('话费每刻10元',prompt)
+        self.assertIn('约10元/10轮',prompt)
 
     def test_prompt_names_all_roommates_with_gender_without_memorizing_observations(self):
         a,b,c=self.sim.players
@@ -64,12 +64,12 @@ class MechanicsDiscoveryTests(unittest.TestCase):
         self.assertIn('同住室友：小舟（女）、小林（男）',prompt)
         self.assertIn('极度劳累',prompt)
         self.assertEqual((a.memory.counts(),b.memory.counts()),before)
-        a.user_prompt_template=brain.USER_TEMPLATE.replace('- 同住室友：{roommates}\n','').replace('话费每刻{phone_fee_per_tick:g}元','话费每小时50元')
+        a.user_prompt_template=brain.USER_TEMPLATE.replace('- 同住室友：{roommates}\n','').replace('话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）','话费每小时50元')
         old_template_prompt=brain.build_user_prompt(a,[b],self.sim.clock)
         self.assertIn('同住室友：小舟（女）、小林（男）',old_template_prompt)
-        self.assertIn('话费每刻10元',old_template_prompt)
+        self.assertIn('约10元/10轮',old_template_prompt)   # 旧自定义模板被升级为新话费文案
 
-    def test_phone_charges_caller_by_elapsed_time_across_scenes(self):
+    def test_phone_charges_caller_by_rounds_across_scenes(self):
         a,b=self.sim.players[:2]
         a.scene='house';b.scene='town'
         a.stats.money=100;b.stats.money=100
@@ -77,48 +77,60 @@ class MechanicsDiscoveryTests(unittest.TestCase):
         self.assertEqual((a.activity_key,b.activity_key),('phone','phone'))
         conv=a._conversation
         with patch.object(conv,'_rule_turn',return_value={'say':'你好','act':'stay'}):
-            for _ in range(6):asyncio.run(conv.advance())
-        self.assertEqual(a.stats.money,40)
-        self.assertEqual(b.stats.money,100)
-        self.assertEqual(conv.phase,'ended')
-        self.assertEqual((a.activity_key,b.activity_key),('',''))
+            for _ in range(6):asyncio.run(conv.advance())   # 2轮完成
+        self.assertAlmostEqual(a.stats.money,98)            # 2轮×1元/轮（10元/刻÷10轮）
+        self.assertEqual(b.stats.money,100)                 # 只有拨打者付钱
+        self.assertEqual(conv.turn_count,2)
+        self.assertEqual((a.activity_key,b.activity_key),('phone','phone'))   # 未结束
 
-    def test_phone_stops_when_caller_cannot_pay_next_tick(self):
+    def test_phone_stops_when_caller_cannot_pay_next_round(self):
         a,b=self.sim.players[:2]
-        a.stats.money=15
+        # 路径1：不足一轮话费（1元/轮）直接拨不出
+        a.stats.money=0.5
+        self.sim._apply_decision(a,Decision(action='phone',target=b.name,duration_minutes=60))
+        self.assertIsNone(a._conversation)
+        self.assertEqual(a.info_feedback,'话费不足，暂时无法拨打')
+        # 路径2：够一轮拨通，聊完一轮后耗尽挂断
+        a.stats.money=1.5
+        a.info_feedback=''
         self.sim._apply_decision(a,Decision(action='phone',target=b.name,duration_minutes=60))
         conv=a._conversation
+        self.assertIsNotNone(conv)
         with patch.object(conv,'_rule_turn',return_value={'say':'你好','act':'stay'}):
-            asyncio.run(conv.advance())
-            asyncio.run(conv.advance())
-        self.assertEqual(conv.elapsed,1)
+            for _ in range(3):asyncio.run(conv.advance())   # 第1轮完成 → 收1元 → 余0.5
+        self.assertAlmostEqual(a.stats.money,0.5)
+        with patch.object(conv,'_rule_turn',return_value={'say':'你好','act':'stay'}):
+            asyncio.run(conv.advance())                     # 下一轮预检：0.5<1 → 挂断
+        self.assertEqual(conv.phase,'ended')
         self.assertEqual(conv.ended_reason,'insufficient_money')
-        self.assertEqual(a.stats.money,5)
-        self.assertEqual(b.stats.money,100)
+        self.assertAlmostEqual(a.stats.money,0.5)
+        self.assertAlmostEqual(a.phone_paid,1.0)
+        self.assertEqual((a.activity_key,b.activity_key),('',''))
 
     def test_phone_fee_mechanism_controls_billing_and_prompt(self):
         a,b=self.sim.players[:2]
         self.sim.mechanics['phone_fee_per_tick']=18
-        a.phone_fee_per_tick=18
+        a.phone_fee_per_tick=18      # 决策循环同步到玩家属性，直接构建提示词时需手动同步
         a.stats.money=200
-        self.assertIn('话费每刻18元',brain.build_user_prompt(a,[],self.sim.clock))
+        self.assertIn('约18元/10轮',brain.build_user_prompt(a,[],self.sim.clock))
         self.sim._apply_decision(a,Decision(action='phone',target=b.name,duration_minutes=60))
         conv=a._conversation
         with patch.object(conv,'_rule_turn',return_value={'say':'你好','act':'stay'}):
-            for _ in range(6):asyncio.run(conv.advance())
-        self.assertEqual(a.stats.money,92)
+            for _ in range(6):asyncio.run(conv.advance())   # 2轮×1.8元/轮
+        self.assertAlmostEqual(a.stats.money,196.4)
 
-    def test_phone_fee_change_does_not_reprice_earlier_ticks(self):
+    def test_phone_fee_change_does_not_reprice_earlier_rounds(self):
         a,b=self.sim.players[:2]
         a.stats.money=30
         self.sim._apply_decision(a,Decision(action='phone',target=b.name,duration_minutes=60))
         conv=a._conversation
         with patch.object(conv,'_rule_turn',return_value={'say':'你好','act':'stay'}):
-            asyncio.run(conv.advance())
+            asyncio.run(conv.advance())                    # 开场，未成轮
+            asyncio.run(conv.advance())                    # a说完，未成轮
             self.sim.mechanics['phone_fee_per_tick']=2
-            asyncio.run(conv.advance())
-        self.assertEqual(a.stats.money,18)
-        self.assertEqual(a.phone_paid,12)
+            asyncio.run(conv.advance())                    # 第1轮完成 → 按 0.2元/轮 收
+        self.assertAlmostEqual(a.stats.money,29.8)
+        self.assertAlmostEqual(a.phone_paid,0.2)
 
     def test_gate_arrival_and_departure_notify_only_roommates_at_home(self):
         a,b,c=self.sim.players

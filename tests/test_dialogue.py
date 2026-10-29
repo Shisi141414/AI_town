@@ -112,3 +112,70 @@ class DialogueTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PhoneDialogueTests(DialogueTests):
+    """电话与对话同机制，仅按轮收话费。"""
+
+    def setUp(self):
+        super().setUp()
+        # 对话双方 doing 状态避免决策系统介入；电话可跨地点
+        self.a.state = self.b.state = 'doing'
+        self.a.activity_key = self.b.activity_key = 'phone'
+        self.a.scene, self.a.x, self.a.y = 'house', 8, 12
+        self.b.scene, self.b.x, self.b.y = 'town', 12, 12
+        c = self.sim.players[2]
+        c.state, c.activity_key = 'doing', 'sleep'
+
+    def test_phone_no_effects_per_round_fee(self):
+        self.a.stats.money = 50.0
+        snapshot = {p.pid: (p.stats.mood, p.stats.energy, p.stats.hp) for p in (self.a, self.b)}
+        self.a.affinity[self.b.pid] = self.b.affinity[self.a.pid] = 50.0
+        with patch.object(brain, 'conv_turn_llm',
+                          AsyncMock(return_value={"say": "嗯", "act": "stay"})), \
+             patch.object(brain, 'summarize_dialogue_llm',
+                          AsyncMock(return_value="通话几句")):
+            self.sim.start_conversation(self.a, self.b, 'phone')
+            for _ in range(80):
+                asyncio.run(self.sim._step_tick())
+                if not self.sim.conversations:
+                    break
+        # 话费：10轮 × 1元/轮 = 10元（phone_fee_per_tick=10 → 每轮1/10）
+        self.assertAlmostEqual(self.a.stats.money, 40.0)
+        self.assertAlmostEqual(self.a.phone_paid, 10.0)
+        # 无数值增减、好感不变（被放行1刻的基础消耗除外）
+        for p in (self.a, self.b):
+            m, e, hp = snapshot[p.pid]
+            self.assertGreaterEqual(p.stats.mood, m - 1.01)
+        self.assertAlmostEqual(self.a.affinity[self.b.pid], 50.0)
+        self.assertAlmostEqual(self.b.affinity[self.a.pid], 50.0)
+
+    def test_phone_insufficient_money_hangs_up(self):
+        self.a.stats.money = 0.5            # 不足一轮话费
+        with patch.object(brain, 'conv_turn_llm',
+                          AsyncMock(return_value={"say": "喂", "act": "stay"})), \
+             patch.object(brain, 'summarize_dialogue_llm',
+                          AsyncMock(return_value="通话")):
+            self.sim.start_conversation(self.a, self.b, 'phone')
+            for _ in range(40):
+                asyncio.run(self.sim._step_tick())
+                if not self.sim.conversations:
+                    break
+        self.assertFalse(self.sim.conversations)
+        conv_ended = not self.sim.conversations
+        self.assertTrue(conv_ended)
+
+    def test_phone_effects_empty_and_ten_rounds_one_tick(self):
+        self.assertEqual(activities.ACTIVITIES['phone']['effects'], {})
+        tick0 = self.sim.global_tick
+        self.a.stats.money = 100.0
+        with patch.object(brain, 'conv_turn_llm',
+                          AsyncMock(return_value={"say": "好", "act": "stay"})), \
+             patch.object(brain, 'summarize_dialogue_llm',
+                          AsyncMock(return_value="通话")):
+            self.sim.start_conversation(self.a, self.b, 'phone')
+            for _ in range(80):
+                asyncio.run(self.sim._step_tick())
+                if not self.sim.conversations:
+                    break
+        self.assertLessEqual(self.sim.global_tick - tick0, 1)
