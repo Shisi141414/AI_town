@@ -56,6 +56,9 @@ class Player:
         self.phone_paid = 0.0
         self.injury_alert = ''
         self.last_health_alert_tick = -1
+        # 同种持续伤害（疾病/饥饿/低心情）只打断一次活动；伤害结束后清除，
+        # 保证下一轮同类伤害仍能正常唤醒角色。存 JSON 兼容用 list 存储。
+        self._injury_break_done = []
         self.tuition_paid = 0.0
         self.study_awarded = 0.0
         self.skill_xp_gained = 0.0
@@ -665,7 +668,8 @@ class Player:
             return
         dmg = act.ACTIVITIES["attack"]["damage"]
         t.stats.hp -= dmg
-        sim._alert_health_loss(t,dmg,force=True)
+        # 攻击是单次事件，不参与"同种伤害只打断一次"去重：cause='attack' 不入标记集合
+        sim._alert_health_loss(t,dmg,force=True,cause='attack')
         self.affinity[t.pid] = self.affinity.get(t.pid, 30) - 12
         t.affinity[self.pid] = t.affinity.get(self.pid, 30) - 15
         t.remember(f"被{self.name}攻击了！损失{dmg:.0f}生命", 9)
@@ -856,6 +860,9 @@ class Player:
                 setattr(self.stats, k, getattr(self.stats, k) + v)
         if self.stats.satiety <= 0:
             self.stats.hp -= sim.mechanics['starvation_hp_loss']
+        else:
+            # 饱食离开 0：饥饿伤害结束，解除打断标记
+            sim.clear_injury_break(self, 'starvation')
         if self.stats.satiety > sim.mechanics['high_satiety_hp_threshold']:
             self.stats.hp = min(100.0, self.stats.hp + sim.mechanics['high_satiety_hp_gain'])
         mood_delta = 0.0
@@ -869,6 +876,9 @@ class Player:
         self.stats.clamp()
 
         self.low_mood_ticks = self.low_mood_ticks + 1 if self.stats.mood < sim.mechanics['low_mood_threshold'] else 0
+        if not self.low_mood_ticks:
+            # 心情回到阈值之上：低心情伤害期结束，解除打断标记
+            sim.clear_injury_break(self, 'low_mood')
         started_harm = self.low_mood_ticks == sim.mechanics['low_mood_delay_ticks']
         if self.low_mood_ticks >= sim.mechanics['low_mood_delay_ticks']:
             self.stats.hp -= sim.mechanics['low_mood_hp_loss']

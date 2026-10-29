@@ -644,18 +644,41 @@ class Simulation:
         if self.loan_queue:
             self._kick_loan_queue()
 
+    def _injury_causes(self, p):
+        """按当前状态推断 hp 下降的可能来源（用于同种伤害去重）。"""
+        causes = set()
+        if p.illness_severity:
+            causes.add('illness')
+        if p.stats.satiety <= 0:
+            causes.add('starvation')
+        if p.low_mood_ticks >= self.mechanics['low_mood_delay_ticks']:
+            causes.add('low_mood')
+        return causes
+
     def _interrupt_health_losses(self,before):
         for p in self.players:
             previous=before.get(p.pid,p.stats.hp)
             if p.stats.hp < previous-1e-8:
                 self._alert_health_loss(p,previous-p.stats.hp)
 
-    def _alert_health_loss(self,p,lost,*,force=False):
-        """受伤结束已排定的行动，让下一刻进入正常的模型决策流程。"""
+    def _alert_health_loss(self,p,lost,*,force=False,cause=None):
+        """受伤结束已排定的行动，让下一刻进入正常的模型决策流程。
+
+        同种持续伤害（疾病/饥饿/低心情）只打断一次活动：首次打断后记入
+        p._injury_break_done，此后同类伤害不再打断，角色可以安心赶路求医
+        或吃饭。伤害结束（恢复/吃饱/心情回升）时由 clear_injury_break
+        清除标记，下一轮同类伤害仍能正常唤醒。
+        """
         if getattr(p,'last_health_alert_tick',-1)==self.global_tick:return
         # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
         active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
         if not active:return
+        causes = {cause} if cause else self._injury_causes(p)
+        if cause != 'attack' and causes & set(getattr(p,'_injury_break_done',[]) or []):
+            return               # 该种伤害已打断过一次，放行后续活动
+        if causes and cause != 'attack':
+            marks = [m for m in (getattr(p,'_injury_break_done',[]) or []) if m != 'attack']
+            p._injury_break_done = list(dict.fromkeys(marks + [c for c in causes if c != 'attack']))
         p.last_health_alert_tick=self.global_tick
         prior=(p.activity or {}).get('name') or p._pending_key or p.plan or '当前行动'
         p.injury_alert=f'刚失去{lost:.2f}点生命，{prior}已中断；请先评估伤情，再决定下一步。'
@@ -667,6 +690,12 @@ class Simulation:
             partner.remember(f'{p.name}受伤，我们的共同活动中断了',5)
         self._cancel_timed_action(p)
         self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点，已中断{prior}并重新考虑行动',[p.pid])
+
+    def clear_injury_break(self,p,cause):
+        """某种伤害结束时清除其打断标记；下次同种伤害重新开始计数。"""
+        marks=getattr(p,'_injury_break_done',None)
+        if marks and cause in marks:
+            p._injury_break_done=[m for m in marks if m!=cause]
 
     def _cancel_timed_action(self,p):
         from .interaction_points import release

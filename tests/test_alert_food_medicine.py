@@ -47,6 +47,49 @@ class AlertFoodMedicineTests(unittest.TestCase):
             asyncio.run(self.sim.step_tick())
         self.assertIn(self.a,chosen)
 
+    def test_same_injury_only_interrupts_once_until_cleared(self):
+        # 同种持续伤害只打断一次；伤害结束清除标记后可再次打断
+        self.a.stats.satiety=0
+        self.a.requested_duration=60
+        self.a._start_local('think',self.sim)
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.state,'idle')          # 首次饥饿 → 打断
+        self.assertIn('starvation',self.a._injury_break_done)
+        # 再开始活动：仍饥饿但不打断，角色可安心去吃饭
+        self.a.requested_duration=60
+        self.a._start_local('think',self.sim)
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.state,'doing')
+        # 吃饱 → 标记清除
+        self.a.stats.satiety=50
+        asyncio.run(self.sim.step_tick())
+        self.assertNotIn('starvation',self.a._injury_break_done)
+        # 再次饥饿 → 能重新打断（防"永久免打扰"）
+        self.a.stats.satiety=0
+        self.a.requested_duration=60
+        self.a._start_local('think',self.sim)
+        asyncio.run(self.sim.step_tick())
+        self.assertEqual(self.a.state,'idle')
+
+    def test_illness_recovery_clears_interrupt_flag(self):
+        self.a.illness_severity=1
+        self.a.illness_until=1000
+        self.a.requested_duration=60
+        self.a._start_local('think',self.sim)
+        self.sim._alert_health_loss(self.a,2)
+        self.assertIn('illness',self.a._injury_break_done)
+        self.sim.random_events.recover(self.sim,self.a)
+        self.assertNotIn('illness',self.a._injury_break_done)
+
+    def test_attack_is_not_deduplicated(self):
+        # 攻击是单次事件：不写入打断标记，每次都能打断
+        self.b.requested_duration=60
+        self.b._start_local('think',self.sim)
+        self.a.target_player=self.b
+        self.a._resolve_attack(self.sim)
+        self.assertEqual(self.b.state,'idle')
+        self.assertNotIn('attack',self.b._injury_break_done)
+
     def test_sleep_healing_more_than_illness_damage_keeps_timer(self):
         self.a.stats.hp=50
         self.a.illness_severity=1

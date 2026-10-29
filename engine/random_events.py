@@ -31,6 +31,8 @@ class RandomEvents:
         p.illness_severity = 0
         p.illness_until = 0
         p.illness_name = ''
+        # 疾病结束：解除"同种伤害只打断一次"标记，下次生病仍能唤醒
+        sim.clear_injury_break(p, 'illness')
         sim.log('random', f'🌿 {p.name} '+('完成治疗，身体恢复了' if treated else '经过一段时间，身体自然恢复了'), [p.pid])
 
     def tick(self, sim):
