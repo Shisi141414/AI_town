@@ -95,7 +95,7 @@ class TownServiceTests(unittest.TestCase):
   self.a.skills['economics']=100
   self.start('stock',operation='buy',shares=4);self.finish()
   self.assertEqual(self.a.stock_shares,4);self.assertEqual(self.a.stats.money,60)
-  self.sim.market_price=12
+  self.sim.stocks['index']['price']=12;self.sim.market_price=12
   self.start('stock',operation='sell',shares=2);self.finish()
   self.assertEqual(self.a.stock_shares,2);self.assertEqual(self.a.stats.money,84)
   self.start('stock',operation='sell',shares=99);self.finish()

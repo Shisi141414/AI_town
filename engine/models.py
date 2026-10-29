@@ -66,6 +66,7 @@ class PlayerSnapshot(BaseModel):
     stock_shares: int = 0
     stock_cost: float = 0
     stock_trades: list[dict] = Field(default_factory=list)
+    stock_portfolio: dict = Field(default_factory=dict)
     computer_files: list[dict] = Field(default_factory=list)
     transactions: list[dict] = Field(default_factory=list)
     decision_status: str = ""
@@ -126,6 +127,7 @@ class Decision(BaseModel):
     money_from: str = ""
     operation: str = "list"
     query: str = Field(default="", max_length=60)   # computer/search 的搜索词
+    symbol: str = ""                               # 股票代码（index/R/M/C/G/S/B）
     location: Literal['','bed','here'] = ''
     memory_note: str = Field(default="", max_length=300)
     file_id: str = ""

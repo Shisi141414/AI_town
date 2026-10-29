@@ -66,7 +66,7 @@ USER_TEMPLATE = """# 本次决定
 - 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
 - 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 留空返回信息目录，填目录名或具体名称（如咖啡馆、厨师）查详情。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
 - 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点通话；话费每刻{phone_fee_per_tick:g}元，由拨打者按通话刻数支付。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；sex 需双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；sex 需双方靠近）。对方可以拒绝。
-- 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell 和 shares 交易，可能亏损。
+- 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell、shares 和 symbol 交易小镇股票（symbol 填代码：index 小镇指数、R 饭店、M 影院、C 咖啡馆、G 健身房、S 商店、B 诊所；场所股价格受近期营业情况影响），可能亏损。
 - 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
 - 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。
 
@@ -451,7 +451,7 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     if s.satiety < 30:
         # 在家→厨房做/餐厅吃；在镇上→咖啡馆
         if p.scene == "house":
-            if p.items.get('meal',0)>0:return Decision(action='eat',reason='吃一份做好的饭菜',source='rule')
+            if p.items.get('meal',0)>0 and p.stats.satiety<95:return Decision(action='eat',reason='吃一份做好的饭菜',source='rule')
             return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
         return Decision(action="eat_out", reason="饿了，下馆子", source="rule")
     threshold = 30 if act.is_night(clock_hour) else 18

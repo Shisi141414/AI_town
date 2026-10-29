@@ -65,7 +65,10 @@ class Simulation:
         self.custom_activities = {}
         self.user_prompt_template = ""
         self.meal_quality = 0
+        from .town_services import STOCKS
         self.market_price = 10.0
+        self.stocks: dict = {k: dict(v) for k, v in STOCKS.items()}      # 小镇股市
+        self.venue_revenue: dict = {}                                    # 场所近期营业额（衰减累计）
         self.market_last_tick = 0
         self.running = False
         self.speed = 1.0
@@ -99,7 +102,7 @@ class Simulation:
         return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
             "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
             "decor_common":self.decor_common,"meal_until":self.meal_until,
-            "town_config":self.town_config,"market_price":self.market_price,
+            "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},
             "players":[p.snapshot(names).model_dump() for p in self.players],
             "vehicles":[v.model_dump() for v in self.vehicles],
             "maps":{scene:["".join(row) for row in world.grid(scene)] for scene in ("house","town")},

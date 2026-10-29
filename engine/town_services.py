@@ -5,6 +5,17 @@ import random
 
 SKILLS={'computer':'计算机','science':'理学','literature':'文学','medicine':'医学','economics':'经济学','cooking':'烹饪'}
 NAMES={'C':'咖啡馆','R':'饭店','U':'学校','B':'诊所','O':'事务所','S':'商店','M':'小镇影院','G':'健身房','P':'公园','F':'田园','W':'池塘','J':'小镇花园'}
+# 小镇股市：指数 + 6 只场所股。总市值 = 200×10 + 6×100×5 = 5000。
+# 场所股价受近期营业额影响（venue_revenue 衰减累计），并带随机波动。
+STOCKS={
+ 'index':{'name':'小镇指数','price':10.0,'shares':200,'base':10.0},
+ 'R':{'name':'饭店','price':5.0,'shares':100,'base':5.0},
+ 'M':{'name':'小镇影院','price':5.0,'shares':100,'base':5.0},
+ 'C':{'name':'咖啡馆','price':5.0,'shares':100,'base':5.0},
+ 'G':{'name':'健身房','price':5.0,'shares':100,'base':5.0},
+ 'S':{'name':'商店','price':5.0,'shares':100,'base':5.0},
+ 'B':{'name':'诊所','price':5.0,'shares':100,'base':5.0},
+}
 # 可修改数值与固定用途分开，修改参数不能把咖啡馆变成吃饭场所。
 DEFS={
  'coffee':('C','喝咖啡',None,'service'), 'cafe_read':('C','咖啡馆看书',None,'service'),
@@ -129,7 +140,7 @@ def register(activities):
    activities[key]={'name':name,'emoji':'📚' if kind=='course' else '🚗' if kind=='license_course' else '💼' if kind=='job' else '☕','duration':1,'need':'facility:'+code,'scene':'town','cost':0,'effects':{},'desc':name}
   if kind=='job':activities[key]['name']=name
  activities['home_treat']={'name':'在家行医','emoji':'🩺','duration':3,'need':'home_patient','scene':'house','cost':0,'effects':{'energy':-1},'desc':'医学1级起，可在家治疗自己或target室友，能力取决于医学等级'}
- activities['stock']={'name':'电脑股票交易','emoji':'📈','duration':1,'need':'own_computer','scene':'house','cost':0,'effects':{'energy':-.5},'desc':'经济学1级可在自己电脑买卖虚拟小镇指数，operation=buy/sell，shares填正整数；可能亏损'}
+ activities['stock']={'name':'电脑股票交易','emoji':'📈','duration':1,'need':'own_computer','scene':'house','cost':0,'effects':{'energy':-.5},'desc':'经济学1级可在自己电脑买卖小镇股票（指数与饭店/影院等场所股），operation=buy/sell，shares填正整数，symbol填股票代码；场所股受营业情况影响，可能亏损'}
  activities['buy_medicine']['gives_item']='medicine'
  activities['buy_medicine']['emoji']='💊'
  # 原施工工作仅为旧决策兼容，新的模型菜单不提供。
@@ -192,8 +203,13 @@ def prepare(sim,p,d):
    if not target.illness_severity and target.stats.hp>=100:raise ValueError('对方目前不需要治疗')
  return action_spec(sim,p,key) if key in ACTIVITIES or key in sim.custom_activities else None
 
+SKILL_PERKS={'economics':'电脑股票交易（action=stock，可买卖指数与各场所股）',
+             'medicine':'在家行医（action=home_treat，可治疗自己或室友）'}
+
 def prompt_context(sim,p):
- known_skills=[f'{name}{level(p,key)}级（{p.skills.get(key,0):g}经验）' for key,name in SKILLS.items() if level(p,key)>0]
+ known_skills=[f'{name}{level(p,key)}级（{p.skills.get(key,0):g}经验）'
+               +(f'，可特别进行：{SKILL_PERKS[key]}' if SKILL_PERKS.get(key) else '')
+               for key,name in SKILLS.items() if level(p,key)>0]
  lines=['技能：'+('；'.join(known_skills) if known_skills else '暂未掌握技能'),
         '驾照：'+('已有' if p.driver_license else '未取得')]
  from . import world
@@ -222,7 +238,11 @@ def prompt_context(sim,p):
     lines.append('商店商品：'+'、'.join(f'{DEFS[key][1] if key=="car" else shown[key]["name"]} {(row["price"] if key=="car" else shown[key]["cost"]):g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods' and (key=='car' or key in shown and shown[key]['enabled'])))
    break
  if p.info_feedback:lines.append('上次询问所得：'+p.info_feedback)
- lines.append(f'我的股票持仓：{p.stock_shares}份，成本{p.stock_cost:.2f}元')
+ lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
+  +';'.join(f'{k} {row["name"]} {row["price"]:.2f}元' for k,row in sim.stocks.items()))
+ holdings=[f'{sim.stocks[k]["name"]}{v["shares"]}份（成本{v["cost"]:g}元）'
+           for k,v in (p.stock_portfolio or {}).items() if v.get('shares',0)>0]
+ if holdings:lines.append('我的股票持仓：'+'；'.join(holdings))
  return '\n'.join(lines)
 
 
@@ -336,16 +356,37 @@ def finish(sim,p,key):
   target=p.target_player or p
   if p.treatment_ticks:sim.log('social',f'🩺 {p.name}在家为{target.name}提供了{p.treatment_ticks*10}分钟照护',[p.pid,target.pid])
  elif key=='stock':
-  d=p.decision;count=d.shares;value=round(count*sim.market_price,2)
+  d=p.decision;count=d.shares
+  sym=d.symbol if d.symbol in sim.stocks else 'index'
+  row=sim.stocks[sym];price=row['price'];value=round(count*price,2)
+  port=p.stock_portfolio.get(sym) or {'shares':0,'cost':0.0}
   if d.operation=='buy':
    if p.stats.money<value:p.remember('交易未完成：余额不足',3);return
-   p.stats.money=round(p.stats.money-value,2);p.stock_shares+=count;p.stock_cost=round(p.stock_cost+value,2)
+   p.stats.money=round(p.stats.money-value,2)
+   port={'shares':port['shares']+count,'cost':round(port['cost']+value,2)}
   else:
-   if count>p.stock_shares:p.remember('交易未完成：持仓不足',3);return
-   p.stock_cost=round(p.stock_cost*(p.stock_shares-count)/p.stock_shares,2);p.stock_shares-=count;p.stats.money=round(p.stats.money+value,2)
-  p.stock_trades.append({'tick':sim.global_tick,'side':d.operation,'shares':count,'price':sim.market_price,'value':value})
-  sim.log('activity',f'📈 {p.name}'+('买入' if d.operation=='buy' else '卖出')+f'小镇指数{count}份，价格{sim.market_price:.2f}，总额{value:.2f}元',[p.pid])
+   if count>port['shares']:p.remember(f'交易未完成：{row["name"]}持仓不足',3);return
+   remaining=port['shares']-count
+   port={'shares':remaining,'cost':round(port['cost']*remaining/port['shares'],2) if remaining else 0.0}
+   p.stats.money=round(p.stats.money+value,2)
+  p.stock_portfolio[sym]=port
+  if sym=='index':p.stock_shares,p.stock_cost=port['shares'],port['cost']
+  p.stock_trades.append({'tick':sim.global_tick,'side':d.operation,'symbol':sym,'shares':count,'price':price,'value':value})
+  sim.log('activity',f'📈 {p.name}'+('买入' if d.operation=='buy' else '卖出')+f'{row["name"]}股票{count}份，价格{price:.2f}，总额{value:.2f}元',[p.pid])
 
 def update_market(sim):
+ """每小时（6刻）行情更新：随机波动±5%（比旧版±1.5%更刺激），
+ 场所股叠加近期营业额漂移（>8元/小时看涨、没生意看跌），并向基准
+ 均值回归，总市值长期稳定在5000附近。"""
  if sim.global_tick and sim.global_tick%6==0 and sim.market_last_tick!=sim.global_tick:
-  sim.market_price=round(max(1,sim.market_price*(1+random.uniform(-.015,.015))),2);sim.market_last_tick=sim.global_tick
+  sim.market_last_tick=sim.global_tick
+  for key,row in sim.stocks.items():
+   noise=random.uniform(-.05,.05)
+   drift=0.0
+   if key!='index':
+    rev=sim.venue_revenue.get(key,0.0)
+    drift=max(-.03,min(.05,(rev-8.0)/400.0))
+    sim.venue_revenue[key]=rev*.5
+   pull=(row['base']-row['price'])/row['base']*.04
+   row['price']=round(max(.5,row['price']*(1+noise+drift+pull)),2)
+  sim.market_price=sim.stocks['index']['price']

@@ -44,6 +44,7 @@ class Player:
         self.stock_shares = 0
         self.stock_cost = 0.0
         self.stock_trades = []
+        self.stock_portfolio: dict[str, dict] = {}   # 股票代码 → {shares, cost}
         self.service_spec = None
         self.interaction_slot = None
         self._bed_partner_pid = None
@@ -161,7 +162,7 @@ class Player:
             activity=(self.activity["name"] if self.activity else ""),
             activity_emoji=(self.activity["emoji"] if self.activity else ""),
             target_name=(self.target_player.name if self.target_player else ""),
-            plan=self.plan, model=self.model, skills=dict(self.skills), stock_shares=self.stock_shares, stock_cost=self.stock_cost, stock_trades=self.stock_trades, computer_files=self.computer_files, transactions=self.transactions,
+            plan=self.plan, model=self.model, skills=dict(self.skills), stock_shares=self.stock_shares, stock_cost=self.stock_cost, stock_trades=self.stock_trades, stock_portfolio={k: dict(v) for k, v in self.stock_portfolio.items()}, computer_files=self.computer_files, transactions=self.transactions,
             home=world.zone_of(self.scene, self.x, self.y),
             speech=(self.speech if self.world_tick - self.speech_tick <= 2 else ""),
             affinity=aff_named, items=dict(self.items),
@@ -259,6 +260,9 @@ class Player:
         a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
             return False
+        if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
+            self.remember('我吃得很饱，暂时吃不下饭', 3)
+            return False
         if a.get('_custom') and a.get('need') is None and a.get('scene') not in ('any',self.scene):
             return False
         need = a.get("need", "")
@@ -294,6 +298,9 @@ class Player:
                     and not world.same_place(self, target):
                 return False
             if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
+                return False
+            if key=='give_meal' and target.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
+                self.remember(f'{target.name}吃得很饱，不需要饭菜', 3)
                 return False
             if key == "love":
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
@@ -402,6 +409,8 @@ class Player:
                 self.x,self.y=waters[0];self.transport='walk'
         # 一次性付款，避免获得物品后通过上车/中断活动绕过剩余费用。
         self.stats.money -= cost
+        if a.get('_building'):
+            sim.venue_revenue[a['_building']] = sim.venue_revenue.get(a['_building'], 0.0) + cost
         self.activity = a
         self.work_paid = 0.0
         self.tuition_paid = 0.0
@@ -600,6 +609,9 @@ class Player:
         """送饭菜：对方当场吃掉（不进背包，杜绝饥饿两人互送饭菜的死循环），
         数值与坐下吃一份饭等值：N刻×(基础效果+烹饪品质加成)。"""
         if self.items.get('meal',0)<=0:return
+        if t.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
+            self.remember(f'{t.name}吃得很饱，饭菜送不出去，我先留着', 4)
+            return
         self.items['meal']-=1
         quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
         eat=act.ACTIVITIES.get('eat',{})

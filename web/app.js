@@ -23,7 +23,7 @@ function toast(msg, ok=true) {showEventPopup({scope:'user',text:msg},ok);}
 /* ================= 场景与地图 ================= */
 let curScene = "house";
 let MAPS = {house: null, town: null};      // rows
-let townConfig=null, marketPrice=10;
+let townConfig=null, marketPrice=10, stocks={};
 let players = [], vehicles = [], selectedPid = null, bubbles = [];
 let decorCommon = 0, identityPhase = false;
 
@@ -104,7 +104,7 @@ function renderPlayers() {
       <div class="head"><span class="dot" style="background:${p.color}"></span><b>${esc(p.emoji)} ${esc(p.name)}</b><span class="model" title="${esc(p.model||"未绑定模型，使用规则模式")}">${p.model ? esc(p.model) : "规则模式"}</span><span class="tag">${esc(p.gender || "男")}</span></div>
       ${bars}${doing}
       <div class="hint resident-skills">📚 ${Object.entries(p.skills||{}).filter(([,v])=>v>0).map(([k,v])=>esc(({computer:'计算机',science:'理学',literature:'文学',medicine:'医学',economics:'经济学',cooking:'烹饪'})[k]||k)+' '+Math.min(5,Math.floor(v/100))+'级 ('+Number(v.toFixed(2))+'/500)').join(' · ')||'尚未学习技能'}</div>
-      <div class="hint">📈 小镇指数 ${marketPrice.toFixed(2)}元 · 持有${p.stock_shares||0}份 · 持仓成本${Number(p.stock_cost||0).toFixed(2)}元</div>
+      <div class="hint">📈 小镇股市：${Object.entries(stocks).map(([k,r])=>esc(r.name)+' '+Number(r.price).toFixed(2)).join('｜')||('指数 '+marketPrice.toFixed(2))}${(()=>{const port=Object.entries(p.stock_portfolio||{}).filter(([,v])=>v.shares>0);return port.length?'<br>持仓：'+port.map(([k,v])=>esc((stocks[k]||{}).name||k)+'×'+v.shares+'份(成本'+Number(v.cost).toFixed(2)+')').join('，'):'';})()}</div>
       <details class="resident-computer" data-open-key="computer-${esc(p.pid)}" ${opened.has('computer-'+p.pid)?'open':''}><summary>💻 ${esc(p.name)}的电脑 · ${(p.computer_files||[]).length}篇记录 <small>只读</small></summary>
       ${(p.computer_files||[]).map(f=>`<details data-open-key="file-${esc(p.pid)}-${esc(f.id)}" ${opened.has('file-'+p.pid+'-'+f.id)?'open':''}><summary>${esc(f.title)}</summary><pre class="computer-content">${esc(f.content)}</pre></details>`).join('')||'<p class="hint">还没有主动记录</p>'}</details>
       <details class="resident-transfers" data-open-key="money-${esc(p.pid)}" ${opened.has('money-'+p.pid)?'open':''}><summary>资金往来 · ${(p.transactions||[]).length}笔</summary>${[...(p.transactions||[])].reverse().map(t=>{const amt=Number.isFinite(Number(t.amount))?Number(t.amount).toFixed(2):""+(t.delta??"?");const from=t.from||"我",to=t.to||"诊所";return `<p class="hint">第${t.day??"?"}天 ${esc(t.clock??"")} · ${esc(from)} → ${esc(to)} · ${amt}元<br>${esc(t.actor??"诊所")}：${esc(t.reason||"")}</p>`}).join('')||'<p class="hint">暂无资金往来</p>'}</details>
@@ -229,7 +229,7 @@ function connectWS() {
     if (d.type === "tick") {
       $("recordingTag").textContent=d.recording?"● 自动录制中":"○ 尚未录制";
       if(d.maps) MAPS = d.maps;
-      townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;
+      townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;
       window.refreshBuildingLock?.(d.running||d.identity_phase);
       players = d.players; vehicles = d.vehicles || [];
       bubbles=players.filter(p=>p.speech).map(p=>({name:p.name,text:p.speech,until:Date.now()+3500}));
@@ -610,7 +610,7 @@ async function refreshState() {
   if(replayMode)return;
   const d = await jget(`${API}/state`);
   $("recordingTag").textContent=d.recording?"● 自动录制中":"○ 尚未录制";
-  townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;
+  townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;
   window.refreshBuildingLock?.(d.running||d.identity_phase);
   players = d.players; vehicles = d.vehicles || []; decorCommon = d.decor_common;
   identityPhase = d.identity_phase;
@@ -708,7 +708,7 @@ async function showReplayFrame(index){
   replayCanContinue=!!d.can_continue;$("btnContinueReplay").disabled=!replayCanContinue;
   $("btnContinueReplay").title=replayCanContinue?"从当前帧的完整上下文创建新存档":"此旧录制缺少完整上下文，可从世界存档保存位置继续";
   replayIndex=d.index;replayTotal=d.total;
-  const f=d.frame;townConfig=f.town_config||null;marketPrice=f.market_price??10;window.refreshBuildingLock?.(true);MAPS=f.maps;players=f.players;vehicles=f.vehicles||[];decorCommon=f.decor_common;identityPhase=false;
+  const f=d.frame;townConfig=f.town_config||null;marketPrice=f.market_price??10;stocks=f.stocks||stocks;window.refreshBuildingLock?.(true);MAPS=f.maps;players=f.players;vehicles=f.vehicles||[];decorCommon=f.decor_common;identityPhase=false;
   allEvents=[...(f.events||[])].reverse();bubbles=players.filter(p=>p.speech).map(p=>({name:p.name,text:p.speech,until:Date.now()+3500}));
   $("recordingTag").textContent="▶ 本地档案";
   $("clockbox").textContent=`第${f.day}天 ${f.clock}`;$("modeTag").textContent="只读回放 · 实时世界已暂停";

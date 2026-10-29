@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','user_prompt_template','meal_quality','market_price','market_last_tick')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -138,6 +138,18 @@ class SaveStore:
         sim.town_config=merge_parameters(sim.town_config)
         from .mechanics import DEFAULT_RULES,DEFAULT_HOURS,activity_defaults
         sim.mechanics={**DEFAULT_RULES,**{k:v for k,v in getattr(sim,'mechanics',{}).items() if k in DEFAULT_RULES}}
+        from .town_services import STOCKS
+        if not isinstance(getattr(sim,'stocks',None),dict) or 'index' not in sim.stocks:
+            sim.stocks={k:dict(v) for k,v in STOCKS.items()}
+            sim.stocks['index']['price']=max(1.0,float(getattr(sim,'market_price',10.0)))
+        for key,row in sim.stocks.items():
+            row.setdefault('base',STOCKS.get(key,{}).get('price',row['price']))
+            row.setdefault('shares',STOCKS.get(key,{}).get('shares',100))
+        if not isinstance(getattr(sim,'venue_revenue',None),dict):sim.venue_revenue={}
+        for q in sim.players:
+            if not isinstance(getattr(q,'stock_portfolio',None),dict):q.stock_portfolio={}
+            if not q.stock_portfolio and q.stock_shares>0:
+                q.stock_portfolio['index']={'shares':q.stock_shares,'cost':q.stock_cost}
         if getattr(sim,'user_prompt_template',''):
             sim.user_prompt_template=sim.user_prompt_template.replace('话费每小时50元','话费每刻{phone_fee_per_tick:g}元').replace('话费每小时{phone_fee_per_hour:g}元','话费每刻{phone_fee_per_tick:g}元')
         sim.opening_hours={**DEFAULT_HOURS,**getattr(sim,'opening_hours',{})}
