@@ -263,7 +263,7 @@ def parse_decision(text: str) -> Decision | None:
 
 def _norm_action(raw: str) -> str:
     raw = raw.strip().lower()
-    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony"}.get(raw,raw)
+    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony","聊天":"chat","对话":"chat"}.get(raw,raw)
     if raw in ("buy_car", "ride", "stay_in_car", "leave_car", "emoji", "transfer", "inspect", "visit",
                "hospital_stay", "hospital_leave"):
         return raw
@@ -381,22 +381,18 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
 
 
 # ================================================================== 回合制对话
-CONV_TURN_TEMPLATE = """【背景】你是{self_name}，正在和{other_name}{kind}。
+CONV_TURN_TEMPLATE = """你正在和{other_name}{kind}。
 【你对TA的好感】{aff:.0f}/100
-【你的状态】心情{mood:.0f}/100 精力{energy:.0f}/100
+【你的相关记忆】
+{memories}
 【对话记录】（"我"是你的话，"{other_name}"是TA的话）
 {history}
 
-现在轮到你说话。你可以：
-1. 回应TA说的内容——要针对TA刚才那句话，不要自说自话
-2. 结束对话离开（你不想聊了，说句告别的话）
-3. 如果TA刚才说"要走了"，你也可以挽留或跟上TA继续聊
+轮到你说话。对话就是普通的交流：回应对方、交换信息、说出想法或商量事情都行，针对TA最近这句话说，不要自说自话，也不要重复原话。想聊的都聊完了就自然道别，随时可以结束。
+一句即可，30字以内。只输出一行 JSON：
+{{"say": "你要说的话", "act": "stay（继续聊） 或 leave（道别结束） 或 follow（TA要走时挽留/跟上）"}}"""
 
-注意：不要重复自己或TA说过的原话；一句即可，15字以内。
-只输出一行 JSON：
-{{"say": "你要说的话", "act": "stay 或 leave 或 follow"}}"""
-
-CONV_KIND_CN = {"chat": "面对面聊天", "love": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
+CONV_KIND_CN = {"chat": "面对面对话", "love": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
 
 # 规则模式对话库（无 API 时兜底）
 RULE_OPENERS = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
@@ -424,21 +420,20 @@ def parse_conv_turn(text: str) -> dict | None:
 
 
 async def conv_turn_llm(profile: ApiProfile, model: str, self_name: str,
-                        other_name: str, kind: str, aff: float, mood: float,
-                        energy: float, history: list[tuple[str, str]],
+                        other_name: str, kind: str, aff: float,
+                        history: list[tuple[str, str]],
                         timeout: float = 25.0, memories: str = "") -> dict:
-    """一次对话回合：模型看着完整对话历史决定说什么/是否离开。
+    """一次对话回合：模型看着完整对话历史与自己的记忆决定说什么/是否离开。
     失败抛 LLMError（由 Conversation 降级规则库）。"""
     hist_lines = []
     for speaker, line in history[-12:]:      # 最近12条，防超长
         who = "我" if speaker == self_name else speaker
         hist_lines.append(f"{who}：{line}")
     history_s = "\n".join(hist_lines) if hist_lines else "（刚开始，还没有说过话）"
-    kind_cn = CONV_KIND_CN.get(kind, "聊天")
+    kind_cn = CONV_KIND_CN.get(kind, "对话")
     prompt = CONV_TURN_TEMPLATE.format(
-        self_name=self_name, other_name=other_name, kind=kind_cn,
-        aff=aff, mood=mood, energy=energy, history=history_s)
-    prompt += "\n【我的相关记忆，作为经历参考】\n" + memories[:1200]
+        other_name=other_name, kind=kind_cn, aff=aff,
+        memories=memories[:1200] or "（暂无）", history=history_s)
     text = await _run_in_thread(chat, profile, model,
                                 "你在一个生活模拟游戏里扮演角色的对话，"
                                 "说话要自然口语化，符合当前语境。只输出要求的 JSON。",
@@ -575,3 +570,29 @@ async def loan_amount_llm(profile: ApiProfile, model: str, lender_name: str,
         return max(0, min(int(m.group(0)), int(lender_cash)))
     except Exception:                        # noqa: BLE001
         return 0
+
+
+# ================================================================== 对话记忆
+DIALOGUE_SUMMARY_TEMPLATE = """你刚刚和{other_name}进行了一次{kind}。对话记录：
+{history}
+
+请从你自己的视角，挑选这次对话中最值得记住的关键信息写入记忆：
+对方透露的消息或近况、你们的约定或计划、对方的请求以及你的答复、
+值得在意的情绪或态度。压缩成一条不超过60字的记忆，只陈述事实，
+不要空泛总结。只输出记忆内容本身。"""
+
+
+async def summarize_dialogue_llm(profile: ApiProfile, model: str, self_name: str,
+                                 other_name: str, kind_cn: str,
+                                 history: list[tuple[str, str]],
+                                 timeout: float = 20.0) -> str:
+    """对话结束后由模型择取关键信息作为记忆。空结果抛 ValueError。"""
+    hist_s = "\n".join(f"{'我' if w == self_name else w}：{t}" for w, t in history[-16:])
+    prompt = DIALOGUE_SUMMARY_TEMPLATE.format(other_name=other_name, kind=kind_cn, history=hist_s)
+    text = await _run_in_thread(chat, profile, model,
+                                "你在整理自己的记忆，只输出记忆内容本身。",
+                                prompt, 0.3, 200, timeout)
+    text = (text or '').strip().strip('"“”')
+    if not text:
+        raise ValueError('空摘要')
+    return text[:120]

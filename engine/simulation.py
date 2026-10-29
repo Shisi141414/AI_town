@@ -82,6 +82,7 @@ class Simulation:
         self.meal_until = 0                     # 家里有饭的截止 tick
         self.dialogue_log: list[dict] = []      # 兼容保留
         self.conversations: list[Conversation] = []   # 活跃对话
+        self._dialogue_released = 0                  # 已因对话放行的世界刻数（10轮对话=1刻）
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self.loan_queue: list[tuple] = []       # (borrower_pid, lender_pid) 急救借款
         self.sex_proposals: dict[str, dict] = {}
@@ -567,17 +568,7 @@ class Simulation:
         if any(p.state in ('waiting_model','deciding') for p in self.players):
             return
 
-        self.tick += 1
-        self.global_tick += 1
-        from .town_services import update_market
-        update_market(self)
-        if self.tick >= 144:
-            self.tick = 0
-            self.day += 1
-            self.log("system", f"🌅 第 {self.day} 天开始了",scope="game")
-        tick_health_start={p.pid:p.stats.hp for p in self.players}
-
-        # 1.5 推进活跃对话（每 tick 每对话推进一步回合）
+        # 1.5 推进活跃对话（对话很快：10轮以内不消耗世界时间）
         if self.conversations:
             for conv in list(self.conversations):
                 if conv.phase == "ended":
@@ -593,6 +584,23 @@ class Simulation:
                 before={p.pid:p.stats.hp for p in self.players}
                 await conv.advance()
                 self._interrupt_health_losses(before)
+            # 时间冻结：每满10轮对话才放行1刻世界时间
+            active = [c for c in self.conversations if c.phase != 'ended']
+            if active:
+                owed = sum(c.turn_count for c in active) // 10
+                if owed <= self._dialogue_released:
+                    return
+                self._dialogue_released = owed
+        self.tick += 1
+        self.global_tick += 1
+        from .town_services import update_market
+        update_market(self)
+        if self.tick >= 144:
+            self.tick = 0
+            self.day += 1
+            self.log("system", f"🌅 第 {self.day} 天开始了",scope="game")
+        tick_health_start={p.pid:p.stats.hp for p in self.players}
+
 
         # 2. 推进状态机：循环轮换先行者，避免固定顺序长期抢占门口。
         self.repair_positions()
@@ -1024,7 +1032,7 @@ class Simulation:
         initiator._conversation = conv
         target._conversation = conv
         self.conversations.append(conv)
-        kind_cn = {"chat": "聊天", "love": "约会", "phone": "打电话"}[kind]
+        kind_cn = {"chat": "对话", "love": "约会", "phone": "打电话"}[kind]
         self.log("social", f"💬 {initiator.name} 找 {target.name} {kind_cn}",
                  [initiator.pid, target.pid])
 

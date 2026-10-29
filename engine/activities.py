@@ -193,10 +193,10 @@ ACTIVITIES: dict[str, dict] = {
     },
     # ============ 社交（需目标玩家） ============
     "chat": {
-        "name": "聊天", "emoji": "💬", "duration": 3, "need": "player",
+        "name": "对话", "emoji": "💬", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
-        "effects": {"mood": 2.5},
-        "desc": "找身边的人聊天",
+        "effects": {},
+        "desc": "与身边的人对话：交流信息、分享想法、商量事情或增进了解；对话本身不产生数值变化，10轮以内不消耗时间",
     },
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
@@ -287,7 +287,7 @@ def activity_description_defaults() -> dict[str, str]:
         "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近；散步、略有放松",
-        "chat":"在室友身边；交谈、增进感情", "phone":"在任意地点；与室友通话、增进感情，拨打者支付话费",
+        "chat":"在室友身边；交流信息、分享近况、商量事情（无数值变化，几乎不耗时间）", "phone":"在任意地点；与室友通话、增进感情，拨打者支付话费",
         "love":"在室友身边或床上；约会、增进感情", "sex":"在双方靠近处或床上；亲密相处",
         "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
         "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",

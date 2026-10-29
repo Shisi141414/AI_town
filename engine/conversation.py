@@ -40,7 +40,9 @@ class Conversation:
         self.kind = kind              # chat / love / follow
         self.sim = sim
         self.history: list[tuple[str, str]] = []   # (说话人名, 台词)
-        self.duration_limit = a.activity_total if a.activity_custom_duration else None
+        # 对话（chat/follow）不占活动时长：10轮以内不消耗时间，见 _step_tick 冻结逻辑
+        self.duration_limit = (a.activity_total if a.activity_custom_duration else None) \
+            if kind in ('love', 'phone') else None
         self.elapsed = 0
         self.turn_count = 0
         self.phase = "opening"        # opening / a_turn / b_turn / leaving / ended
@@ -62,8 +64,8 @@ class Conversation:
                     self._end('insufficient_money')
                     return
             await self._advance()
-            if self.elapsed>saved['elapsed']:
-                key='love' if self.kind=='love' else 'phone' if self.kind=='phone' else 'chat'
+            if self.elapsed>saved['elapsed'] and self.kind in ('love','phone'):
+                key='love' if self.kind=='love' else 'phone'
                 from .activities import ACTIVITIES
                 base_effects=(self.a.activity or {}).get('effects',ACTIVITIES[key].get('effects',{}))
                 for speaker,other in ((self.a,self.b),(self.b,self.a)):
@@ -120,7 +122,6 @@ class Conversation:
                 turn = await brain.conv_turn_llm(
                     prof, model, speaker.name, listener.name, self.kind,
                     speaker.affinity.get(listener.pid, 50),
-                    speaker.stats.mood, speaker.stats.energy,
                     self.history, timeout=self.sim.settings.decision_timeout,
                     memories=speaker.memory.brief(speaker.world_tick, k=4, query=listener.name, budget=1200))
             except Exception:                  # noqa: BLE001
@@ -191,7 +192,6 @@ class Conversation:
                 turn = await brain.conv_turn_llm(
                     prof, model, stayer.name, leaver.name, self.kind,
                     stayer.affinity.get(leaver.pid, 50),
-                    stayer.stats.mood, stayer.stats.energy,
                     hist, timeout=self.sim.settings.decision_timeout,
                     memories=stayer.memory.brief(stayer.world_tick, k=4, query=leaver.name, budget=1200))
                 follow = turn["act"] == "follow"
@@ -228,7 +228,7 @@ class Conversation:
 
     def _log_line(self, speaker: "Player", say: str, closing: bool = False):
         if say:
-            kind_cn = {"chat": "聊天", "love": "约会", "follow": "边走边聊", "phone": "通话"}[self.kind]
+            kind_cn = {"chat": "对话", "love": "约会", "follow": "边走边聊", "phone": "通话"}[self.kind]
             self.sim.log("dialogue", f"{speaker.name}：{say}（与{kind_cn}）",
                          [self.a.pid, self.b.pid])
 
@@ -248,12 +248,34 @@ class Conversation:
                 if getattr(p,'_bed_partner_pid',None):
                     from .interaction_points import release
                     release(self.sim,p)
-        # 摘要写入记忆
+        # 摘要写入记忆：优先让双方各自的模型从对话中择取关键信息
         n_lines = len(self.history)
         if n_lines:
-            kind_cn = {"chat": "聊天", "love": "约会", "follow": "交谈", "phone": "通话"}[self.kind]
-            excerpt = "；".join(f"{w}：“{s}”" for w, s in self.history[:4])
-            memo = f"我和{self.b.name}{kind_cn}了{n_lines}句：{excerpt}"
-            self.a.remember(memo, 6)
-            self.b.remember(f"我和{self.a.name}{kind_cn}了{n_lines}句：{excerpt}", 6)
+            kind_cn = {"chat": "对话", "love": "约会", "follow": "交谈", "phone": "通话"}[self.kind]
+            self._remember_dialogue(self.a, self.b, kind_cn, n_lines)
+            self._remember_dialogue(self.b, self.a, kind_cn, n_lines)
         self.sim.on_conversation_end(self)
+
+    def _remember_dialogue(self, p: "Player", other: "Player", kind_cn: str, n_lines: int):
+        """对话后记忆：LLM 择取关键信息；失败/无模型退回机械摘要。"""
+        prof = self.sim.profile_for(p.pid)
+        model = self.sim.model_of.get(p.pid) or (prof.default_model if prof else "")
+        if prof and model and self.sim.settings.dialogue_generation:
+            async def _summarize():
+                try:
+                    memo = await brain.summarize_dialogue_llm(
+                        prof, model, p.name, other.name, kind_cn, self.history,
+                        timeout=self.sim.settings.decision_timeout)
+                    p.remember(memo or self._fallback_memo(p, other, kind_cn, n_lines), 6)
+                except Exception:                  # noqa: BLE001
+                    p.remember(self._fallback_memo(p, other, kind_cn, n_lines), 6)
+            try:
+                asyncio.create_task(_summarize())
+                return
+            except RuntimeError:
+                pass
+        p.remember(self._fallback_memo(p, other, kind_cn, n_lines), 6)
+
+    def _fallback_memo(self, p: "Player", other: "Player", kind_cn: str, n_lines: int) -> str:
+        excerpt = "；".join(f"{w}：“{t}”" for w, t in self.history[:4])
+        return f"我和{other.name}{kind_cn}了{n_lines}句：{excerpt}"
