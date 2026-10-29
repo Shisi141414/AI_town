@@ -226,7 +226,7 @@ ACTIVITIES: dict[str, dict] = {
     "give_meal": {
         "name":"送饭菜", "emoji":"🍱", "duration":1, "need":"player",
         "scene":"any", "cost":0, "needs_item":"meal", "effects":{"mood":1},
-        "desc":"把做好的饭菜送给附近室友，对方可以稍后吃",
+        "desc":"把做好的饭菜送给附近室友，对方当场吃掉",
     },
     "use_medicine": {
         "name":"给室友用药", "emoji":"💊", "duration":1, "need":"player",
@@ -280,7 +280,7 @@ def activity_description_defaults() -> dict[str, str]:
     """模型行动目录中的默认文字；用户可逐项覆盖，不改变行动规则。"""
     from .town_services import DEFS, NAMES
     effects = {
-        "cook":"在家中厨房；备餐，完成后得到可转交的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
+        "cook":"在家中厨房；备餐，完成后得到可赠送的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
         "watch_tv":"在家中客厅沙发；放松心情", "computer":"在自己卧室电脑前；保存、查看和修改自己的记录",
         "computer_game":"在自己卧室电脑前；娱乐、提升心情", "sleep":"在自己卧室床上；恢复精力与身体",
         "shower":"在家中浴室；放松并恢复精力", "laundry":"在家中洗衣区；洗衣、略有放松",
@@ -290,7 +290,7 @@ def activity_description_defaults() -> dict[str, str]:
         "chat":"在室友身边；交谈、增进感情", "phone":"在任意地点；与室友通话、增进感情，拨打者支付话费",
         "love":"在室友身边或床上；约会、增进感情", "sex":"在双方靠近处或床上；亲密相处",
         "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
-        "give_meal":"在室友身边；把饭菜交给对方食用", "use_medicine":"在室友身边；消耗药品治疗伤病",
+        "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",
         "destroy":"在公共设施附近；破坏设施、发泄情绪",
         "home_treat":"在家中；用医学技能照护自己或室友", "stock":"在自己卧室电脑前；交易股票，可能盈亏",
     }

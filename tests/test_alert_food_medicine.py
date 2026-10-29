@@ -81,7 +81,8 @@ class AlertFoodMedicineTests(unittest.TestCase):
         self.assertIsNone(self.b.interaction_slot)
         self.assertTrue(world.walkable('house',self.b.x,self.b.y))
 
-    def test_cooked_meal_can_be_given_and_eaten_later(self):
+    def test_cooked_meal_is_eaten_upon_giving(self):
+        # 2026-10-29 起：送饭菜当场吃掉，不进对方背包（防饥饿互送死循环）
         self.a.skills['cooking']=200
         self.a._start_local('cook',self.sim)
         self.arrive(self.a)
@@ -90,18 +91,15 @@ class AlertFoodMedicineTests(unittest.TestCase):
         self.assertEqual(self.a.meal_qualities,[2,2])
         self.a.x,self.a.y=10,11
         self.b.x,self.b.y=11,11
+        self.b.stats.satiety=0
         self.sim._apply_decision(self.a,Decision(action='give_meal',target=self.b.name))
         self.arrive(self.a)
-        self.assertEqual(self.b.items['meal'],1)
-        self.assertEqual(self.b.meal_qualities,[2])
         self.finish(self.a)
-        self.b.stats.satiety=0
-        self.sim.meal_until=0
-        self.sim._apply_decision(self.b,Decision(action='eat'))
-        self.arrive(self.b)
-        self.finish(self.b)
+        # 对方当场吃：不获得物品，饱食直接恢复
+        self.assertEqual(self.b.items.get('meal',0),0)
+        self.assertEqual(self.b.meal_qualities,[])
         self.assertGreater(self.b.stats.satiety,0)
-        self.assertEqual(self.b.items['meal'],0)
+        self.assertIn('送的饭菜',self.b.memory.brief(0,k=10,query='饭菜'))
 
     def test_clinic_medicine_can_treat_roommate(self):
         self.a.scene='town'

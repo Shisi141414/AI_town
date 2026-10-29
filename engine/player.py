@@ -597,11 +597,27 @@ class Player:
         t.speech_tick = t.world_tick
 
     def _resolve_give_meal(self,sim:"Simulation",t:"Player"):
+        """送饭菜：对方当场吃掉（不进背包，杜绝饥饿两人互送饭菜的死循环），
+        数值与坐下吃一份饭等值：N刻×(基础效果+烹饪品质加成)。"""
         if self.items.get('meal',0)<=0:return
-        self.items['meal']-=1;t.items['meal']=t.items.get('meal',0)+1
+        self.items['meal']-=1
         quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
-        t.meal_qualities.append(quality)
-        sim.log('social',f'🍱 {self.name}把做好的饭菜交给{t.name}',[self.pid,t.pid])
+        eat=act.ACTIVITIES.get('eat',{})
+        n=eat.get('duration',3) or 3
+        eff=eat.get('effects',{})
+        sat=n*(eff.get('satiety',13)+quality*.8)
+        mood=n*(eff.get('mood',2)+quality*.3)
+        energy=n*(quality*.3)
+        t.stats.satiety=min(100.0,t.stats.satiety+sat)
+        t.stats.mood=min(100.0,t.stats.mood+mood)
+        t.stats.energy=min(100.0,t.stats.energy+energy)
+        t.stats.clamp()
+        t.remember(f"收到了{self.name}送的饭菜，当场吃了，暖胃又暖心",6)
+        self.remember(f"我把做好的饭菜送给{t.name}，TA当场吃了",5)
+        t.affinity[self.pid]=min(100.0,t.affinity.get(self.pid,50)+2)
+        sim.log('social',f'🍱 {self.name}把饭菜送给{t.name}，当场吃了（饱食+{sat:.0f}）',[self.pid,t.pid])
+        t.speech='谢谢！'
+        t.speech_tick=t.world_tick
 
     def _resolve_attack(self, sim: "Simulation"):
         t = self.target_player
@@ -715,6 +731,8 @@ class Player:
                     if target.illness_severity==1:sim.random_events.recover(sim,target,treated=True)
                     else:target.illness_severity-=1
                 target.affinity[self.pid]=min(100,target.affinity.get(self.pid,50)+2)
+                target.remember(f"{self.name}给我用了药品，伤情好多了",7)
+                self.remember(f"我给{target.name}用了药品",5)
                 sim.log('social',f'💊 {self.name}给{target.name}用了药品',[self.pid,target.pid])
         if key == "destroy" and world.tile(self.scene, self.x, self.y) in act.facility_chars("destroy"):
             world.grid(self.scene)[self.y][self.x] = "X"
