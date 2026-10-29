@@ -11,7 +11,7 @@ Object.assign(mechanicLabels,{
  disease_hp_loss_severe:'重症每刻生命损失',disease_energy_loss_per_level:'疾病每级每刻精力损失',
  car_energy_per_tile:'开车每格精力消耗',car_fuel_per_tick:'开车每刻油费（该刻行驶时）',
  phone_fee_per_tick:'通话每刻话费',
- meal_block_satiety:'吃饭/送饭的饱食上限',hospital_trigger_hp:'紧急送医生命阈值',hospital_cost:'急救费',hospital_fee_halfday:'住院房费（每半天）',
+ meal_block_satiety:'吃饭/送饭的饱食上限',meal_shelf_life_ticks:'饭菜保质期（刻）',hospital_trigger_hp:'紧急送医生命阈值',hospital_cost:'急救费',hospital_fee_halfday:'住院房费（每半天）',
  hospital_heal_multiplier:'住院生命恢复倍率（×自然恢复）',hospital_mood_gain:'每半天住院恢复心情',
  post_hospital_hp:'出院生命下限',post_hospital_satiety:'出院饱食下限',
  post_hospital_energy:'出院精力下限',post_hospital_mood:'出院心情下限'

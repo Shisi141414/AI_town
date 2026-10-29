@@ -147,7 +147,16 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
                     sorted(p.affinity.items(), key=lambda kv: -kv[1])[:6]) or "（还不认识谁）"
     nearby_s = nearby_description(nearby)
     roommates_s = '、'.join(f'{name}（{gender}）' for name,gender in getattr(p,'known_roommates',[])) or '（暂无）'
-    items = "、".join(f"{act.ITEMS[k]['name']}×{v}" for k, v in p.items.items() if v > 0) or "无"
+    parts = []
+    for k, v in p.items.items():
+        if v <= 0:
+            continue
+        if k == 'meal' and p.meal_expiry:
+            remain = max(0, min(p.meal_expiry[:v]) - p.world_tick)
+            parts.append(f"{act.ITEMS[k]['name']}×{v}（{remain}刻后过期）")
+        else:
+            parts.append(f"{act.ITEMS[k]['name']}×{v}")
+    items = "、".join(parts) or "无"
     mem = p.memory.brief(p.world_tick, k=8, query=world.zone_of(p.scene,p.x,p.y)+" "+p.plan)
     from .town_services import NAMES,onsite
     venue_code=next((code for code in NAMES if onsite(p,code)),None)

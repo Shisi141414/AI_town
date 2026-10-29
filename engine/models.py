@@ -67,6 +67,7 @@ class PlayerSnapshot(BaseModel):
     stock_cost: float = 0
     stock_trades: list[dict] = Field(default_factory=list)
     stock_portfolio: dict = Field(default_factory=dict)
+    meal_expiry: list = Field(default_factory=list)
     computer_files: list[dict] = Field(default_factory=list)
     transactions: list[dict] = Field(default_factory=list)
     decision_status: str = ""

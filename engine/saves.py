@@ -147,6 +147,8 @@ class SaveStore:
             row.setdefault('shares',STOCKS.get(key,{}).get('shares',100))
         if not isinstance(getattr(sim,'venue_revenue',None),dict):sim.venue_revenue={}
         for q in sim.players:
+            if not isinstance(getattr(q,'meal_expiry',None),list) or len(q.meal_expiry)!=q.items.get('meal',0):
+                q.meal_expiry=[sim.global_tick+20]*q.items.get('meal',0)
             if not isinstance(getattr(q,'stock_portfolio',None),dict):q.stock_portfolio={}
             if not q.stock_portfolio and q.stock_shares>0:
                 q.stock_portfolio['index']={'shares':q.stock_shares,'cost':q.stock_cost}

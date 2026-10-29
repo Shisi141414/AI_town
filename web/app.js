@@ -90,7 +90,7 @@ function renderPlayers() {
       return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(k === "money" ? 2 : 0)}</span></div>`;
     }).join("");
     const items = Object.entries(p.items||{}).filter(([,v])=>v>0)
-      .map(([k,v]) => ({flower:"💐",plant:"🪴",meal:"🍱",medicine:"💊"}[k]+"×"+v)).join(" ");
+      .map(([k,v]) => ({flower:"💐",plant:"🪴",meal:"🍱",medicine:"💊"}[k]+"×"+v+(k==="meal"&&(p.meal_expiry||[]).length?`(剩${Math.min(...p.meal_expiry.slice(0,v))}刻)`:""))).join(" ");
     const decor = (p.decor_room||0) > 0 ? ` · 🌸装饰${p.decor_room.toFixed(0)}` : "";
     const doing = p.activity
       ? `<div class="doing">${esc(p.activity_emoji)} 正在<b>${esc(p.activity)}</b> · 剩余${p.activity_minutes_left||0}分钟${p.target_name ? " → " + esc(p.target_name) : ""}</div>`

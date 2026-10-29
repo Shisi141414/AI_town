@@ -126,6 +126,7 @@ class Player:
         self.model = ""
         self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0}
         self.meal_qualities: list[int] = []
+        self.meal_expiry: list[int] = []      # 每份饭菜的到期tick（与数量FIFO对应）
         self.eating_quality = 0
         self.eating_from_inventory = False
         self.decor_room = 0.0
@@ -162,7 +163,7 @@ class Player:
             activity=(self.activity["name"] if self.activity else ""),
             activity_emoji=(self.activity["emoji"] if self.activity else ""),
             target_name=(self.target_player.name if self.target_player else ""),
-            plan=self.plan, model=self.model, skills=dict(self.skills), stock_shares=self.stock_shares, stock_cost=self.stock_cost, stock_trades=self.stock_trades, stock_portfolio={k: dict(v) for k, v in self.stock_portfolio.items()}, computer_files=self.computer_files, transactions=self.transactions,
+            plan=self.plan, model=self.model, skills=dict(self.skills), stock_shares=self.stock_shares, stock_cost=self.stock_cost, stock_trades=self.stock_trades, stock_portfolio={k: dict(v) for k, v in self.stock_portfolio.items()}, meal_expiry=[max(0, t - self.world_tick) for t in self.meal_expiry], computer_files=self.computer_files, transactions=self.transactions,
             home=world.zone_of(self.scene, self.x, self.y),
             speech=(self.speech if self.world_tick - self.speech_tick <= 2 else ""),
             affinity=aff_named, items=dict(self.items),
@@ -440,6 +441,7 @@ class Player:
             if self.eating_from_inventory:
                 self.items['meal']-=1
                 self.eating_quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
+                if self.meal_expiry:self.meal_expiry.pop(0)
         sim.log("activity", f"{self.name} 开始{a['name']} {a['emoji']}（计划{self.activity_total*10}分钟）", [self.name],scope="game")
 
     def _consume_decor_item(self, key: str, sim: "Simulation"):
@@ -613,6 +615,7 @@ class Player:
             self.remember(f'{t.name}吃得很饱，饭菜送不出去，我先留着', 4)
             return
         self.items['meal']-=1
+        if self.meal_expiry:self.meal_expiry.pop(0)
         quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
         eat=act.ACTIVITIES.get('eat',{})
         n=eat.get('duration',3) or 3
@@ -733,6 +736,7 @@ class Player:
             quality=min(5,int(self.skills.get('cooking',0)//100))
             self.items['meal']=self.items.get('meal',0)+2
             self.meal_qualities.extend([quality,quality])
+            self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',20))]*2)
             sim.log('activity',f'🍱 {self.name}做好饭，留下两份可带走的饭菜',[self.pid])
         if key=='use_medicine' and self.target_player:
             target=self.target_player
@@ -778,8 +782,23 @@ class Player:
             self.x,self.y=sim.free_position('town',self.x,self.y,self)
 
     # ------------------------------------------------------------- 被动结算
+    def _expire_meals(self, sim: "Simulation") -> None:
+        """饭菜保质期：到期自动消失并留下记忆；到期列表与数量保持对齐。"""
+        shelf = int(sim.mechanics.get('meal_shelf_life_ticks', 20))
+        while self.items.get('meal', 0) > 0 and self.meal_expiry and self.meal_expiry[0] <= sim.global_tick:
+            self.meal_expiry.pop(0)
+            if self.meal_qualities:
+                self.meal_qualities.pop(0)
+            self.items['meal'] -= 1
+            self.remember('我带的饭菜过期变质了，只能扔掉', 5)
+            sim.log('activity', f'🗑 {self.name}的饭菜过期变质，扔掉了', [self.pid], scope='game')
+        while len(self.meal_expiry) < self.items.get('meal', 0):
+            self.meal_expiry.append(sim.global_tick + shelf)
+        del self.meal_expiry[self.items.get('meal', 0):]
+
     def passive_drain(self, sim: "Simulation") -> None:
         from . import hospital
+        self._expire_meals(sim)
         if getattr(self, 'hospitalized', False):
             # 住院：不做日常消耗；生命每刻按自然恢复的倍率恢复，每半天结算房费
             self.stats.hp = min(100.0, self.stats.hp
