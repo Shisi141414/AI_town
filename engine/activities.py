@@ -35,7 +35,6 @@ def relationship_mood_per_tick(affinity: float, rules=None) -> float:
         return -(r['negative_mood_at_threshold']+(r['negative_affinity_threshold']-score)*(r['negative_mood_at_0']-r['negative_mood_at_threshold'])/span)
     return 0.0
 MOVE_EXTRA_ENERGY = -0.25
-STARVE_HP_DAMAGE = -2.0
 
 # ------------------------------------------------------------------ 物品
 ITEMS: dict[str, dict] = {
@@ -202,7 +201,7 @@ ACTIVITIES: dict[str, dict] = {
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
-        "effects": {"mood": 2.5, "money": -50 / 6},
+        "effects": {"mood": 2.5},
         "desc": "给室友打电话，可跨地点交谈，拨打者支付话费",
     },
     "love": {
@@ -277,9 +276,8 @@ def facility_chars(key: str) -> list[str]:
     return spec.split("|")
 
 
-def activity_menu(scene: str = "any", venue_code: str | None = None) -> str:
-    """只给行动目录；场所项目需到场后才能看到。"""
-    sections = {"室内生活": [], "社交互动": [], "随处行动": [], "小镇日常": [], "当前场所": []}
+def activity_description_defaults() -> dict[str, str]:
+    """模型行动目录中的默认文字；用户可逐项覆盖，不改变行动规则。"""
     from .town_services import DEFS, NAMES
     effects = {
         "cook":"在家中厨房；备餐，完成后得到可转交的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
@@ -306,9 +304,34 @@ def activity_menu(scene: str = "any", venue_code: str | None = None) -> str:
         "buy_flower":"买鲜花，用于装饰或送礼", "buy_plant":"买盆栽，用于装饰或送礼",
         "buy_medicine":"买药品，带给室友疗伤",
     }
-    for k, a in ACTIVITIES.items():
+    descriptions = {}
+    for key, activity in ACTIVITIES.items():
+        if activity.get('legacy'):
+            continue
+        if key in DEFS:
+            code, _, skill, kind = DEFS[key]
+            purpose = local_effects.get(key) or (
+                "工作、获得工资并积累相关技能经验" if kind == "job" else
+                "学习并提高相应技能" if kind == "course" else
+                "学习驾驶，取得驾照" if kind == "license_course" else "购买物品")
+            descriptions[key] = f"在{NAMES[code]}；{purpose}"
+        else:
+            descriptions[key] = effects.get(key, activity.get('desc', '在相应地点；进行活动'))
+    return descriptions
+
+
+def activity_menu(scene: str = "any", venue_code: str | None = None,
+                  descriptions: dict[str, str] | None = None,
+                  activities: dict[str, dict] | None = None) -> str:
+    """只给行动目录；场所项目需到场后才能看到。"""
+    sections = {"室内生活": [], "社交互动": [], "随处行动": [], "小镇日常": [], "当前场所": []}
+    from .town_services import DEFS
+    defaults = activity_description_defaults()
+    descriptions = descriptions or {}
+    for k, a in (activities if activities is not None else ACTIVITIES).items():
         if a.get("legacy"):continue
         if k in DEFS and (not venue_code or DEFS[k][0] != venue_code):continue
+        if a.get('_venue') and a['_venue']!=venue_code:continue
         if scene != "any" and a.get("scene") not in ("any", scene):
             continue
         req = []
@@ -317,18 +340,10 @@ def activity_menu(scene: str = "any", venue_code: str | None = None) -> str:
         if a.get("needs_item"):
             req.append("需要鲜花或盆栽" if a['needs_item']=='any' else f"需要{ITEMS[a['needs_item']]['name']}")
         extra = "（"+"；".join(req)+"）" if req else ""
-        group = "当前场所" if k in DEFS else ("社交互动" if a.get("need")=="player" else
+        group = "当前场所" if k in DEFS or a.get('_venue') else ("社交互动" if a.get("need")=="player" else
                 "室内生活" if a.get("scene")=="house" else
                 "小镇日常" if a.get("scene")=="town" else "随处行动")
-        if k in DEFS:
-            code, _, skill, kind = DEFS[k]
-            purpose = local_effects.get(k) or (
-                "工作、获得工资并积累相关技能经验" if kind == "job" else
-                "学习并提高相应技能" if kind == "course" else
-                "学习驾驶，取得驾照" if kind == "license_course" else "购买物品")
-            detail = f"在{NAMES[code]}；{purpose}"
-        else:
-            detail = effects.get(k, a.get("desc", "在相应地点；进行活动"))
+        detail = descriptions.get(k, defaults.get(k,a.get('desc','在相应地点；进行活动')))
         sections[group].append(f"- {k}: {a['name']}{extra}｜{detail}")
     return "\n\n".join(f"{title}：\n"+"\n".join(rows) for title,rows in sections.items() if rows)
 

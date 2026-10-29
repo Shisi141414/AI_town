@@ -6,12 +6,18 @@ DEFAULT_RULES = {
     'base_satiety_drain': .4, 'base_mood_drain': 1.0, 'base_energy_regen': 1.0,
     'illness_mood_drain': 4.0,
     'high_satiety_hp_threshold': 80.0, 'high_satiety_hp_gain': .3,
+    'starvation_hp_loss': 2.0, 'decor_mood_per_200': 1.0,
+    'disease_hp_loss_mild': .02, 'disease_hp_loss_moderate': .06,
+    'disease_hp_loss_severe': .12, 'disease_energy_loss_per_level': .02,
     'work_mood_per_hour': 9.0, 'study_mood_per_hour': 6.0,
-    'low_energy_threshold': 20.0, 'low_mood_threshold': 20.0,
+    'low_energy_threshold': 20.0, 'low_energy_mood_per_point': .1,
+    'low_mood_threshold': 20.0,
     'low_mood_delay_ticks': 18, 'low_mood_hp_loss': .5,
     'walk_speed': 1, 'bicycle_speed': 4, 'car_speed': 12,
     'walk_satiety_per_tile': .6, 'bicycle_satiety_per_tile': .4,
     'walk_energy_per_tile': .65, 'bicycle_energy_per_tile': .35,
+    'car_energy_per_tile': .0125, 'car_fuel_per_tick': 2.0,
+    'phone_fee_per_tick': 10.0,
     'literature_mood_chance_per_level': .1, 'literature_mood_bonus': 2.0,
     'disease_daily_chance': .02, 'affinity_daily_chance': .04,
     'disease_worsen_chance': .03,
@@ -79,6 +85,19 @@ def activity_defaults():
     return {key: {'duration': row['duration'], 'cost': row.get('cost', 0),
                   'effects': deepcopy(row.get('effects', {}))}
             for key, row in ACTIVITIES.items() if key not in DEFS and not row.get('legacy')}
+
+
+def validate_activity_descriptions(values):
+    from .activities import activity_description_defaults
+    defaults = activity_description_defaults()
+    if not isinstance(values, dict) or set(values) != set(defaults):
+        raise ValueError('可选行动描述不完整')
+    result = {}
+    for key, value in values.items():
+        if not isinstance(value, str) or not 1 <= len(value.strip()) <= 240 or any(c in value for c in '\r\n'):
+            raise ValueError(f'{key} 的行动描述应为一行，长度不超过240字')
+        result[key] = value.strip()
+    return result
 
 
 def validate_activities(values):

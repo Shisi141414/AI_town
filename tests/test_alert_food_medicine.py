@@ -58,13 +58,15 @@ class AlertFoodMedicineTests(unittest.TestCase):
         self.assertEqual(self.a.activity_key,'sleep')
         self.assertEqual(self.a.injury_alert,'')
 
-    def test_starving_resident_can_keep_walking_toward_food(self):
+    def test_starving_resident_can_reach_indoor_food_in_one_tick(self):
+        for i,roommate in enumerate(self.sim.players[1:]):
+            roommate.scene,roommate.x,roommate.y='town',2+i,12
         self.a.stats.satiety=0
         self.a._plan_route(self.sim,'house',13,3)
         self.assertEqual(self.a.state,'moving')
         asyncio.run(self.sim.step_tick())
-        self.assertEqual(self.a.state,'moving')
-        self.assertTrue(self.a.path)
+        self.assertEqual((self.a.x,self.a.y),(13,3))
+        self.assertFalse(self.a.path)
 
     def test_attack_interrupts_bed_activity_and_releases_slot(self):
         self.b.requested_duration=12
@@ -144,6 +146,20 @@ class AlertFoodMedicineTests(unittest.TestCase):
         self.a.stats.hp=99.9
         self.a.passive_drain(self.sim)
         self.assertEqual(self.a.stats.hp,100)
+
+    def test_exposed_passive_rates_change_actual_health_and_mood(self):
+        self.sim.mechanics['starvation_hp_loss']=3
+        self.a.stats.satiety=0
+        self.a.stats.hp=80
+        self.a.passive_drain(self.sim)
+        self.assertEqual(self.a.stats.hp,77)
+        self.a.stats.satiety=50
+        self.a.stats.mood=40
+        self.a.decor_room=200
+        self.sim.mechanics['decor_mood_per_200']=2
+        self.a._start_local('think',self.sim)
+        self.a.tick(self.sim)
+        self.assertGreaterEqual(self.a.stats.mood,42)
 
 
 if __name__=='__main__':unittest.main()

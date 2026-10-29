@@ -39,6 +39,37 @@ class ResidentToolTests(unittest.TestCase):
         self.assertEqual(len(self.a.computer_files),1)
         self.complete(Decision(action='computer',operation='delete',file_id=fid))
         self.assertFalse(self.a.computer_files)
+
+    def test_computer_records_revealed_only_after_explicit_view_at_desk(self):
+        self.a.computer_files=[{'id':'private-1','title':'私人计划','content':'明晚在花园见面'}]
+        self.a.computer_feedback='旧的查看结果：明晚在花园见面'
+        away=brain.build_user_prompt(self.a,[],self.sim.clock)
+        self.assertNotIn('私人计划',away)
+        self.assertNotIn('明晚在花园见面',away)
+        self.a.x,self.a.y=computer_seat(self.a)
+        self.a.computer_feedback=''
+        at_desk=brain.build_user_prompt(self.a,[],self.sim.clock)
+        self.assertNotIn('私人计划',at_desk)
+        self.assertNotIn('明晚在花园见面',at_desk)
+        self.a.decision=Decision(action='computer',operation='list')
+        use_computer(self.sim,self.a,self.a.decision)
+        listed=brain.build_user_prompt(self.a,[],self.sim.clock)
+        self.assertIn('私人计划',listed)
+        self.assertNotIn('明晚在花园见面',listed)
+        self.a.computer_operation_done=False
+        self.a.decision=Decision(action='computer',operation='read',file_id='private-1')
+        use_computer(self.sim,self.a,self.a.decision)
+        self.assertIn('明晚在花园见面',brain.build_user_prompt(self.a,[],self.sim.clock))
+        self.a.scene='town'
+        self.assertNotIn('明晚在花园见面',brain.build_user_prompt(self.a,[],self.sim.clock))
+        self.assertNotIn('私人计划',brain.build_user_prompt(self.b,[],self.sim.clock))
+
+    def test_direct_computer_operation_away_from_desk_does_not_read(self):
+        self.a.computer_files=[{'id':'private-1','title':'私人计划','content':'明晚在花园见面'}]
+        self.a.decision=Decision(action='computer',operation='read',file_id='private-1')
+        use_computer(self.sim,self.a,self.a.decision)
+        self.assertFalse(self.a.computer_feedback)
+        self.assertFalse(self.a.computer_operation_done)
     def test_computer_game_duration_and_desk_no_collision(self):
         for p in self.sim.players:
             self.assertTrue(world.walkable('house',*computer_seat(p)))
@@ -50,6 +81,7 @@ class ResidentToolTests(unittest.TestCase):
         self.assertEqual(self.a.activity_total,12)
         self.assertEqual((self.a.x,self.a.y),computer_seat(self.a))
     def test_computer_completion_is_not_duplicated_in_mid_event_checkpoint(self):
+        self.a.x,self.a.y=computer_seat(self.a)
         self.a.decision=Decision(action='computer',operation='create',content='只存一份')
         use_computer(self.sim,self.a,self.a.decision);use_computer(self.sim,self.a,self.a.decision)
         self.assertEqual(len(self.a.computer_files),1)
@@ -76,7 +108,7 @@ class ResidentToolTests(unittest.TestCase):
         self.a.computer_files=[{'id':'mine','title':'私人的秘密','content':'私有正文'}]
         own=brain.build_user_prompt(self.a,[],self.sim.clock)
         other=brain.build_user_prompt(self.b,[],self.sim.clock)
-        self.assertIn('私人的秘密',own);self.assertNotIn('私人的秘密',other)
+        self.assertNotIn('私人的秘密',own);self.assertNotIn('私人的秘密',other)
         self.assertNotIn('用户可以',own);self.assertNotIn('借钱',own);self.assertNotIn('抢钱',own)
         self.assertIsNone(brain.parse_decision('{"action":"transfer","amount":-3}'))
 
@@ -90,6 +122,7 @@ class ResidentToolTests(unittest.TestCase):
         self.assertNotIn(reason,prompt)
         self.assertEqual(self.a.transactions[0]['reason'],reason)
     def test_full_snapshot_and_recording_include_computers_and_transfers(self):
+        self.a.x,self.a.y=computer_seat(self.a)
         self.a.decision=Decision(action='computer',operation='create',content='永久保存的手记')
         use_computer(self.sim,self.a,self.a.decision)
         instant_action(self.sim,self.a,Decision(action='transfer',target=self.b.name,amount=3))

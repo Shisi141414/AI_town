@@ -225,17 +225,17 @@ def same_place(p1, p2) -> bool:
 TRAVEL_MODES = {
     "walk": {"name": "步行", "speed": 1, "energy": 1.0, "cost": 0.0},
     "bicycle": {"name": "骑行", "speed": 4, "energy": 0.7, "cost": 0.0},
-    "car": {"name": "开车", "speed": 12, "energy": 0.15, "cost": 0.15},
+    "car": {"name": "开车", "speed": 12, "energy": 0.15, "cost": 0.0},
 }
 
 
-def movement_mode(scene, start, end, preference, money=100.0):
+def movement_mode(scene, start, end, preference, money=100.0, car_cost=0.15):
     """车辆只在室外道路上使用；入楼和资金不足时改为步行。"""
     if scene != "town" or preference not in TRAVEL_MODES:
         return "walk"
     if preference == "car":
         road = ("#", "E")
-        if tile(scene, *start) not in road or tile(scene, *end) not in road or money < 0.15:
+        if tile(scene, *start) not in road or tile(scene, *end) not in road or money < car_cost:
             return "walk"
     return preference
 

@@ -13,6 +13,7 @@ class SaveTests(unittest.TestCase):
             store=SaveStore(Path(temp));sid=store.allocate()
             sim=Simulation(memory_dir=store.folder(sid)/'memories');sim.save_id=sid
             sim.spawn_players(2)
+            sim.activity_descriptions['cook']='在厨房；准备晚餐给室友'
             asyncio.run(sim.run_identity_phase())
             p,q=sim.players
             p.gender='女';p.state='moving';p.path=[(9,9),(10,9)];p.target_player=q
@@ -25,6 +26,7 @@ class SaveTests(unittest.TestCase):
             branch=store.allocate();loaded=store.restore(store.current(),branch)
             a,b=loaded.players
             self.assertEqual((loaded.day,loaded.tick,loaded.global_tick),(3,71,311))
+            self.assertEqual(loaded.activity_descriptions['cook'],'在厨房；准备晚餐给室友')
             self.assertEqual(a.path,[(9,9),(10,9)])
             self.assertIs(a.target_player,b)
             self.assertEqual(a.decision.duration_minutes,480)

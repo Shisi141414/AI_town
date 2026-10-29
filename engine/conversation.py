@@ -52,28 +52,31 @@ class Conversation:
     async def advance(self) -> None:
         saved=self.__dict__.copy()
         activity_left=self.a.activity_left
-        phone_rate=max(0,-float((self.a.activity or {}).get('effects',{}).get('money',-50/6))) if self.kind=='phone' else 0
         phone_effects=dict((self.a.activity or {}).get('effects',{})) if self.kind=='phone' else None
+        if phone_effects is not None and 'money' not in self.sim.activity_overrides.get('phone',{}).get('effects',{}):
+            phone_effects['money']=-self.sim.mechanics['phone_fee_per_tick']
+        phone_rate=max(0,-phone_effects.get('money',0)) if phone_effects is not None else 0
         try:
             if self.kind=='phone':
-                due=round(phone_rate*(self.elapsed+1),2)
-                if self.a.stats.money+1e-8 < due-getattr(self.a,'phone_paid',0):
+                if self.a.stats.money+1e-8 < phone_rate:
                     self._end('insufficient_money')
                     return
             await self._advance()
             if self.elapsed>saved['elapsed']:
                 key='love' if self.kind=='love' else 'phone' if self.kind=='phone' else 'chat'
                 from .activities import ACTIVITIES
+                base_effects=(self.a.activity or {}).get('effects',ACTIVITIES[key].get('effects',{}))
                 for speaker,other in ((self.a,self.b),(self.b,self.a)):
-                    for stat,rate in (phone_effects if phone_effects is not None else ACTIVITIES[key].get('effects',{})).items():
-                        if stat!='money':setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
+                    for stat,rate in (phone_effects if phone_effects is not None else base_effects).items():
+                        if stat!='money' or key!='phone':
+                            setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
                     speaker.stats.clamp()
-                    speaker.affinity[other.pid]=min(100,speaker.affinity.get(other.pid,50)+(8 if key=='love' else 4)/6)
+                    affinity_rate=(speaker.activity or {}).get('_joint_affinity_per_tick',(8 if key=='love' else 4)/6)
+                    speaker.affinity[other.pid]=max(0,min(100,speaker.affinity.get(other.pid,50)+affinity_rate))
                 if key=='phone':
-                    due=round(phone_rate*self.elapsed,2)
-                    charge=due-getattr(self.a,'phone_paid',0)
-                    self.a.stats.money=round(self.a.stats.money-charge,2)
-                    self.a.phone_paid=due
+                    self.a.stats.money=round(self.a.stats.money+phone_effects.get('money',0),2)
+                    self.a.stats.clamp()
+                    self.a.phone_paid=round(getattr(self.a,'phone_paid',0)+phone_rate,2)
         except asyncio.CancelledError:
             self.__dict__.update(saved);self.a.activity_left=activity_left
             raise

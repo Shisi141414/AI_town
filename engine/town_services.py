@@ -140,15 +140,22 @@ def register(activities):
 def action_spec(sim,p,key):
  from .activities import ACTIVITIES
  if p.service_spec and p.service_spec.get('_key')==key:return deepcopy(p.service_spec)
+ if key in sim.disabled_activities:return None
+ if key in sim.custom_activities:
+  from .activity_rules import custom_spec,apply
+  return apply(sim,key,custom_spec(sim.custom_activities[key]))
+ if key not in ACTIVITIES:return None
  a=deepcopy(ACTIVITIES[key])
  if key in sim.activity_config:
   a.update(deepcopy(sim.activity_config[key]))
- return a
+ from .activity_rules import apply
+ return apply(sim,key,a)
 
 def prepare(sim,p,d):
  from .activities import ACTIVITIES
  p.service_spec=None;p.service_completed=False
  key=d.action
+ if key in sim.disabled_activities:raise ValueError('该活动已在机制中关闭')
  if key=='build':d.action=key='work'
  if key in DEFS and key!='car':
   code,name,skill,kind=DEFS[key];v=sim.town_config[code][key]
@@ -172,7 +179,8 @@ def prepare(sim,p,d):
    a['effects']['mood']=-sim.mechanics['work_mood_per_hour']/6
   elif kind in ('course','license_course'):
    a['effects']['mood']=-sim.mechanics['study_mood_per_hour']/6
-  p.service_spec=a
+  from .activity_rules import apply
+  p.service_spec=apply(sim,key,a)
  elif key in ('stock','home_treat'):
   skill='economics' if key=='stock' else 'medicine'
   if level(p,skill)<1:raise ValueError(f'需要{SKILLS[skill]}1级')
@@ -182,22 +190,36 @@ def prepare(sim,p,d):
    if target is None or target.scene!='house':raise ValueError('只能为在家的自己或室友治疗')
    if target.illness_severity>level(p,'medicine'):raise ValueError('病情超过当前医学能力，请去诊所')
    if not target.illness_severity and target.stats.hp>=100:raise ValueError('对方目前不需要治疗')
- return action_spec(sim,p,key) if key in ACTIVITIES else None
+ return action_spec(sim,p,key) if key in ACTIVITIES or key in sim.custom_activities else None
 
 def prompt_context(sim,p):
  known_skills=[f'{name}{level(p,key)}级（{p.skills.get(key,0):g}经验）' for key,name in SKILLS.items() if level(p,key)>0]
  lines=['技能：'+('；'.join(known_skills) if known_skills else '暂未掌握技能'),
         '驾照：'+('已有' if p.driver_license else '未取得')]
+ from . import world
  from .world import zone_of
  zone=zone_of(p.scene,p.x,p.y)
- lines.append('小镇场所（名称/代码）：'+'；'.join(f'{name} {code}' for code,name in NAMES.items()))
+ if p.scene=='town':origin=(p.x,p.y);approach=0
+ else:
+  gate=world.nearest_walkable('house',25,12)
+  origin=world.nearest_walkable('town',1,12)
+  approach=abs(p.x-gate[0])+abs(p.y-gate[1])+1
+ def distance(code):
+  tiles=world.find_tiles('town',code)
+  return approach+min((abs(origin[0]-x)+abs(origin[1]-y) for x,y in tiles),default=0)
+ lines.append('小镇场所（名称/代码/距离）：'+'；'.join(f'{name} {code}（距我约{distance(code)}格）' for code,name in NAMES.items()))
  if p.scene=='town':
   for code,name in NAMES.items():
    if not onsite(p,code):continue
    hours=sim.opening_hours[code]
    lines.append(f'{name}营业时间：{hours[0]:02d}:00–{hours[1]:02d}:00')
-   lines.append(f'当前{zone}的项目：'+'；'.join(f'{key} {DEFS[key][1]}' for key in sim.town_config[code] if key!='car'))
-   if code=='S':lines.append('商店商品：'+'、'.join(f'{DEFS[key][1]} {row["price"]:g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods'))
+   visible=[f'{key} {sim.activity_overrides.get(key,{}).get("name",DEFS[key][1])}' for key in sim.town_config[code] if key!='car' and key not in sim.disabled_activities]
+   visible.extend(f'{key} {row["name"]}' for key,row in sim.custom_activities.items() if row['location']=='town:'+code and key not in sim.disabled_activities)
+   lines.append(f'当前{zone}的项目：'+'；'.join(visible))
+   if code=='S':
+    from .activity_rules import catalog as activity_catalog
+    shown=activity_catalog(sim)
+    lines.append('商店商品：'+'、'.join(f'{DEFS[key][1] if key=="car" else shown[key]["name"]} {(row["price"] if key=="car" else shown[key]["cost"]):g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods' and (key=='car' or key in shown and shown[key]['enabled'])))
    break
  if p.info_feedback:lines.append('上次询问所得：'+p.info_feedback)
  lines.append(f'我的股票持仓：{p.stock_shares}份，成本{p.stock_cost:.2f}元')
@@ -206,9 +228,16 @@ def prompt_context(sim,p):
 
 def inspect(sim,p,key):
  if key not in DEFS or key=='car':raise ValueError('请先到场并从当地项目目录选择项目')
+ if key in sim.disabled_activities:raise ValueError('该项目已关闭')
  code,name,skill,kind=DEFS[key]
  if not onsite(p,code):raise ValueError('请先到对应场所查询')
- row=sim.town_config[code][key]
+ from .activity_rules import catalog as activity_catalog
+ configured=activity_catalog(sim)[key]
+ row=dict(sim.town_config[code][key])
+ row['minutes']=configured['duration']*10
+ row['price']=configured['cost']
+ if 'hourly_wage' in row:row['hourly_wage']=configured['effects']['money']*6
+ name=configured['name']
  visible={'minutes':'默认/最低分钟','price':'一次性费用','hourly_wage':'时薪','min_level':'技能等级要求','xp_per_hour':'每小时经验'}
  details='，'.join(f'{label}{row[field]:g}' for field,label in visible.items() if field in row)
  if skill:details+=f'，相关技能{SKILLS[skill]}'
@@ -261,7 +290,7 @@ def step_effects(sim,p,key,eff):
   p.social_activity_tick[key]=sim.global_tick
   code='R' if key=='eat_out' else 'C'
   terms=(p.activity or {}).get('_terms',sim.town_config[code][key])
-  gain=terms.get('affinity_per_hour',4 if key=='eat_out' else 8)/6
+  gain=(p.activity or {}).get('_joint_affinity_per_tick',terms.get('affinity_per_hour',0)/6)
   for other in sim.players:
    if other is not p and other.scene=='town' and world_same(p,other) and (other.activity_key==key or other.social_activity_tick.get(key)==sim.global_tick):
     p.affinity[other.pid]=min(100,p.affinity.get(other.pid,50)+gain)

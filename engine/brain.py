@@ -39,6 +39,7 @@ USER_TEMPLATE = """# 本次决定
 - 地点：{scene_name}·{location}；公共区域装饰度：{decor_common:.0f}
 - 身体：生命{hp:.0f}/100，饱食{satiety:.0f}/100，精力{energy:.0f}/100，心情{mood:.0f}/100；{illness}
 - 金钱：{money:.0f}元；物品：{items}
+- 同住室友：{roommates}
 - 附近室友：{nearby}；我对室友的好感：{affinity}
 - 亲密邀请：{sex_invitation}
 - 出行与车辆：{transport}
@@ -63,8 +64,8 @@ USER_TEMPLATE = """# 本次决定
 ## 行动方法
 - 探索：action=visit 的 target 填场所代码或名称；抵达后用 action=inspect 的 target 填当地项目 key，可询问该项目的时薪、最低时间、学费等明确规则。查询占用一次决策。小镇没有其他参与者。
 - 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
-- 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。action=computer 用 operation=list/create/read/edit/delete；create 填 title、content，read/edit/delete 填 file_id，list/read 可用 offset。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
-- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点通话；话费每小时50元，由拨打者按实际时间支付。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；sex 需双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；sex 需双方靠近）。对方可以拒绝。
+- 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 留空返回信息目录，填目录名或具体名称（如咖啡馆、厨师）查详情。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
+- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点通话；话费每刻{phone_fee_per_tick:g}元，由拨打者按通话刻数支付。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；sex 需双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；sex 需双方靠近）。对方可以拒绝。
 - 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell 和 shares 交易，可能亏损。
 - 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
 - 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。
@@ -107,15 +108,50 @@ def get_system_prompt(config_system: str = "") -> str:
     return config_system.strip() or DEFAULT_SYSTEM_PROMPT
 
 
-def build_user_prompt(p, nearby: list[str], clock: str, decor_common: float = 0.0) -> str:
+def nearby_description(nearby: list) -> str:
+    """只提供可观察到的活动与定性身体状态，不泄露室友数值。"""
+    if not nearby:return '（附近没人）'
+    people=[o for o in nearby if hasattr(o,'stats') and hasattr(o,'pid')]
+    if len(people)!=len(nearby):return '、'.join(str(o) for o in nearby)
+    def activity(o):
+        if getattr(o,'hospitalized',False):return '住院'
+        if getattr(o,'awaiting_admission',False):return '等待救治'
+        if o.state=='doing' and o.activity:return '正在'+o.activity['name']
+        if o.state=='moving':
+            key=getattr(o,'_pending_key','')
+            return '前往'+act.ACTIVITIES[key]['name'] if key in act.ACTIVITIES else '正在出行'
+        return '暂无活动'
+    def condition(o):
+        labels=[]
+        for stat,label in (('hp','虚弱'),('satiety','饥饿'),('energy','劳累'),('mood','沮丧')):
+            value=getattr(o.stats,stat)
+            if value<60:labels.append(('极度' if value<30 else '')+label)
+        if labels:return '、'.join(labels)
+        return '状态良好'
+    entries=[f'{o.name}（{activity(o)}；{condition(o)}）' for o in people]
+    relations=[]
+    for i,a in enumerate(people):
+        for b in people[i+1:]:
+            ab=a.affinity.get(b.pid,50);ba=b.affinity.get(a.pid,50)
+            if max(ab,ba)<20:label='互相仇恨'
+            elif max(ab,ba)<40:label='互相矛盾'
+            elif min(ab,ba)>=80:label='亲密'
+            elif min(ab,ba)>=60:label='友好'
+            else:label='关系一般'
+            relations.append(f'{a.name}与{b.name}：{label}')
+    return '、'.join(entries)+('；室友之间：'+'、'.join(relations) if relations else '')
+
+
+def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) -> str:
     aff = "、".join(f"{getattr(p, 'known_names', {}).get(name, name)}{v:.0f}" for name, v in
                     sorted(p.affinity.items(), key=lambda kv: -kv[1])[:6]) or "（还不认识谁）"
-    nearby_s = "、".join(nearby) if nearby else "（附近没人）"
+    nearby_s = nearby_description(nearby)
+    roommates_s = '、'.join(f'{name}（{gender}）' for name,gender in getattr(p,'known_roommates',[])) or '（暂无）'
     items = "、".join(f"{act.ITEMS[k]['name']}×{v}" for k, v in p.items.items() if v > 0) or "无"
     mem = p.memory.brief(p.world_tick, k=8, query=world.zone_of(p.scene,p.x,p.y)+" "+p.plan)
     from .town_services import NAMES,onsite
     venue_code=next((code for code in NAMES if onsite(p,code)),None)
-    menu = act.activity_menu("any",venue_code)
+    menu = act.activity_menu("any",venue_code,getattr(p,'activity_descriptions',None),getattr(p,'activity_registry',None))
     hospital_note = ""
     if getattr(p, 'hospitalized', False):
         menu = ("【住院中】你正在诊所住院。房费每半天100元，生命每刻按自然恢复的2倍持续恢复，每半天心情+15，饱食与精力保持满值。\n"
@@ -124,17 +160,24 @@ def build_user_prompt(p, nearby: list[str], clock: str, decor_common: float = 0.
                 "- hospital_leave：办理出院（恢复到生命60/饱食80/精力80/心情40的最低水平，不低于现有值）")
         hospital_note = "（住院中，无法进行日常活动）"
     template=getattr(p,'user_prompt_template',None) or USER_TEMPLATE
+    template=template.replace('话费每小时50元','话费每刻{phone_fee_per_tick:g}元')
+    template=template.replace('话费每小时{phone_fee_per_hour:g}元','话费每刻{phone_fee_per_tick:g}元')
     prompt=template.format(
         day=p.day, clock=clock, daypart=daypart(p.hour), name=p.name, gender=p.gender,
         scene_name=world.SCENE_NAMES.get(p.scene, p.scene),
         hp=p.stats.hp, satiety=p.stats.satiety,
         energy=p.stats.energy, mood=p.stats.mood, money=p.stats.money,
         illness=p.health_description + hospital_note, location=world.zone_of(p.scene, p.x, p.y), transport=getattr(p, "transport_context", ""),
-        items=items, nearby=nearby_s, sex_invitation=getattr(p,'sex_invitation','无'), affinity=aff,
+        items=items, roommates=roommates_s, nearby=nearby_s,
+        phone_fee_per_tick=getattr(p,'phone_fee_per_tick',10),
+        sex_invitation=getattr(p,'sex_invitation','无'), affinity=aff,
         decor_common=decor_common, memories=mem, menu=menu,
         computer=computer_context(p),
         town=getattr(p,"town_context",""),
         transactions=json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False))
+    if '{roommates}' not in template and roommates_s!='（暂无）':
+        roster='- 同住室友：'+roommates_s+'\n'
+        prompt=prompt.replace('## 当前情况\n','## 当前情况\n'+roster,1) if '## 当前情况\n' in prompt else roster+prompt
     if getattr(p,'injury_alert',''):
         alert='## 紧急情况\n'+p.injury_alert+'\n\n'
         prompt=prompt.replace('## 输出格式',alert+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+alert
@@ -220,7 +263,7 @@ def _norm_action(raw: str) -> str:
     for k, a in act.ACTIVITIES.items():
         if a["name"] == raw or a["emoji"] == raw:
             return k
-    return ""
+    return raw if re.fullmatch(r'[a-z][a-z0-9_]{1,39}',raw) else ""
 
 
 def _run_in_thread(func, *args):
@@ -264,10 +307,16 @@ async def decide_llm(profile: ApiProfile, model: str, p, nearby: list[str],
             continue
         d=parse_decision(text)
         if d:
+            registry=getattr(p,'activity_registry',act.ACTIVITIES)
+            special={'buy_car','ride','stay_in_car','leave_car','emoji','transfer','inspect','visit','hospital_stay','hospital_leave'}
+            if d.action not in registry and d.action not in special:
+                feedback='\n该活动不在当前可选行动目录，请改选目录中的行动。'
+                last_err=LLMError('模型选择了不可用的行动')
+                continue
             names=set(getattr(p,'known_names',{}).values())|set(getattr(p,'known_names',{}))
-            if act.ACTIVITIES.get(d.action,{}).get('need')=='player' and (not d.target or d.target not in names or d.target in (p.name,p.pid)):
+            if registry.get(d.action,{}).get('need')=='player' and (not d.target or d.target not in names or d.target in (p.name,p.pid)):
                 feedback='\n上次行动需要一位实际存在的室友作为target，请从已知室友中选择或改选单人活动。'
-            elif d.action not in DEFS and act.ACTIVITIES.get(d.action,{}).get('cost',0)>p.stats.money:
+            elif d.action not in DEFS and registry.get(d.action,{}).get('cost',0)>p.stats.money:
                 feedback='\n上次活动费用超过当前余额，请改选负担得起的活动。'
             else:
                 return d

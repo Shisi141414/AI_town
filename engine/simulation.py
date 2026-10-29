@@ -55,9 +55,14 @@ class Simulation:
         from .town_services import defaults
         self.town_config = defaults()
         from .mechanics import DEFAULT_RULES, DEFAULT_HOURS, activity_defaults
+        from .activities import activity_description_defaults
         self.mechanics = dict(DEFAULT_RULES)
         self.opening_hours = {k: v[:] for k, v in DEFAULT_HOURS.items()}
         self.activity_config = activity_defaults()
+        self.activity_descriptions = activity_description_defaults()
+        self.activity_overrides = {}
+        self.disabled_activities = []
+        self.custom_activities = {}
         self.user_prompt_template = ""
         self.meal_quality = 0
         self.market_price = 10.0
@@ -705,13 +710,22 @@ class Simulation:
             for p in idlers:
                 self._apply_rule(p)
 
+    def _observe_nearby(self, observer: Player) -> list[Player]:
+        nearby = [other for other in self.players if other is not observer
+                  and other.scene == observer.scene
+                  and abs(other.x-observer.x)+abs(other.y-observer.y) <= 8]
+        if nearby:
+            observed = brain.nearby_description(nearby)
+            observer.remember(f"第{self.day}天 {self.clock}，我观察到附近室友：{observed}", 4)
+        return nearby
+
     async def _decide_one(self, p: Player) -> None:
         prof = self.profile_for(p.pid)
         if not prof:
             self._apply_rule(p)
             return
         others = [o for o in self.players if o is not p]
-        nearby = [o.name for o in p.nearby_players(others)]
+        nearby = self._observe_nearby(p)
         p.state = "deciding"
         p.decision_status = "等待模型回复"
         self.log("system",f"🧠 {p.name} 正在等待模型决定下一项活动",[p.pid],resident_memory=False)
@@ -720,10 +734,16 @@ class Simulation:
         p.town_context = prompt_context(self,p)
         p.transport_context = self.travel_context(p)
         p.user_prompt_template = self.user_prompt_template
+        p.activity_descriptions = self.activity_descriptions
+        from .activity_rules import registry
+        p.activity_registry = registry(self)
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
         p.sex_invitation=(f'{sender.name}邀请你做爱；若愿意，选择action=sex、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
         p.known_names = {o.pid: o.name for o in self.players}
+        p.known_roommates = [(o.name, o.gender) for o in others]
+        from .activity_rules import catalog as activity_catalog
+        p.phone_fee_per_tick = max(0,-activity_catalog(self)['phone']['effects']['money'])
         model = self.model_of.get(p.pid) or prof.default_model
         try:
             d = await brain.decide_llm(
@@ -754,6 +774,10 @@ class Simulation:
         self.log("system",f"🧠 {p.name}：{status}",[p.pid],resident_memory=False)
 
     def _apply_rule(self, p: Player, depth: int = 0) -> None:
+        from .activity_rules import registry
+        available=registry(self)
+        if depth == 0:
+            self._observe_nearby(p)
         p.injury_alert=''
         if p.vehicle_driver:
             driver = self.by_pid(p.vehicle_driver)
@@ -762,10 +786,15 @@ class Simulation:
                 return
             self.leave_vehicle(p)
         if depth > 3:                         # 防递归：直接原地思考
-            p.begin_activity("think", self)
+            if 'think' in available:p.begin_activity("think", self)
+            else:p.state='idle'
             return
         others = [o for o in self.players if o is not p]
         d = brain.decide_rule(p, p.nearby_players(others), self.hour)
+        if d.action not in available:
+            fallback=next((key for key,a in available.items() if a.get('need') is None and a.get('scene') in ('any',p.scene)),None)
+            if fallback is None:p.state='idle';return
+            d=Decision(action=fallback,reason='选择当前可用活动',source='rule')
         self._apply_decision(p, d, depth)
 
     def _reject_decision(self,p,d,depth):
@@ -782,6 +811,11 @@ class Simulation:
     def _apply_decision(self, p: Player, d: Decision, depth: int = 0) -> None:
         p.requested_duration = None
         key = d.action
+        if key in self.disabled_activities:
+            self._reject_decision(p,d,depth)
+            return
+        if key != 'computer':
+            p.computer_feedback = ''
         # ---- 住院专属动作：住院中只认 stay/leave，其他行动一律视为继续住院 ----
         from . import hospital
         if getattr(p, 'hospitalized', False):
@@ -836,7 +870,8 @@ class Simulation:
             return
         if key == 'phone':
             target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
-            rate=-float(self.activity_config.get('phone',{}).get('effects',act.ACTIVITIES['phone']['effects']).get('money',-50/6))
+            from .activity_rules import catalog as activity_catalog
+            rate=max(0,-activity_catalog(self)['phone']['effects']['money'])
             if not target or target.state not in ('idle','waiting_model') or p._conversation or target._conversation or p.vehicle_driver or target.vehicle_driver or p.car_id or target.car_id:
                 p.info_feedback='请指定一位当前有空、未乘车的室友';p.state='idle';return
             if p.stats.money + 1e-8 < max(0,rate):

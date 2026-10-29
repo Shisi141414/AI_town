@@ -231,7 +231,8 @@ class Player:
             self.x,self.y=sim.free_position("town",2,12,self)
             self.scene = "town"
             self.last_out_tick = self.world_tick
-            sim.log("system", f"🚪 {self.name} 出门去了小镇", [self.name],scope="game")
+            at_home=[p.pid for p in sim.players if p is not self and p.scene=='house']
+            sim.log("social", f"🚪 {self.name} 出门去了小镇", [self.pid,*at_home])
         else:
             sim.drop_passengers(self)
             sim.release_car(self)
@@ -239,7 +240,8 @@ class Player:
             self.x,self.y=sim.free_position("house",24,12,self)
             self.scene = "house"
             self.last_home_tick = self.world_tick
-            sim.log("system", f"🏠 {self.name} 回到家", [self.name],scope="game")
+            at_home=[p.pid for p in sim.players if p is not self and p.scene=='house']
+            sim.log("social", f"🏠 {self.name} 回到家", [self.pid,*at_home])
         # 继续寻路
         if self._final_goal and self._final_scene == self.scene:
             tx, ty = self._final_goal
@@ -253,8 +255,11 @@ class Player:
     # ------------------------------------------------------------- 活动开始
     def begin_activity(self, key: str, sim: "Simulation", target=None) -> bool:
         from .town_services import action_spec
-        a = action_spec(sim,self,key) if key in act.ACTIVITIES else None
+        from .activity_rules import registry
+        a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
+            return False
+        if a.get('_custom') and a.get('need') is None and a.get('scene') not in ('any',self.scene):
             return False
         need = a.get("need", "")
         self.target_player = target
@@ -300,7 +305,7 @@ class Player:
             self._plan_route(sim, self.scene, target.x, target.y, adjacent=True)
             return True
 
-        if key in ("computer", "computer_game", "stock"):
+        if need=='own_computer':
             from .resident_tools import computer_seat
             self._pending_key=key
             self._plan_route(sim,"house",*computer_seat(self))
@@ -318,7 +323,11 @@ class Player:
             return True
 
         # 设施类
-        chars = act.facility_chars(key)
+        chars = need.split(':',1)[1].split('|') if isinstance(need,str) and need.startswith('facility:') else []
+        if need=='own_bedroom':
+            self._pending_key=key
+            self._plan_route(sim,'house',*self.bedroom)
+            return True
         if need == "any_house_common":
             chars = ["L", "D", "K", "a"]
         if chars:
@@ -477,13 +486,16 @@ class Player:
                         side=max(neighbours,key=lambda q:sum(sim.position_free(self,self.scene,q[0]+dx,q[1]+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))))
                         self.path=[side]
                 if not self.path:return
-            # 每格扣除时间预算，避免道路边缘超速或穿墙。
-            budget = 1.0
+            # 室内一次移动在一刻内完成；逐格检查仍负责墙体、家具和角色碰撞。
+            # 室外继续按各出行方式的每刻格数使用时间预算。
+            budget = float('inf') if self.scene == 'house' else 1.0
+            car_fee_paid = False
             while self.path:
                 dest = self.path[0]
                 if abs(dest[0]-self.x)+abs(dest[1]-self.y)!=1 or not sim.position_free(self,self.scene,*dest):break
                 mode = world.movement_mode(self.scene, (self.x, self.y), dest,
-                                           self.travel_mode, self.stats.money)
+                                           self.travel_mode, self.stats.money,
+                                           0 if car_fee_paid else sim.mechanics['car_fuel_per_tick'])
                 car = next((v for v in sim.vehicles if v.id == self.car_id and v.driver_id == self.pid), None)
                 if mode == "car" and (not car or max(abs(car.x-self.x), abs(car.y-self.y)) > 1):
                     mode = "walk"
@@ -498,8 +510,12 @@ class Player:
                 self.blocked_ticks=0
                 self._blocked_cell=None
                 self.transport = mode
-                self.stats.energy -= sim.mechanics.get(mode+'_energy_per_tile',0) if mode!='car' else 0.0125
-                self.stats.money = max(0.0, self.stats.money - spec["cost"])
+                self.stats.energy -= sim.mechanics.get(mode+'_energy_per_tile',0)
+                if mode == 'car' and not car_fee_paid:
+                    self.stats.money = max(0.0, self.stats.money - sim.mechanics['car_fuel_per_tick'])
+                    car_fee_paid = True
+                elif mode != 'car':
+                    self.stats.money = max(0.0, self.stats.money - spec['cost'])
                 if mode == "car":
                     car.x, car.y = self.x, self.y
                 if mode != "car":
@@ -650,6 +666,11 @@ class Player:
                     sim.log("social", f"😤 {self.name} 和 {names} 一起{a['name']}"
                                       f"但关系不睦（效果打折）",
                             [self.name] + [o.name for o in partners])
+        affinity_rate=a.get('_joint_affinity_per_tick',0)
+        if affinity_rate and key not in ('coffee','eat_out'):
+            for other in sim.players:
+                if other is not self and other.activity_key==key and other.scene==self.scene and world.same_place(self,other):
+                    self.affinity[other.pid]=max(0,min(100,self.affinity.get(other.pid,50)+affinity_rate))
 
         # ---- 餐厅吃饭需要家里有饭（做饭后 60 tick 内有效）----
         if key == "eat" and not self.eating_from_inventory and sim.meal_until < self.world_tick:
@@ -665,7 +686,7 @@ class Player:
         self.stats.clamp()
 
         # ---- 装饰度心情加成 ----
-        decor_bonus = (self.decor_room + sim.decor_common) / 200.0
+        decor_bonus = (self.decor_room + sim.decor_common) / 200.0 * sim.mechanics['decor_mood_per_200']
         if decor_bonus > 0:
             self.stats.mood = min(100.0, self.stats.mood + decor_bonus)
 
@@ -754,14 +775,14 @@ class Player:
             if v:
                 setattr(self.stats, k, getattr(self.stats, k) + v)
         if self.stats.satiety <= 0:
-            self.stats.hp += act.STARVE_HP_DAMAGE
+            self.stats.hp -= sim.mechanics['starvation_hp_loss']
         if self.stats.satiety > sim.mechanics['high_satiety_hp_threshold']:
             self.stats.hp = min(100.0, self.stats.hp + sim.mechanics['high_satiety_hp_gain'])
         mood_delta = 0.0
         if self.illness_severity:
             mood_delta -= sim.mechanics['illness_mood_drain']
         if self.stats.energy < sim.mechanics['low_energy_threshold']:
-            mood_delta -= (sim.mechanics['low_energy_threshold'] - self.stats.energy) / 10.0
+            mood_delta -= (sim.mechanics['low_energy_threshold'] - self.stats.energy) * sim.mechanics['low_energy_mood_per_point']
         for other in self.same_zone_players(sim):
             mood_delta += act.relationship_mood_per_tick(self.affinity.get(other.pid, 50.0),sim.mechanics)
         self.stats.mood += mood_delta

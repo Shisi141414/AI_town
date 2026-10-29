@@ -64,7 +64,10 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 .mechanics-scroll{max-height:68vh;overflow:auto;padding:3px 8px 14px 3px}
 .mechanics-scroll>details{border:1px solid #c8bea0;background:#fffbf1;margin:8px 0;padding:10px}
 .mechanics-scroll>details>summary{font-weight:bold;cursor:pointer;color:#50694a}
+.mechanics-rules>details{border:1px solid #c8bea0;background:#fffbf1;margin:8px 0;padding:10px}
+.mechanics-rules>details>summary{font-weight:bold;cursor:pointer;color:#50694a}
 .mechanics-dialog textarea{display:block;width:100%;min-height:140px;box-sizing:border-box;resize:vertical;margin:5px 0 15px;background:#fffef8;color:#333;border:1px solid #a8a88d;padding:8px;white-space:pre-wrap}
+.mechanics-action-description textarea{min-height:68px}
 #mechanicsPreview{min-height:260px}
 .mechanic-hour,.mechanic-building{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px;border-bottom:1px solid #e0d7bd}
 .mechanic-hour label{max-width:130px}

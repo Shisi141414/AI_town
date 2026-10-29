@@ -303,17 +303,26 @@ async def mechanics_view():
     from engine.town_services import catalog,prompt_context
     from engine.mechanics import activity_defaults
     from engine.activities import ACTIVITIES
+    from engine.activity_rules import catalog as activity_catalog
     resident=sim.players[0] if sim.players else None
     sample=''
     if resident:
         resident.town_context=prompt_context(sim,resident)
         resident.transport_context=sim.travel_context(resident)
         resident.user_prompt_template=sim.user_prompt_template
-        nearby=[o.name for o in resident.nearby_players([o for o in sim.players if o is not resident])]
+        resident.activity_descriptions=sim.activity_descriptions
+        from engine.activity_rules import registry
+        resident.activity_registry=registry(sim)
+        resident.known_roommates=[(o.name,o.gender) for o in sim.players if o is not resident]
+        resident.phone_fee_per_tick=max(0,-activity_catalog(sim)['phone']['effects']['money'])
+        nearby=[o for o in sim.players if o is not resident and o.scene==resident.scene
+                and abs(o.x-resident.x)+abs(o.y-resident.y)<=8]
         try:sample=brain.build_user_prompt(resident,nearby,sim.clock,sim.decor_common)
         except (ValueError,KeyError) as exc:sample=f'提示词模板错误：{exc}'
     return {'rules':sim.mechanics,'hours':sim.opening_hours,'activities':sim.activity_config,
-            'activity_names':{key:ACTIVITIES[key]['name'] for key in activity_defaults()},
+            'activity_catalog':activity_catalog(sim),
+            'activity_descriptions':sim.activity_descriptions,
+            'activity_names':{key:ACTIVITIES[key]['name'] for key in sim.activity_descriptions},
             'buildings':catalog(sim),'prompt_template':sim.user_prompt_template or brain.USER_TEMPLATE,
             'system_prompt':brain.get_system_prompt(sim.system_prompt),'prompt_preview':sample,
             'resident_name':resident.name if resident else ''}
@@ -323,12 +332,15 @@ class MechanicsUpdate(BaseModel):
     rules: dict
     hours: dict
     activities: dict
+    activity_catalog: dict | None = None
+    activity_descriptions: dict | None = None
     prompt_template: str
 
 
 @app.put('/api/mechanics')
 async def mechanics_update(update:MechanicsUpdate):
-    from engine.mechanics import validate_rules,validate_hours,validate_activities
+    from engine.mechanics import validate_rules,validate_hours,validate_activities,validate_activity_descriptions
+    from engine.activity_rules import validate_catalog
     from string import Formatter
     async with _control_lock:
         if sim.running or sim.identity_phase or sim._tick_lock.locked() or (_identity_task and not _identity_task.done()):
@@ -336,20 +348,25 @@ async def mechanics_update(update:MechanicsUpdate):
         try:
             rules=validate_rules(update.rules);hours=validate_hours(update.hours)
             activities=validate_activities(update.activities)
+            descriptions=validate_activity_descriptions(update.activity_descriptions if update.activity_descriptions is not None else sim.activity_descriptions)
+            overrides,disabled,custom=(validate_catalog(sim,update.activity_catalog) if update.activity_catalog is not None else
+                                       (sim.activity_overrides,set(sim.disabled_activities),sim.custom_activities))
+            if update.activity_catalog is not None:
+                descriptions=validate_activity_descriptions({key:row['description'] for key,row in update.activity_catalog.items() if row.get('builtin')})
             template=update.prompt_template.strip()
             if len(template)>20000:raise ValueError('提示词模板不能超过20000字')
-            allowed={'day','clock','daypart','name','gender','scene_name','hp','satiety','energy','mood','money','illness','location','transport','items','nearby','sex_invitation','affinity','decor_common','memories','menu','computer','town','transactions'}
+            allowed={'day','clock','daypart','name','gender','roommates','phone_fee_per_tick','scene_name','hp','satiety','energy','mood','money','illness','location','transport','items','nearby','sex_invitation','affinity','decor_common','memories','menu','computer','town','transactions'}
             fields={field for _,field,_,_ in Formatter().parse(template) if field}
             if not fields <= allowed or not {'town','menu','memories'} <= fields:
                 raise ValueError('提示词只能使用原有占位符，且必须保留 {town}、{menu}、{memories}')
         except (ValueError,KeyError) as exc:raise HTTPException(400,str(exc))
-        old=(sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template)
-        sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template=rules,hours,activities,template
+        old=(sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template)
+        sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=rules,hours,activities,descriptions,overrides,list(disabled),custom,template
         try:save_store().checkpoint(sim,'修改机制')
         except Exception:
-            sim.mechanics,sim.opening_hours,sim.activity_config,sim.user_prompt_template=old
+            sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=old
             raise
-        sim.record('configuration',{'mechanics':rules,'opening_hours':hours,'activity_config':activities,'user_prompt_template':template})
+        sim.record('configuration',{'mechanics':rules,'opening_hours':hours,'activity_config':activities,'activity_descriptions':descriptions,'activity_overrides':overrides,'disabled_activities':list(disabled),'custom_activities':custom,'user_prompt_template':template})
         sim.log('system','机制参数已更新',resident_memory=False)
         return {'ok':True}
 

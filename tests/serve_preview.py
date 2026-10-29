@@ -21,8 +21,9 @@ async def preview_startup():
     await original_startup()
     if args.tools:
         from engine.models import Decision
-        from engine.resident_tools import instant_action,use_computer
+        from engine.resident_tools import instant_action,use_computer,computer_seat
         a,b=server.sim.players[:2]
+        a.x,a.y=computer_seat(a)
         a.decision=Decision(action='computer',operation='create',title='想记住的约定',content='明天下午和室友一起种花。\n先准备好种子，再去田园。\n<script>这段文字不会执行</script>')
         use_computer(server.sim,a,a.decision)
         instant_action(server.sim,a,Decision(action='emoji',target=b.name,emoji='😊'))

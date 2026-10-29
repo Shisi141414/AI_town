@@ -246,15 +246,20 @@
   <div class="building-heading"><h3>游戏机制</h3><button class="btn" id="closeMechanics">关闭</button></div>
   <p id="mechanicsHint" class="hint"></p>
   <div class="mechanics-scroll">
-    <details open><summary>基础消耗、心情、移动与文学概率</summary><div id="mechanicsRules" class="building-fields"></div></details>
+    <div id="mechanicsRules" class="mechanics-rules"></div>
     <details><summary>各场所营业时间</summary><div id="mechanicsHours" class="building-fields"></div></details>
-    <details><summary>所有室内与独立活动</summary><div id="mechanicsActivities"></div></details>
+    <details><summary>所有活动（室内、场所、独立）</summary>
+      <p class="hint">每刻效果均列出生命、饱食、精力、心情、金钱；无影响为 0。内置活动的地点与专属功能绑定，关闭后可重新启用。</p>
+      <div class="building-fields"><label>新活动代码<input id="newActivityCode" placeholder="例如 read_diary" maxlength="40"></label><label>名称<input id="newActivityName" placeholder="例如 写日记" maxlength="40"></label><button class="btn" id="addMechanicsActivity" type="button">新建活动</button></div>
+      <div id="mechanicsActivities"></div>
+    </details>
     <details><summary>所有建筑服务、课程、岗位与商品</summary><div id="mechanicsBuildings"></div></details>
     <details><summary>当前发送给模型的提示词</summary>
       <p class="hint">下方是首位居民本次决策的完整用户提示词预览；系统提示词另列。实际内容随其位置、记忆、状态而变化。暂停后可编辑用户提示词格式，保留占位符。</p>
       <label>系统提示词（请到“设置”修改）<textarea id="mechanicsSystem" readonly></textarea></label>
       <label>实际用户提示词预览 <span id="mechanicsResident"></span><textarea id="mechanicsPreview" readonly></textarea></label>
       <label>用户提示词格式<textarea id="mechanicsTemplate"></textarea></label>
+      <p class="hint">模型看到的活动描述可在上方“所有活动”中逐项修改。</p>
     </details>
   </div>
   <button class="btn primary" id="saveMechanics">保存机制</button>
@@ -264,6 +269,6 @@
 <script src="/static/pixel-scene.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/town-buildings.js"></script>
-<script src="/static/mechanics.js?v=20261028-hp-regen"></script>
+<script src="/static/mechanics.js?v=20261029-unified-activities"></script>
 </body>
 </html>

@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','user_prompt_template','meal_quality','market_price','market_last_tick')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','user_prompt_template','meal_quality','market_price','market_last_tick')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -138,9 +138,20 @@ class SaveStore:
         sim.town_config=merge_parameters(sim.town_config)
         from .mechanics import DEFAULT_RULES,DEFAULT_HOURS,activity_defaults
         sim.mechanics={**DEFAULT_RULES,**{k:v for k,v in getattr(sim,'mechanics',{}).items() if k in DEFAULT_RULES}}
+        if getattr(sim,'user_prompt_template',''):
+            sim.user_prompt_template=sim.user_prompt_template.replace('话费每小时50元','话费每刻{phone_fee_per_tick:g}元').replace('话费每小时{phone_fee_per_hour:g}元','话费每刻{phone_fee_per_tick:g}元')
         sim.opening_hours={**DEFAULT_HOURS,**getattr(sim,'opening_hours',{})}
         defaults_activity=activity_defaults()
         sim.activity_config={**defaults_activity,**{key:value for key,value in getattr(sim,'activity_config',{}).items() if key in defaults_activity}}
+        from .activities import activity_description_defaults
+        default_descriptions=activity_description_defaults()
+        sim.activity_descriptions={**default_descriptions,**{key:value for key,value in getattr(sim,'activity_descriptions',{}).items() if key in default_descriptions}}
+        sim.activity_overrides=getattr(sim,'activity_overrides',{})
+        sim.disabled_activities=list(getattr(sim,'disabled_activities',[]))
+        sim.custom_activities=getattr(sim,'custom_activities',{})
+        # 旧存档的电话费曾混在活动效果中，现统一由基础机制结算。
+        if 'phone' in sim.activity_config:
+            sim.activity_config['phone']['effects'].pop('money',None)
         for p in sim.players:
             if p._pending_key=='game':
                 p._pending_key='';p.interaction_slot=None;p.path=[];p.state='idle'

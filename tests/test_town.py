@@ -49,17 +49,42 @@ class EngineTests(unittest.TestCase):
         p.passive_drain(self.sim)
         self.assertEqual((p.x, p.y), (14, 12))
         self.assertEqual(p.stats.satiety, hunger)
-        self.assertAlmostEqual(money - p.stats.money, 1.8)
+        self.assertEqual(money - p.stats.money, 2)
         self.assertEqual(self.sim.vehicles[0].x, 14)
+
+    def test_car_one_tile_still_pays_once_for_the_tick(self):
+        p=self.on_road()
+        self.sim.set_travel_mode(p,'car')
+        p._plan_route(self.sim,'town',3,12)
+        before=p.stats.money
+        p.tick(self.sim)
+        self.assertEqual((p.x,p.y),(3,12))
+        self.assertEqual(before-p.stats.money,2)
 
     def test_indoor_always_walks(self):
         self.sim.set_travel_mode(self.p, "car")
         self.p.x, self.p.y = 8, 12
         self.p._plan_route(self.sim, "house", 15, 12)
         self.p.tick(self.sim)
-        self.assertLessEqual(abs(self.p.x-8)+abs(self.p.y-12),3)
+        self.assertEqual((self.p.x,self.p.y),(15,12))
         self.assertTrue(world.walkable("house",self.p.x,self.p.y))
         self.assertEqual(self.p.transport, "walk")
+
+    def test_any_reachable_indoor_destination_arrives_in_one_tick(self):
+        p=self.p
+        for i,other in enumerate(self.sim.players[1:]):
+            other.scene,other.x,other.y='town',2+i,12
+        starts=[world.BEDROOM_ANCHORS[0],world.BEDROOM_ANCHORS[-1],(22,5),(23,22)]
+        goals=[world.BEDROOM_ANCHORS[-1],(22,5),(23,22),world.BEDROOM_ANCHORS[0]]
+        for start,goal in zip(starts,goals):
+            with self.subTest(start=start,goal=goal):
+                p.scene='house';p.x,p.y=self.sim.free_position('house',*start,p)
+                destination=self.sim.free_position('house',*goal,p)
+                p._plan_route(self.sim,'house',*destination)
+                self.assertTrue(p.path)
+                p.tick(self.sim)
+                self.assertEqual((p.x,p.y),destination)
+                self.assertTrue(self.sim.position_free(p,'house',p.x,p.y))
 
     def test_shared_car_is_exclusive_and_parking_has_location(self):
         a, b = self.sim.players[:2]

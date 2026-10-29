@@ -44,8 +44,9 @@ class RandomEvents:
                 else:
                     severity = p.illness_severity
                     # 每次疾病累计伤害很小，不会单独导致生命归零；原有生存规则不变。
-                    p.stats.hp = max(1, p.stats.hp-{1:0.02, 2:0.06, 3:0.12}[severity]) if p.stats.hp > 1 else p.stats.hp
-                    p.stats.energy = max(0, p.stats.energy-0.02*severity)
+                    hp_loss={1:'disease_hp_loss_mild',2:'disease_hp_loss_moderate',3:'disease_hp_loss_severe'}[severity]
+                    p.stats.hp = max(1, p.stats.hp-sim.mechanics[hp_loss]) if p.stats.hp > 1 else p.stats.hp
+                    p.stats.energy = max(0, p.stats.energy-sim.mechanics['disease_energy_loss_per_level']*severity)
                     if now % 12 == 0 and severity < 3 and self.rng.random() < sim.mechanics['disease_worsen_chance']:
                         p.illness_severity += 1
                         sim.log('random', f'🌡 {p.name} 的{p.illness_name}加重为{SEVERITY_NAMES[p.illness_severity]}', [p.pid])
