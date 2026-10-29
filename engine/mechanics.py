@@ -18,9 +18,11 @@ DEFAULT_RULES = {
     'walk_energy_per_tile': .65, 'bicycle_energy_per_tile': .35,
     'car_energy_per_tile': .0125, 'car_fuel_per_tick': 2.0,
     'phone_fee_per_tick': 10.0,
+    'dialogue_energy_per_round': 0.15,   # 对话每轮双方精力消耗
     'literature_mood_chance_per_level': .1, 'literature_mood_bonus': 2.0,
     'disease_daily_chance': .02, 'affinity_daily_chance': .04,
     'disease_worsen_chance': .03,
+    'affinity_decisions_per_tick': 1,
     'positive_affinity_threshold': 60, 'positive_mood_at_threshold': 2,
     'positive_mood_at_80': 6, 'negative_affinity_threshold': 30,
     'negative_mood_at_threshold': 2, 'negative_mood_at_0': 5,
@@ -52,6 +54,8 @@ def validate_rules(values):
     for key, value in values.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValueError(f'{key} 必须为有限数字')
+        if key=='affinity_decisions_per_tick' and (type(value) is not int or not 0<=value<=5):
+            raise ValueError('每刻好感自主判断额度应为0～5次整数')
         limit = 1 if 'chance' in key else 24 if key.endswith('speed') else 1440 if key.endswith('ticks') else 5000 if key.startswith('hospital') else 100
         if not 0 <= value <= limit:
             raise ValueError(f'{key} 超出范围 0～{limit}')

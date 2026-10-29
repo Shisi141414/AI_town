@@ -155,12 +155,15 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
             remain = max(0, min(p.meal_expiry[:v]) - p.world_tick)
             parts.append(f"{act.ITEMS[k]['name']}×{v}（{remain}刻后过期）")
         else:
-            parts.append(f"{act.ITEMS[k]['name']}×{v}")
+            item=act.ITEMS.get(k)
+            if item is None:
+                item={'name':getattr(p,'shop_product_names',{}).get(k,k)}
+            parts.append(f"{item['name']}×{v}")
     items = "、".join(parts) or "无"
     mem = p.memory.brief(p.world_tick, k=8, query=world.zone_of(p.scene,p.x,p.y)+" "+p.plan)
     from .town_services import NAMES,onsite
     venue_code=next((code for code in NAMES if onsite(p,code)),None)
-    menu = act.activity_menu("any",venue_code,getattr(p,'activity_descriptions',None),getattr(p,'activity_registry',None))
+    menu = act.activity_menu(p.scene,venue_code,getattr(p,'activity_descriptions',None),getattr(p,'activity_registry',None))
     hospital_note = ""
     if getattr(p, 'hospitalized', False):
         menu = ("【住院中】你正在诊所住院。房费每半天100元，生命每刻按自然恢复的2倍持续恢复，每半天心情+15，饱食与精力保持满值。\n"
@@ -304,13 +307,18 @@ async def decide_llm(profile: ApiProfile, model: str, p, nearby: list[str],
                      clock: str, system_prompt: str, temperature: float,
                      timeout: float, decor_common: float = 0.0, progress=None) -> Decision:
     user=build_user_prompt(p,nearby,clock,decor_common)
+    p.last_system_prompt=system_prompt
+    p.last_user_prompt=user
+    p.last_raw_reply=''
     feedback=''
     last_err=None
     for attempt in range(3):
         if progress:progress(f"等待模型回复（第{attempt+1}/3次，每次最多{timeout:.0f}秒）")
         try:
+            p.last_user_prompt=user+feedback
             text=await _run_in_thread(chat,profile,model,system_prompt,
                 user+feedback,temperature,2048+attempt*1024,timeout)
+            p.last_raw_reply=text
         except LLMError as exc:
             last_err=exc
             if not exc.retryable:raise
@@ -325,7 +333,7 @@ async def decide_llm(profile: ApiProfile, model: str, p, nearby: list[str],
                 last_err=LLMError('模型选择了不可用的行动')
                 continue
             names=set(getattr(p,'known_names',{}).values())|set(getattr(p,'known_names',{}))
-            if registry.get(d.action,{}).get('need')=='player' and (not d.target or d.target not in names or d.target in (p.name,p.pid)):
+            if (registry.get(d.action,{}).get('_target_mode')=='required' or registry.get(d.action,{}).get('need')=='player') and (not d.target or d.target not in names or d.target in (p.name,p.pid)):
                 feedback='\n上次行动需要一位实际存在的室友作为target，请从已知室友中选择或改选单人活动。'
             elif d.action not in DEFS and registry.get(d.action,{}).get('cost',0)>p.stats.money:
                 feedback='\n上次活动费用超过当前余额，请改选负担得起的活动。'
@@ -379,6 +387,26 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
         v = int(m.group(0))
         return max(-5, min(5, v))
     except Exception:                        # noqa: BLE001
+        return 0
+
+
+async def affinity_tick_llm(profile: ApiProfile, model: str, actor, other, timeout: float = 20.0) -> int:
+    """每刻给一个有限的自主好感判断机会；只提供自己的经历。"""
+    system='你扮演小镇居民。根据自己的经历决定这一刻对一位室友的好感变化，只输出 -1、0 或 1。'
+    prompt=(f'我是{actor.name}，第{actor.day}天。'
+            f'我对{other.name}的好感是{actor.affinity.get(other.pid,50):.0f}/100。'
+            f'我正在{actor.activity["name"] if actor.activity else actor.plan or "休息"}。\n'
+            f'我的相关记忆：\n{actor.memory.brief(250)}\n'
+            '只根据这些已知信息回答 -1、0 或 1；没有新理由时回答 0。')
+    actor.last_system_prompt=system
+    actor.last_user_prompt=prompt
+    actor.last_raw_reply=''
+    try:
+        reply=await _run_in_thread(chat,profile,model,system,prompt,0.4,8,timeout)
+        actor.last_raw_reply=reply
+        match=re.search(r'(?<!\d)[+-]?[01](?!\d)',reply.strip())
+        return int(match.group(0)) if match else 0
+    except Exception:                         # noqa: BLE001
         return 0
 
 

@@ -23,7 +23,7 @@ function toast(msg, ok=true) {showEventPopup({scope:'user',text:msg},ok);}
 /* ================= 场景与地图 ================= */
 let curScene = "house";
 let MAPS = {house: null, town: null};      // rows
-let townConfig=null, marketPrice=10, stocks={};
+let townConfig=null, marketPrice=10, stocks={}, shopProducts={};
 let players = [], vehicles = [], selectedPid = null, bubbles = [];
 let decorCommon = 0, identityPhase = false;
 
@@ -90,7 +90,7 @@ function renderPlayers() {
       return `<div class="bar"><label>${label}</label><div class="track"><div class="fill" style="width:${pct}%;background:${color}"></div></div><span class="val">${v.toFixed(k === "money" ? 2 : 0)}</span></div>`;
     }).join("");
     const items = Object.entries(p.items||{}).filter(([,v])=>v>0)
-      .map(([k,v]) => ({flower:"💐",plant:"🪴",meal:"🍱",medicine:"💊"}[k]+"×"+v+(k==="meal"&&(p.meal_expiry||[]).length?`(剩${Math.min(...p.meal_expiry.slice(0,v))}刻)`:""))).join(" ");
+      .map(([k,v]) => esc(({flower:"💐",plant:"🪴",meal:"🍱",medicine:"💊"}[k]||shopProducts['buy_'+k.slice(5)]?.emoji||k)+"×"+v)+(k==="meal"&&(p.meal_expiry||[]).length?`(剩${Math.min(...p.meal_expiry.slice(0,v))}刻)`:"")).join(" ");
     const decor = (p.decor_room||0) > 0 ? ` · 🌸装饰${p.decor_room.toFixed(0)}` : "";
     const doing = p.activity
       ? `<div class="doing">${esc(p.activity_emoji)} 正在<b>${esc(p.activity)}</b> · 剩余${p.activity_minutes_left||0}分钟${p.target_name ? " → " + esc(p.target_name) : ""}</div>`
@@ -108,6 +108,7 @@ function renderPlayers() {
       <details class="resident-computer" data-open-key="computer-${esc(p.pid)}" ${opened.has('computer-'+p.pid)?'open':''}><summary>💻 ${esc(p.name)}的电脑 · ${(p.computer_files||[]).length}篇记录 <small>只读</small></summary>
       ${(p.computer_files||[]).map(f=>`<details data-open-key="file-${esc(p.pid)}-${esc(f.id)}" ${opened.has('file-'+p.pid+'-'+f.id)?'open':''}><summary>${esc(f.title)}</summary><pre class="computer-content">${esc(f.content)}</pre></details>`).join('')||'<p class="hint">还没有主动记录</p>'}</details>
       <details class="resident-transfers" data-open-key="money-${esc(p.pid)}" ${opened.has('money-'+p.pid)?'open':''}><summary>资金往来 · ${(p.transactions||[]).length}笔</summary>${[...(p.transactions||[])].reverse().map(t=>{const amt=Number.isFinite(Number(t.amount))?Number(t.amount).toFixed(2):""+(t.delta??"?");const from=t.from||"我",to=t.to||"诊所";return `<p class="hint">第${t.day??"?"}天 ${esc(t.clock??"")} · ${esc(from)} → ${esc(to)} · ${amt}元<br>${esc(t.actor??"诊所")}：${esc(t.reason||"")}</p>`}).join('')||'<p class="hint">暂无资金往来</p>'}</details>
+      <details class="resident-computer" data-open-key="prompt-${esc(p.pid)}" ${opened.has('prompt-'+p.pid)?'open':''}><summary>🧠 最近一次模型提示词与原始回复</summary><details><summary>系统提示词</summary><pre class="computer-content">${esc(p.last_system_prompt||'尚未发送')}</pre></details><details><summary>用户提示词</summary><pre class="computer-content">${esc(p.last_user_prompt||'尚未发送')}</pre></details><details><summary>原始回复</summary><pre class="computer-content">${esc(p.last_raw_reply||'尚未收到')}</pre></details></details>
       <div class="hint">${esc(p.illness || "健康")} · 记忆 ${p.memory_counts?.["1"]||0} / ${p.memory_counts?.["2"]||0} / ${p.memory_counts?.["3"]||0}</div>
       <div class="belong">${sceneTag} ${esc(p.home)}${decor}${items ? " · " + items : ""}${p.model ? ` · <span title="${esc(p.model)}">${esc(p.model)}</span>` : ""}</div>
     </div>`;
@@ -229,7 +230,7 @@ function connectWS() {
     if (d.type === "tick") {
       $("recordingTag").textContent=d.recording?"● 自动录制中":"○ 尚未录制";
       if(d.maps) MAPS = d.maps;
-      townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;
+      townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;shopProducts=d.shop_products||shopProducts;
       window.refreshBuildingLock?.(d.running||d.identity_phase);
       players = d.players; vehicles = d.vehicles || [];
       bubbles=players.filter(p=>p.speech).map(p=>({name:p.name,text:p.speech,until:Date.now()+3500}));
@@ -610,7 +611,7 @@ async function refreshState() {
   if(replayMode)return;
   const d = await jget(`${API}/state`);
   $("recordingTag").textContent=d.recording?"● 自动录制中":"○ 尚未录制";
-  townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;
+  townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;shopProducts=d.shop_products||shopProducts;
   window.refreshBuildingLock?.(d.running||d.identity_phase);
   players = d.players; vehicles = d.vehicles || []; decorCommon = d.decor_common;
   identityPhase = d.identity_phase;
@@ -708,7 +709,7 @@ async function showReplayFrame(index){
   replayCanContinue=!!d.can_continue;$("btnContinueReplay").disabled=!replayCanContinue;
   $("btnContinueReplay").title=replayCanContinue?"从当前帧的完整上下文创建新存档":"此旧录制缺少完整上下文，可从世界存档保存位置继续";
   replayIndex=d.index;replayTotal=d.total;
-  const f=d.frame;townConfig=f.town_config||null;marketPrice=f.market_price??10;stocks=f.stocks||stocks;window.refreshBuildingLock?.(true);MAPS=f.maps;players=f.players;vehicles=f.vehicles||[];decorCommon=f.decor_common;identityPhase=false;
+  const f=d.frame;townConfig=f.town_config||null;marketPrice=f.market_price??10;stocks=f.stocks||stocks;shopProducts=f.shop_products||{};window.refreshBuildingLock?.(true);MAPS=f.maps;players=f.players;vehicles=f.vehicles||[];decorCommon=f.decor_common;identityPhase=false;
   allEvents=[...(f.events||[])].reverse();bubbles=players.filter(p=>p.speech).map(p=>({name:p.name,text:p.speech,until:Date.now()+3500}));
   $("recordingTag").textContent="▶ 本地档案";
   $("clockbox").textContent=`第${f.day}天 ${f.clock}`;$("modeTag").textContent="只读回放 · 实时世界已暂停";

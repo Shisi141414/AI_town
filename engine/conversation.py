@@ -49,6 +49,7 @@ class Conversation:
         self.waiting_on: "Player | None" = self.a  # 正在说话的人
         self.followed = 0             # 被追赶次数
         self._billed_rounds = 0       # 电话已计费轮数
+        self._effect_ticks = 0
         self.ended_reason = ""        # natural / leave / follow_rejected / max
 
     # ------------------------------------------------------------ 驱动
@@ -62,6 +63,9 @@ class Conversation:
     async def advance(self) -> None:
         saved=self.__dict__.copy()
         activity_left=self.a.activity_left
+        key='love' if self.kind=='love' else 'phone' if self.kind=='phone' else 'chat'
+        from .activities import ACTIVITIES
+        contract=self.a.activity or ACTIVITIES[key]
         try:
             if self.kind=='phone':
                 fee=self._phone_fee_per_round()
@@ -69,6 +73,13 @@ class Conversation:
                     self._end('insufficient_money')
                     return
             await self._advance()
+            # 对话略微消耗精力（每轮双方各扣一点，机制面板可调）
+            if self.kind in ('chat', 'follow', 'phone') and self.turn_count>getattr(self,'_energy_rounds',0):
+                self._energy_rounds=self.turn_count
+                cost=self.sim.mechanics.get('dialogue_energy_per_round',0.15)
+                for q in (self.a,self.b):
+                    q.stats.energy=max(0.0,q.stats.energy-cost)
+                    q.stats.clamp()
             # 电话：每完成一轮收一轮话费；无数值增减、无固定好感变化
             if self.kind=='phone' and self.turn_count>getattr(self,'_billed_rounds',0):
                 self._billed_rounds=self.turn_count
@@ -76,16 +87,19 @@ class Conversation:
                 self.a.stats.money=round(max(0.0,self.a.stats.money-fee),2)
                 self.a.stats.clamp()
                 self.a.phone_paid=round(getattr(self.a,'phone_paid',0)+fee,2)
-            if self.elapsed>saved['elapsed'] and self.kind=='love':
-                key='love'
-                from .activities import ACTIVITIES
-                base_effects=(self.a.activity or {}).get('effects',ACTIVITIES[key].get('effects',{}))
+            earned=self.turn_count//10
+            while self._effect_ticks<earned:
+                self._effect_ticks+=1
                 for speaker,other in ((self.a,self.b),(self.b,self.a)):
-                    for stat,rate in base_effects.items():
+                    for stat,rate in contract.get('effects',{}).items():
+                        if key=='phone' and stat=='money' and rate<=0:continue
                         setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
                     speaker.stats.clamp()
-                    affinity_rate=(speaker.activity or {}).get('_joint_affinity_per_tick',8/6)
-                    speaker.affinity[other.pid]=max(0,min(100,speaker.affinity.get(other.pid,50)+affinity_rate))
+                    gain=contract.get('_joint_affinity_per_tick',8/6 if key=='love' else 0)
+                    if gain:speaker.affinity[other.pid]=max(0,min(100,speaker.affinity.get(other.pid,50)+gain))
+                for owner,other,field in ((self.a,self.b,'_self_affinity_per_tick'),(self.b,self.a,'_target_affinity_per_tick')):
+                    gain=contract.get(field,0)
+                    if gain:owner.affinity[other.pid]=max(0,min(100,owner.affinity.get(other.pid,50)+gain))
         except asyncio.CancelledError:
             self.__dict__.update(saved);self.a.activity_left=activity_left
             raise
@@ -247,6 +261,10 @@ class Conversation:
             self.sim.conversations.remove(self)
         except ValueError:
             pass
+        # 记录对话结束时刻（冷却用，防连聊堵门）
+        if self.kind in ('chat', 'follow'):
+            pair='|'.join(sorted((self.a.pid,self.b.pid)))
+            self.sim._dialogue_cooldown[pair]=self.sim.global_tick
         # 双方解除对话状态
         for p in (self.a, self.b):
             if p._conversation is self:

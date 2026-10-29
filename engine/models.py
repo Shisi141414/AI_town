@@ -71,6 +71,9 @@ class PlayerSnapshot(BaseModel):
     computer_files: list[dict] = Field(default_factory=list)
     transactions: list[dict] = Field(default_factory=list)
     decision_status: str = ""
+    last_system_prompt: str = ""
+    last_user_prompt: str = ""
+    last_raw_reply: str = ""
 
 
 class Vehicle(BaseModel):

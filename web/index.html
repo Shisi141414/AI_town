@@ -240,6 +240,8 @@
   <div class="building-heading"><h3 id="buildingName"></h3><button class="btn" id="closeBuilding">关闭</button></div>
   <p class="hint" id="buildingHint"></p>
   <div id="buildingServices"></div>
+  <div id="buildingUnifiedActivities"></div>
+  <div id="shopEditor" hidden><h4>商店货架</h4><p class="hint">暂停时可新建、修改或下架商品。自建商品会成为居民可选择的购买活动。</p><div id="shopProducts"></div><div class="building-fields"><label>新商品代码<input id="newShopCode" placeholder="例如 seeds"></label><label>名称<input id="newShopName" placeholder="例如 种子"></label><label>图标<input id="newShopEmoji" value="🎁"></label><label>售价<input id="newShopPrice" type="number" min="0" step="0.01" value="10"></label><button class="btn" id="addShopProduct" type="button">添加商品</button></div><button class="btn primary" id="saveShopProducts" type="button">保存货架</button></div>
   <button class="btn primary" id="saveBuilding">保存参数</button>
 </dialog>
 <dialog id="mechanicsDialog" class="mechanics-dialog">
@@ -249,7 +251,7 @@
     <div id="mechanicsRules" class="mechanics-rules"></div>
     <details><summary>各场所营业时间</summary><div id="mechanicsHours" class="building-fields"></div></details>
     <details><summary>所有活动（室内、场所、独立）</summary>
-      <p class="hint">每刻效果均列出生命、饱食、精力、心情、金钱；无影响为 0。内置活动的地点与专属功能绑定，关闭后可重新启用。</p>
+      <p class="hint">每刻效果均列出生命、饱食、精力、心情、金钱；无影响为 0。类别和地点均可多选，活动对象与双方好感变化也可设置。</p>
       <div class="building-fields"><label>新活动代码<input id="newActivityCode" placeholder="例如 read_diary" maxlength="40"></label><label>名称<input id="newActivityName" placeholder="例如 写日记" maxlength="40"></label><button class="btn" id="addMechanicsActivity" type="button">新建活动</button></div>
       <div id="mechanicsActivities"></div>
     </details>
@@ -267,8 +269,8 @@
 <div id="toast"></div>
 
 <script src="/static/pixel-scene.js"></script>
-<script src="/static/app.js"></script>
-<script src="/static/town-buildings.js"></script>
-<script src="/static/mechanics.js?v=20261029-unified-activities"></script>
+<script src="/static/app.js?v=20261029-resident-prompts"></script>
+<script src="/static/town-buildings.js?v=20261029-shop-rules"></script>
+<script src="/static/mechanics.js?v=20261029-multi-places"></script>
 </body>
 </html>

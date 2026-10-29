@@ -116,6 +116,9 @@ class Player:
         self._block_notified = False    # 本轮阻挡是否已写入记忆
         self.decision: Decision | None = None
         self.plan = ""
+        self.last_system_prompt = ''
+        self.last_user_prompt = ''
+        self.last_raw_reply = ''
         self.speech = ""
         self.speech_tick = 0
         self.day = 1
@@ -173,6 +176,7 @@ class Player:
             travel_mode=self.travel_mode, driver_license=self.driver_license, transport=self.transport,
             vehicle_driver=self.vehicle_driver, passengers=list(self.passengers), car_id=self.car_id,
             activity_minutes_left=self.activity_left*10, activity_minutes_total=self.activity_total*10, decision_status=self.decision_status,
+            last_system_prompt=self.last_system_prompt,last_user_prompt=self.last_user_prompt,last_raw_reply=self.last_raw_reply,
             memory_counts=self.memory.counts(), illness=self.health_description, illness_severity=self.illness_severity,
             hospitalized=self.hospitalized, awaiting_admission=self.awaiting_admission)
 
@@ -267,15 +271,18 @@ class Player:
         if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
             self.remember('我吃得很饱，暂时吃不下饭', 3)
             return False
-        if a.get('_custom') and a.get('need') is None and a.get('scene') not in ('any',self.scene):
+        if a.get('need') is None and a.get('scene') not in ('any',self.scene):
             return False
         need = a.get("need", "")
+        if a.get('_target_mode')=='required' and target is None:
+            self._rejection='这项活动需要选择一位室友作为对象'
+            return False
         self.target_player = target
         self._pending_target_pid = None
         from .interaction_points import LOCAL_ACTIONS,route,release,route_bed_pair
         if self.interaction_slot:release(sim,self)
 
-        if key in LOCAL_ACTIONS:return route(sim,self,key)
+        if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):return route(sim,self,key)
 
         if key=='love' and self.decision and self.decision.location=='bed':
             if target is None or self.affinity.get(target.pid,0)<55 or target.affinity.get(self.pid,0)<55:
@@ -290,7 +297,7 @@ class Player:
             self._rejection=f'缺少{missing}，没法进行'
             return False
 
-        if key=='home_treat':
+        if key=='home_treat' or need=='home_patient':
             target=target or self
             self.target_player=target;self._pending_target_pid=target.pid;self._pending_key=key
             self._plan_route(sim,'house',target.x,target.y,adjacent=target is not self)
@@ -392,7 +399,7 @@ class Player:
                 self.remember(f'{a["name"]}到达时未营业',3)
                 return
         from .interaction_points import LOCAL_ACTIONS,options
-        if key in LOCAL_ACTIONS:
+        if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):
             if not self.interaction_slot or self.interaction_slot['key']!=key:
                 from .interaction_points import route
                 route(sim,self,key);return
@@ -440,7 +447,7 @@ class Player:
         # 物品类活动：购买获得/布置消耗
         if a.get("gives_item"):
             self.items[a["gives_item"]] = self.items.get(a["gives_item"], 0) + 1
-            it = act.ITEMS[a["gives_item"]]
+            it = act.ITEMS.get(a["gives_item"],{'name':a['name']})
             self.remember(f"我买了{it['name']}", 3)
         if a.get("needs_item"):
             if a['needs_item']=='any':self._consume_decor_item(key, sim)
@@ -578,7 +585,7 @@ class Player:
 
         if self.state == "doing":
             # 对话类活动不结算数值效果（效果在对话结束后统一给）
-            if self.activity_key in ("chat", "love", "phone"):
+            if self.activity_key in ("chat", "love", "phone") and self._conversation is not None:
                 return
             self._step_activity(sim)
 
@@ -720,6 +727,12 @@ class Player:
             for other in sim.players:
                 if other is not self and other.activity_key==key and other.scene==self.scene and world.same_place(self,other):
                     self.affinity[other.pid]=max(0,min(100,self.affinity.get(other.pid,50)+affinity_rate))
+        target=self.target_player
+        if target is not None and target is not self and target.scene==self.scene and world.same_place(self,target):
+            own=a.get('_self_affinity_per_tick',0)
+            theirs=a.get('_target_affinity_per_tick',0)
+            if own:self.affinity[target.pid]=max(0,min(100,self.affinity.get(target.pid,50)+own))
+            if theirs:target.affinity[self.pid]=max(0,min(100,target.affinity.get(self.pid,50)+theirs))
 
         # ---- 餐厅吃饭需要家里有饭（做饭后 60 tick 内有效）----
         if key == "eat" and not self.eating_from_inventory and sim.meal_until < self.world_tick:

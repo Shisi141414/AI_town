@@ -63,6 +63,7 @@ class Simulation:
         self.activity_overrides = {}
         self.disabled_activities = []
         self.custom_activities = {}
+        self.shop_car = {'name':'私家汽车','emoji':'🚗','enabled':True}
         self.user_prompt_template = ""
         self.meal_quality = 0
         from .town_services import STOCKS
@@ -82,7 +83,8 @@ class Simulation:
         self.meal_until = 0                     # 家里有饭的截止 tick
         self.dialogue_log: list[dict] = []      # 兼容保留
         self.conversations: list[Conversation] = []   # 活跃对话
-        self._dialogue_released = 0                  # 已因对话放行的世界刻数（10轮对话=1刻）
+        self._dialogue_released = 0                  # 已因对话放行的世界刻数（3轮对话=1刻）
+        self._dialogue_cooldown: dict = {}            # 'pidA|pidB' → 对话结束刻（防门口无限连聊）
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self.loan_queue: list[tuple] = []       # (borrower_pid, lender_pid) 急救借款
         self.sex_proposals: dict[str, dict] = {}
@@ -99,11 +101,12 @@ class Simulation:
         self.names = {}                         # pid → 当前名字（广播用）
 
     def process_frame(self):
+        from .shop_products import catalog as shop_catalog
         names={p.pid:p.name for p in self.players}
         return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
             "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
             "decor_common":self.decor_common,"meal_until":self.meal_until,
-            "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},
+            "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},"shop_products":shop_catalog(self),
             "players":[p.snapshot(names).model_dump() for p in self.players],
             "vehicles":[v.model_dump() for v in self.vehicles],
             "maps":{scene:["".join(row) for row in world.grid(scene)] for scene in ("house","town")},
@@ -322,6 +325,8 @@ class Simulation:
         self.log("system", f"{p.name} 的室外出行方式改为{world.TRAVEL_MODES[mode]['name']}", [p.pid],scope="game")
 
     def buy_car(self, p):
+        if not self.shop_car.get('enabled',True):
+            raise ValueError('汽车已下架')
         if any(v.owner_id == p.pid for v in self.vehicles):
             raise ValueError("已经拥有一辆私家车")
         price=self.town_config["S"]["car"]["price"]
@@ -584,10 +589,10 @@ class Simulation:
                 before={p.pid:p.stats.hp for p in self.players}
                 await conv.advance()
                 self._interrupt_health_losses(before)
-            # 时间冻结：每满10轮对话才放行1刻世界时间
+            # 时间冻结：每满3轮对话才放行1刻世界时间（3轮≈1刻）
             active = [c for c in self.conversations if c.phase != 'ended']
             if active:
-                owed = sum(c.turn_count for c in active) // 10
+                owed = sum(c.turn_count for c in active) // 3
                 if owed <= self._dialogue_released:
                     return
                 self._dialogue_released = owed
@@ -632,6 +637,7 @@ class Simulation:
         await self.maintain_memories()
 
         # 6. 好感队列消化（不阻塞）
+        self._enqueue_periodic_affinity()
         if self._affinity_task is None or self._affinity_task.done():
             self._affinity_task = asyncio.create_task(self._drain_affinity())
         # 6.5 借款队列消化（不阻塞；离线入队的请求在这里补启动）
@@ -748,6 +754,8 @@ class Simulation:
         p.activity_descriptions = self.activity_descriptions
         from .activity_rules import registry
         p.activity_registry = registry(self)
+        from .shop_products import catalog as shop_catalog
+        p.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(self).items() if not row['builtin']}
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
         p.sex_invitation=(f'{sender.name}邀请你做爱；若愿意，选择action=sex、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
@@ -859,6 +867,10 @@ class Simulation:
             return
         if key != 'sex' and p.pid in self.sex_proposals:
             self._decline_sex(p.pid,('我选择了别的安排'+(f'（{d.reason}）' if getattr(d,'reason','') else '')),by_target=True)
+        if key in ('sex','phone'):
+            from .activity_rules import available_here
+            if not available_here(self,p,key):
+                p.info_feedback='当前不在这项活动允许的地点';p.remember(p.info_feedback,3);p.state='idle';return
         if key == 'sex':
             self._sex_decision(p,d)
             return
@@ -963,11 +975,11 @@ class Simulation:
         target = None
         if key=='home_treat':
             target=next((o for o in self.players if o.name==d.target or o.pid==d.target),p)
-        if a.get("need") == "player":
+        elif a.get("need") == "player" or a.get('_target_mode') in ('optional','required') and d.target:
             target = next((o for o in self.players
                            if (o.name == d.target or o.pid == d.target)
                            and o is not p), None)
-            if target is None:
+            if target is None and (a.get('need')=='player' or a.get('_target_mode')=='required'):
                 self._reject_decision(p,d,depth)
                 return
 
@@ -1037,17 +1049,48 @@ class Simulation:
         self.log('social',f'{p.name}邀请{target.name}亲密相处，等待对方自己决定',[p.pid,target.pid])
 
     # ------------------------------------------------------------ 对话
+    DIALOGUE_COOLDOWN_TICKS = 6      # 同一对居民两场对话的最小间隔（刻）
+
+    def _step_off_gate(self, p: Player) -> None:
+        """对话开始前把站在大门格上的人挪到旁边，避免堵门。"""
+        if world.tile(p.scene, p.x, p.y) == 'E':
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = p.x + dx, p.y + dy
+                if world.tile(p.scene, nx, ny) not in ('E',) and world.walkable(p.scene, nx, ny) \
+                        and self.position_free(p, p.scene, nx, ny):
+                    p.x, p.y = nx, ny
+                    return
+
     def start_conversation(self, initiator: Player, target: Player, kind: str):
         """发起回合制对话（由 player._start_social 调用）"""
         # 任一方已在对话中则不再开新对话
         if initiator._conversation or target._conversation:
             return
+        # 冷却：同一对居民刚结束对话不久，不再连聊（电话不受限）
+        if kind == 'chat':
+            pair = '|'.join(sorted((initiator.pid, target.pid)))
+            last_end = self._dialogue_cooldown.get(pair, -999)
+            if self.global_tick - last_end < self.DIALOGUE_COOLDOWN_TICKS:
+                initiator.remember(f'我和{target.name}刚聊过，先各忙各的吧', 4)
+                initiator.info_feedback = f'与{target.name}刚聊过，过一会儿再聊'
+                if initiator.state == 'doing' and initiator.activity_key == 'chat':
+                    initiator.activity = None; initiator.activity_key = ''
+                    initiator.state = 'idle'
+                if target.state == 'doing' and target.activity_key == 'chat':
+                    target.activity = None; target.activity_key = ''
+                    target.state = 'idle'
+                self.log('social', f'💬 {initiator.name} 想再找 {target.name} 聊，两人刚聊过先各自行动',
+                         [initiator.pid, target.pid])
+                return
         # love 需要双方好感达标（在 player 层校验过，这里再保险一次）
         if kind == "love":
             a_ok = initiator.affinity.get(target.pid, 0) >= 55
             b_ok = target.affinity.get(initiator.pid, 0) >= 55
             if not (a_ok and b_ok):
                 return
+        if kind != 'phone':
+            self._step_off_gate(initiator)
+            self._step_off_gate(target)
         conv = Conversation(initiator, target, kind, self)
         initiator._conversation = conv
         target._conversation = conv
@@ -1069,6 +1112,17 @@ class Simulation:
         minutes=duration_minutes if duration_minutes is not None else max(0,a.activity_total-a.activity_left)*10
         self.affinity_queue.append((a.pid,o.pid,activity_key,minutes))
 
+    def _enqueue_periodic_affinity(self):
+        budget=self.mechanics['affinity_decisions_per_tick']
+        if budget<=0 or sum(q[0]=='periodic' for q in self.affinity_queue if q)>8:return
+        eligible=[p for p in self.players if self.profile_for(p.pid)]
+        if len(self.players)<2:return
+        for offset in range(min(budget,len(eligible))):
+            actor=eligible[(self.global_tick+offset)%len(eligible)]
+            others=[p for p in self.players if p is not actor]
+            target=others[(self.global_tick+offset)%len(others)]
+            self.affinity_queue.append(('periodic',actor.pid,target.pid))
+
     async def _drain_affinity(self):
         """异步消化好感请求：LLM 决定 a 对 o 的好感增减"""
         if self._affinity_busy or not self.affinity_queue:
@@ -1077,6 +1131,22 @@ class Simulation:
         try:
             while self.affinity_queue:
                 request=self.affinity_queue.pop(0)
+                if request[0]=='periodic':
+                    a,o=self.by_pid(request[1]),self.by_pid(request[2])
+                    if not a or not o:continue
+                    prof=self.profile_for(a.pid)
+                    if not prof:continue
+                    before=a.affinity.get(o.pid,50)
+                    model=self.model_of.get(a.pid) or prof.default_model
+                    try:delta=await brain.affinity_tick_llm(prof,model,a,o,timeout=min(20.0,self.settings.decision_timeout))
+                    except asyncio.CancelledError:
+                        self.affinity_queue.insert(0,request)
+                        raise
+                    a.affinity[o.pid]=max(0,min(100,before+delta))
+                    if delta:
+                        a.remember(f'我对{o.name}的好感改变了{delta:+d}点',1)
+                        self.log('social',f'💗 {a.name} 对 {o.name} 的好感自主变化 {delta:+d}',[a.pid,o.pid])
+                    continue
                 a_pid,o_pid,key=request[:3]
                 hours=(request[3] if len(request)>3 else 30)/60
                 a, o = self.by_pid(a_pid), self.by_pid(o_pid)

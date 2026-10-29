@@ -196,7 +196,7 @@ ACTIVITIES: dict[str, dict] = {
         "name": "对话", "emoji": "💬", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
         "effects": {},
-        "desc": "与身边的人对话：交流信息、分享想法、商量事情或增进了解；对话本身不产生数值变化，10轮以内不消耗时间",
+        "desc": "与身边的人对话：交流信息、分享想法、商量事情或增进了解；不产生心情好感变化，每轮微耗精力，3轮约占1刻时间",
     },
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
@@ -287,7 +287,7 @@ def activity_description_defaults() -> dict[str, str]:
         "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近；散步、略有放松",
-        "chat":"在室友身边；交流信息、分享近况、商量事情（无数值变化，几乎不耗时间）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
+        "chat":"在室友身边；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
         "love":"在室友身边或床上；约会、增进感情", "sex":"在双方靠近处或床上；亲密相处",
         "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
         "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",
@@ -330,21 +330,32 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
     descriptions = descriptions or {}
     for k, a in (activities if activities is not None else ACTIVITIES).items():
         if a.get("legacy"):continue
-        if k in DEFS and (not venue_code or DEFS[k][0] != venue_code):continue
-        if a.get('_venue') and a['_venue']!=venue_code:continue
-        if scene != "any" and a.get("scene") not in ("any", scene):
-            continue
+        places=a.get('_places')
+        if places:
+            if scene!='any' and scene not in places and 'any' not in places:continue
+            if scene=='town' and 'town' in places and 'any' not in places and not any(loc in ('here','near_player','town:'+(venue_code or '')) for loc in places['town']):continue
+        else:
+            if k in DEFS and (not venue_code or DEFS[k][0] != venue_code):continue
+            if a.get('_venue') and a['_venue']!=venue_code:continue
+            if scene != "any" and a.get("scene") not in ("any", scene):continue
         req = []
-        if a.get("need") == "player":
+        if a.get('_target_mode')=='required' or a.get("need") == "player":
             req.append("target=室友")
+        elif a.get('_target_mode')=='optional':req.append('target=室友（可选）')
         if a.get("needs_item"):
             req.append("需要鲜花或盆栽" if a['needs_item']=='any' else f"需要{ITEMS[a['needs_item']]['name']}")
         extra = "（"+"；".join(req)+"）" if req else ""
-        group = "当前场所" if k in DEFS or a.get('_venue') else ("社交互动" if a.get("need")=="player" else
+        group = "当前场所" if scene=='town' and places and any(loc.startswith('town:') for loc in places.get('town',[])) else "当前场所" if not places and (k in DEFS or a.get('_venue')) else ("社交互动" if a.get("need")=="player" else
                 "室内生活" if a.get("scene")=="house" else
                 "小镇日常" if a.get("scene")=="town" else "随处行动")
         detail = descriptions.get(k, defaults.get(k,a.get('desc','在相应地点；进行活动')))
-        sections[group].append(f"- {k}: {a['name']}{extra}｜{detail}")
+        place_hint=''
+        if places:
+            labels={'here':'当前位置','near_player':'室友身边','own_computer':'自己的电脑','own_bedroom':'自己的卧室','house_common':'公共区','house_patient':'病人旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣区','house:h':'卧室'}
+            from .town_services import NAMES
+            visible=[labels.get(loc,NAMES.get(loc[5:],loc) if loc.startswith('town:') else loc) for current,locations in places.items() if current in (scene,'any') for loc in locations]
+            if visible:place_hint='｜可在'+ '、'.join(dict.fromkeys(visible))
+        sections[group].append(f"- {k}: {a['name']}{extra}｜{detail}{place_hint}")
     return "\n\n".join(f"{title}：\n"+"\n".join(rows) for title,rows in sections.items() if rows)
 
 

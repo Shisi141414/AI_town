@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','shop_car','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -177,6 +177,7 @@ class SaveStore:
         sim.activity_overrides=getattr(sim,'activity_overrides',{})
         sim.disabled_activities=list(getattr(sim,'disabled_activities',[]))
         sim.custom_activities=getattr(sim,'custom_activities',{})
+        sim.shop_car=getattr(sim,'shop_car',{'name':'私家汽车','emoji':'🚗','enabled':True})
         # 旧存档的电话费曾混在活动效果中，现统一由基础机制结算。
         if 'phone' in sim.activity_config:
             sim.activity_config['phone']['effects'].pop('money',None)

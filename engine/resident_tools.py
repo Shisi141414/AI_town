@@ -109,14 +109,11 @@ def _courses_index(sim):
 
 
 def _goods_index(sim):
-    from .town_services import DEFS, NAMES
-    out = []
-    for k, d in DEFS.items():
-        if d[3] != 'goods':
-            continue
-        row = _item_params(sim, d[0], k)
-        out.append({'商品': row.pop('名称'), '场所': NAMES[d[0]], **row})
-    return out
+    from .shop_products import catalog as shop_catalog
+    rows=[{'商品':row['name'],'场所':'商店','费用元':row['price'],'状态':'上架' if row['enabled'] else '下架'}
+            for row in shop_catalog(sim).values()]
+    rows.append({'商品':'药品','场所':'诊所','费用元':sim.town_config['B']['buy_medicine']['price'],'状态':'上架'})
+    return rows
 
 
 def _life_rules(sim):

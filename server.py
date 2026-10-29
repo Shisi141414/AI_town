@@ -298,6 +298,36 @@ async def town_buildings():
     return catalog(sim)
 
 
+@app.get('/api/town/shop')
+async def shop_view():
+    from engine.shop_products import catalog
+    return catalog(sim)
+
+
+class ShopUpdate(BaseModel):
+    products: dict
+
+
+@app.put('/api/town/shop')
+async def shop_update(update:ShopUpdate):
+    from engine.shop_products import apply
+    async with _control_lock:
+        if sim.running or sim.identity_phase or sim._tick_lock.locked():
+            raise HTTPException(409,'模拟运行中只能查看，请先暂停')
+        try:values=apply(sim,update.products)
+        except ValueError as exc:raise HTTPException(400,str(exc))
+        previous=(sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.town_config,sim.shop_car)
+        sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.town_config,sim.shop_car=values
+        try:save_store().checkpoint(sim,'修改商店商品')
+        except Exception:
+            sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.town_config,sim.shop_car=previous
+            raise
+        sim.record('configuration',{'activity_overrides':sim.activity_overrides,'disabled_activities':sim.disabled_activities,
+                                    'custom_activities':sim.custom_activities,'town_config':sim.town_config,'shop_car':sim.shop_car})
+        sim.log('system','商店商品已更新',resident_memory=False)
+        return {'ok':True}
+
+
 @app.get('/api/mechanics')
 async def mechanics_view():
     from engine.town_services import catalog,prompt_context
@@ -313,6 +343,8 @@ async def mechanics_view():
         resident.activity_descriptions=sim.activity_descriptions
         from engine.activity_rules import registry
         resident.activity_registry=registry(sim)
+        from engine.shop_products import catalog as shop_catalog
+        resident.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(sim).items() if not row['builtin']}
         resident.known_roommates=[(o.name,o.gender) for o in sim.players if o is not resident]
         resident.phone_fee_per_tick=max(0,-activity_catalog(sim)['phone']['effects']['money'])
         nearby=[o for o in sim.players if o is not resident and o.scene==resident.scene

@@ -27,9 +27,13 @@ class DialogueTests(unittest.TestCase):
         self.b.x, self.b.y = 9, 12
         self.a.state = self.b.state = 'doing'
         self.a.activity_key = self.b.activity_key = 'chat'
-        # 第三人处于活动中，避免 fake profile 的决策失败阻塞整个 tick
+        # 三人都保持长时间活动：放行刻后不会被置 idle，
+        # 避免 fake profile 的决策失败阻塞时钟、卡死对话
+        for q in (self.a, self.b):
+            q.activity_left = 999
         c = self.sim.players[2]
         c.state, c.activity_key = 'doing', 'sleep'
+        c.activity_left = 999
         c.scene, c.x, c.y = 'house', 15, 5
 
     def test_renamed_no_effects(self):
@@ -52,10 +56,10 @@ class DialogueTests(unittest.TestCase):
                 asyncio.run(self.sim._step_tick())
                 if not self.sim.conversations:
                     break
-        # 对话机制本身零增减；被放行的1刻允许正常基础消耗（心情-1/饱食-0.4）
+        # 对话机制本身零增减；10轮对话放行约4刻，允许正常基础消耗（心情约-4）
         for p in (self.a, self.b):
             m, e, hp = snapshot[p.pid]
-            self.assertGreaterEqual(p.stats.mood, m - 1.01)
+            self.assertGreaterEqual(p.stats.mood, m - 5.01)
             self.assertGreaterEqual(p.stats.hp, hp - 0.01)
         self.assertAlmostEqual(self.a.affinity[self.b.pid], 50.0)   # 好感完全不变
         self.assertAlmostEqual(self.b.affinity[self.a.pid], 50.0)
@@ -73,7 +77,9 @@ class DialogueTests(unittest.TestCase):
                 asyncio.run(self.sim._step_tick())
                 if not self.sim.conversations:
                     break
-        self.assertLessEqual(self.sim.global_tick - tick0, 1)
+        # 3轮对话≈1刻：10轮对话约放行3刻 + 结束余量
+        self.assertLessEqual(self.sim.global_tick - tick0, 4)
+        self.assertGreaterEqual(self.sim.global_tick - tick0, 3)
 
     def test_llm_summary_into_memory(self):
         """对话结束：双方记忆为 LLM 择取的关键信息。"""
@@ -122,10 +128,13 @@ class PhoneDialogueTests(DialogueTests):
         # 对话双方 doing 状态避免决策系统介入；电话可跨地点
         self.a.state = self.b.state = 'doing'
         self.a.activity_key = self.b.activity_key = 'phone'
+        self.a.activity_left = self.b.activity_left if False else 999
+        self.b.activity_left = 999
         self.a.scene, self.a.x, self.a.y = 'house', 8, 12
         self.b.scene, self.b.x, self.b.y = 'town', 12, 12
         c = self.sim.players[2]
         c.state, c.activity_key = 'doing', 'sleep'
+        c.activity_left = 999
 
     def test_phone_no_effects_per_round_fee(self):
         self.a.stats.money = 50.0
@@ -143,10 +152,10 @@ class PhoneDialogueTests(DialogueTests):
         # 话费：10轮 × 1元/轮 = 10元（phone_fee_per_tick=10 → 每轮1/10）
         self.assertAlmostEqual(self.a.stats.money, 40.0)
         self.assertAlmostEqual(self.a.phone_paid, 10.0)
-        # 无数值增减、好感不变（被放行1刻的基础消耗除外）
+        # 无数值增减、好感不变（被放行约4刻的基础消耗除外）
         for p in (self.a, self.b):
             m, e, hp = snapshot[p.pid]
-            self.assertGreaterEqual(p.stats.mood, m - 1.01)
+            self.assertGreaterEqual(p.stats.mood, m - 5.01)
         self.assertAlmostEqual(self.a.affinity[self.b.pid], 50.0)
         self.assertAlmostEqual(self.b.affinity[self.a.pid], 50.0)
 
@@ -178,4 +187,67 @@ class PhoneDialogueTests(DialogueTests):
                 asyncio.run(self.sim._step_tick())
                 if not self.sim.conversations:
                     break
-        self.assertLessEqual(self.sim.global_tick - tick0, 1)
+        self.assertLessEqual(self.sim.global_tick - tick0, 4)
+
+
+class DialoguePacingTests(DialogueTests):
+    """对话节奏与防堵门：每轮精力消耗、连聊冷却、门口挪位。"""
+
+    def test_each_round_costs_energy(self):
+        self.place_together()
+        self.sim.mechanics['base_energy_regen'] = 0    # 隔离基础回复，只看对话消耗
+        e0a, e0b = self.a.stats.energy, self.b.stats.energy
+        with patch.object(brain, 'conv_turn_llm',
+                          AsyncMock(return_value={"say": "嗯", "act": "stay"})), \
+             patch.object(brain, 'summarize_dialogue_llm',
+                          AsyncMock(return_value="简短对话")):
+            self.sim.start_conversation(self.a, self.b, 'chat')
+            for _ in range(40):
+                asyncio.run(self.sim._step_tick())
+                if not self.sim.conversations:
+                    break
+        # 至少一轮：双方精力都有下降（每轮0.15）
+        self.assertLess(self.a.stats.energy, e0a)
+        self.assertLess(self.b.stats.energy, e0b)
+
+    def test_cooldown_blocks_immediate_rechat(self):
+        self.place_together()
+        with patch.object(brain, 'conv_turn_llm',
+                          AsyncMock(return_value={"say": "好", "act": "leave"})), \
+             patch.object(brain, 'summarize_dialogue_llm',
+                          AsyncMock(return_value="聊了几句")):
+            self.sim.start_conversation(self.a, self.b, 'chat')
+            for _ in range(40):
+                asyncio.run(self.sim._step_tick())
+                if not self.sim.conversations:
+                    break
+        self.assertFalse(self.sim.conversations)
+        # 立刻再聊：被冷却拒绝，双方回到 idle
+        self.a.state = self.b.state = 'doing'
+        self.a.activity_key = self.b.activity_key = 'chat'
+        self.sim.start_conversation(self.a, self.b, 'chat')
+        self.assertFalse(self.sim.conversations)
+        self.assertEqual(self.a.state, 'idle')
+        self.assertIn('刚聊过', self.a.info_feedback)
+        self.assertIn('刚聊过', self.a.memory.brief(0, k=10, query='刚聊过'))
+
+    def test_conversation_steps_off_gate_tile(self):
+        # 发起者站在大门格 'E' 上开始对话 → 挪到旁边非门格，不堵门
+        from engine import world as w
+        gates = w.find_tiles('town', 'E')
+        self.assertTrue(gates)
+        gx, gy = gates[0]
+        self.a.scene = self.b.scene = 'town'
+        self.a.x, self.a.y = gx, gy
+        # b 站在离门口 2 格的路格上（门旁空位留给 a 挪用）
+        self.b.x, self.b.y = gx + 2, gy
+        while not (w.walkable('town', self.b.x, self.b.y)
+                   and w.tile('town', self.b.x, self.b.y) != 'E'):
+            self.b.x += 1
+        for q in (self.a, self.b):
+            q.state, q.activity_left = 'doing', 999
+        self.a.activity_key = self.b.activity_key = 'chat'
+        self.sim.start_conversation(self.a, self.b, 'chat')
+        self.assertTrue(self.sim.conversations)
+        self.assertNotEqual((self.a.x, self.a.y), (gx, gy))   # 发起者已挪离大门
+        self.assertNotEqual(w.tile('town', self.a.x, self.a.y), 'E')

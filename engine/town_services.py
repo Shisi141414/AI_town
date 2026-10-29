@@ -154,13 +154,13 @@ def action_spec(sim,p,key):
  if key in sim.disabled_activities:return None
  if key in sim.custom_activities:
   from .activity_rules import custom_spec,apply
-  return apply(sim,key,custom_spec(sim.custom_activities[key]))
+  return apply(sim,key,custom_spec(sim.custom_activities[key]),p)
  if key not in ACTIVITIES:return None
  a=deepcopy(ACTIVITIES[key])
  if key in sim.activity_config:
   a.update(deepcopy(sim.activity_config[key]))
  from .activity_rules import apply
- return apply(sim,key,a)
+ return apply(sim,key,a,p)
 
 def prepare(sim,p,d):
  from .activities import ACTIVITIES
@@ -191,7 +191,7 @@ def prepare(sim,p,d):
   elif kind in ('course','license_course'):
    a['effects']['mood']=-sim.mechanics['study_mood_per_hour']/6
   from .activity_rules import apply
-  p.service_spec=apply(sim,key,a)
+  p.service_spec=apply(sim,key,a,p)
  elif key in ('stock','home_treat'):
   skill='economics' if key=='stock' else 'medicine'
   if level(p,skill)<1:raise ValueError(f'需要{SKILLS[skill]}1级')
@@ -229,13 +229,12 @@ def prompt_context(sim,p):
    if not onsite(p,code):continue
    hours=sim.opening_hours[code]
    lines.append(f'{name}营业时间：{hours[0]:02d}:00–{hours[1]:02d}:00')
-   visible=[f'{key} {sim.activity_overrides.get(key,{}).get("name",DEFS[key][1])}' for key in sim.town_config[code] if key!='car' and key not in sim.disabled_activities]
-   visible.extend(f'{key} {row["name"]}' for key,row in sim.custom_activities.items() if row['location']=='town:'+code and key not in sim.disabled_activities)
+   from .activity_rules import catalog as activity_catalog
+   visible=[f'{key} {row["name"]}' for key,row in activity_catalog(sim).items() if row['enabled'] and 'town:'+code in row.get('places',{}).get('town',[])]
    lines.append(f'当前{zone}的项目：'+'；'.join(visible))
    if code=='S':
-    from .activity_rules import catalog as activity_catalog
-    shown=activity_catalog(sim)
-    lines.append('商店商品：'+'、'.join(f'{DEFS[key][1] if key=="car" else shown[key]["name"]} {(row["price"] if key=="car" else shown[key]["cost"]):g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods' and (key=='car' or key in shown and shown[key]['enabled'])))
+    from .shop_products import catalog as shop_catalog
+    lines.append('商店商品：'+'、'.join(f'{row["name"]} {row["price"]:g}元' for row in shop_catalog(sim).values() if row['enabled']))
    break
  if p.info_feedback:lines.append('上次行动反馈：'+p.info_feedback)
  lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
@@ -247,12 +246,15 @@ def prompt_context(sim,p):
 
 
 def inspect(sim,p,key):
- if key not in DEFS or key=='car':raise ValueError('请先到场并从当地项目目录选择项目')
- if key in sim.disabled_activities:raise ValueError('该项目已关闭')
- code,name,skill,kind=DEFS[key]
- if not onsite(p,code):raise ValueError('请先到对应场所查询')
  from .activity_rules import catalog as activity_catalog
- configured=activity_catalog(sim)[key]
+ configured=activity_catalog(sim).get(key)
+ if not configured or key=='car':raise ValueError('请先到场并从当地项目目录选择项目')
+ if key in sim.disabled_activities:raise ValueError('该项目已关闭')
+ venues=[loc.split(':',1)[1] for loc in configured.get('places',{}).get('town',[]) if loc.startswith('town:')]
+ if not any(onsite(p,code) for code in venues):raise ValueError('请先到对应场所查询')
+ if key not in DEFS:
+  return f'{configured["name"]}({key})：默认{configured["duration"]*10}分钟，一次性费用{configured["cost"]:g}元。'
+ code,name,skill,kind=DEFS[key]
  row=dict(sim.town_config[code][key])
  row['minutes']=configured['duration']*10
  row['price']=configured['cost']
@@ -298,7 +300,9 @@ def step_effects(sim,p,key,eff):
   else:
    sim.decor_common+=p.decor_gain_per_tick
    for other in sim.players:
-    if other is not p and other.scene=='house':other.stats.mood=min(100,other.stats.mood+1/2)
+    if other is not p and other.scene=='house':
+     other.stats.mood=min(100,other.stats.mood+1/2)
+     if elapsed==1:other.remember(f'第{sim.day}天{sim.clock}，{p.name}在家里布置了公共区域',4)
  if key=='gift' and p.target_player and world_same(p,p.target_player):
   other=p.target_player
   p.affinity[other.pid]=min(100,p.affinity.get(other.pid,30)+2)
