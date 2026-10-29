@@ -780,6 +780,22 @@ class Simulation:
             p.decision_status=f"等待重试：{str(e)[:80]}"
             self.log("error",f"⏳ {p.name} 暂未获得有效模型决策，稍后重试（{str(e)[:80]}）",[p.pid])
 
+    def _notify_rejection(self, p: Player, key: str, target: Player | None):
+        """行动被拒：把系统/对象给出的原因告知发出者，写入双方记忆。"""
+        reason = getattr(p, '_rejection', '')
+        p._rejection = ''
+        if not reason:
+            return
+        from .activities import ACTIVITIES
+        name = ACTIVITIES.get(key, {}).get('name', key)
+        tname = f'（对象：{target.name}）' if target else ''
+        p.remember(f'我想{name}（{target.name if target else "他人"}），但被拒绝：{reason}', 5)
+        if target is not None and target is not p:
+            target.remember(f'{p.name}想和我{name}，没有成行：{reason}', 4)
+        p.info_feedback = f'{name}被拒绝：{reason}（请换一种做法）'
+        self.log('social', f'🚫 {p.name} 的{name}{tname}被拒：{reason}',
+                 [p.pid] + ([target.pid] if target else []), scope='game')
+
     def _decision_progress(self,p,status):
         p.decision_status=status
         self.log("system",f"🧠 {p.name}：{status}",[p.pid],resident_memory=False)
@@ -842,7 +858,7 @@ class Simulation:
             p.state = "idle"
             return
         if key != 'sex' and p.pid in self.sex_proposals:
-            self._decline_sex(p.pid,'对方选择了其他行动')
+            self._decline_sex(p.pid,('我选择了别的安排'+(f'（{d.reason}）' if getattr(d,'reason','') else '')),by_target=True)
         if key == 'sex':
             self._sex_decision(p,d)
             return
@@ -885,8 +901,12 @@ class Simulation:
             per_tick=max(0,-activity_catalog(self)['phone']['effects'].get('money',-self.mechanics['phone_fee_per_tick']))
             per_round=round(per_tick/10,2)          # 每轮话费（10轮≈1刻）
             if not target or target.state not in ('idle','waiting_model') or p._conversation or target._conversation or p.vehicle_driver or target.vehicle_driver or p.car_id or target.car_id:
-                p.info_feedback='请指定一位当前有空、未乘车的室友';p.state='idle';return
+                why='对方正忙或不在空闲状态，无法接电话' if target else '没有找到这位室友'
+                p.remember(f'我想给{d.target}打电话，但{why}',4)
+                if target:target.remember(f'{p.name}想给我打电话，但我正忙没能接',3)
+                p.info_feedback=f'打电话被拒：{why}';p.state='idle';return
             if p.stats.money + 1e-8 < per_round:
+                p.remember(f'我想给{target.name}打电话，但付不起一轮{per_round:g}元话费',4)
                 p.info_feedback='话费不足，暂时无法拨打';p.state='idle';return
             p.decision=d;p.target_player=target;p.plan=d.reason or '给室友打电话'
             p.requested_duration=(d.duration_minutes+9)//10 if d.duration_minutes else act.ACTIVITIES['phone']['duration']
@@ -957,12 +977,7 @@ class Simulation:
         ok = p.begin_activity(key, self, target=target)
         if not ok:
             p.requested_duration = None
-            if key == "love":
-                t = next((o for o in self.players if o.name == d.target), None)
-                if t:
-                    p.remember(f"我和{t.name}的好感还不够，恋爱未成", 8)
-                    self.log("social", f"💔 {p.name} 向 {t.name} 求爱未成（好感不足）",
-                             [p.pid, t.pid])
+            self._notify_rejection(p, key, target)
             self._reject_decision(p,d,depth)
         elif d.source == "llm":
             self.log("activity",
@@ -970,13 +985,17 @@ class Simulation:
                      + (f"（对象:{d.target}）" if d.target else "")
                      + f" —— {d.reason}", [p.pid])
 
-    def _decline_sex(self,target_pid,reason):
+    def _decline_sex(self,target_pid,reason,by_target=False):
         proposal=self.sex_proposals.pop(target_pid,None)
         if not proposal:return
         sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
         if sender and sender.state=='waiting_consent':
             sender.state='idle';sender.plan='亲密邀请结束'
         if sender and target:
+            sender.remember(f'我向{target.name}发出亲密邀请被拒绝：{reason}',7)
+            if by_target:
+                target.remember(f'我拒绝了{sender.name}的亲密邀请：{reason}',5)
+            sender.info_feedback=f'亲密邀请被{target.name}拒绝：{reason}'
             self.log('social',f'{sender.name}向{target.name}发出的亲密邀请未继续：{reason}',[sender.pid,target.pid])
 
     def _sex_decision(self,p,d):

@@ -237,7 +237,7 @@ def prompt_context(sim,p):
     shown=activity_catalog(sim)
     lines.append('商店商品：'+'、'.join(f'{DEFS[key][1] if key=="car" else shown[key]["name"]} {(row["price"] if key=="car" else shown[key]["cost"]):g}元' for key,row in sim.town_config['S'].items() if DEFS[key][3]=='goods' and (key=='car' or key in shown and shown[key]['enabled'])))
    break
- if p.info_feedback:lines.append('上次询问所得：'+p.info_feedback)
+ if p.info_feedback:lines.append('上次行动反馈：'+p.info_feedback)
  lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
   +';'.join(f'{k} {row["name"]} {row["price"]:.2f}元' for k,row in sim.stocks.items()))
  holdings=[f'{sim.stocks[k]["name"]}{v["shares"]}份（成本{v["cost"]:g}元）'

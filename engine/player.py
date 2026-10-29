@@ -112,6 +112,8 @@ class Player:
         self.route_goal = None
         self.blocked_ticks = 0
         self._blocked_cell = None
+        self._rejection = ''            # 本次行动被拒原因（系统或对象给出）
+        self._block_notified = False    # 本轮阻挡是否已写入记忆
         self.decision: Decision | None = None
         self.plan = ""
         self.speech = ""
@@ -256,6 +258,7 @@ class Player:
 
     # ------------------------------------------------------------- 活动开始
     def begin_activity(self, key: str, sim: "Simulation", target=None) -> bool:
+        self._rejection = ''
         from .town_services import action_spec
         from .activity_rules import registry
         a = action_spec(sim,self,key) if key in registry(sim) else None
@@ -275,14 +278,16 @@ class Player:
         if key in LOCAL_ACTIONS:return route(sim,self,key)
 
         if key=='love' and self.decision and self.decision.location=='bed':
-            if target is None or self.affinity.get(target.pid,0)<55 or target.affinity.get(self.pid,0)<55:return False
+            if target is None or self.affinity.get(target.pid,0)<55 or target.affinity.get(self.pid,0)<55:
+                self._rejection='我们之间的好感还不到可以同床共枕的程度'
+                return False
             return route_bed_pair(sim,self,target)
 
         # 需要物品
         needed=a.get('needs_item')
         if needed and not (any(self.items.get(k,0)>0 for k in ('flower','plant')) if needed=='any' else self.items.get(needed,0)>0):
             missing='鲜花或盆栽' if needed=='any' else act.ITEMS[needed]['name']
-            self.remember(f"我想{a['name']}但没有{missing}", 4)
+            self._rejection=f'缺少{missing}，没法进行'
             return False
 
         if key=='home_treat':
@@ -294,19 +299,23 @@ class Player:
         # 玩家目标类
         if need == "player":
             if target is None or target.scene != self.scene:
+                self._rejection='对方不在我的身边（不同场景）'
                 return False
             if max(abs(target.x - self.x), abs(target.y - self.y)) > 6 \
                     and not world.same_place(self, target):
+                self._rejection='对方离我太远，够不着'
                 return False
             if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
+                self._rejection=f'{target.name}身体很健康，用不上药品'
                 return False
             if key=='give_meal' and target.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
-                self.remember(f'{target.name}吃得很饱，不需要饭菜', 3)
+                self._rejection=f'{target.name}吃得很饱（饱食95以上），现在不需要饭菜'
                 return False
             if key == "love":
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
                           and target.affinity.get(self.pid, 0) >= a["consent_threshold"])
                 if not mutual:
+                    self._rejection='我们之间的好感还不够亲近，恋爱没有成'
                     return False
             self._pending_key = key
             self._pending_target_pid = target.pid
@@ -483,6 +492,14 @@ class Player:
                     occupied=sim.occupied(self.scene,self)
                     obstruction=next((cell for cell in direct if cell in occupied),None)
                 self._blocked_cell=obstruction
+                if self.blocked_ticks>=3 and not self._block_notified and obstruction:
+                    self._block_notified=True
+                    blocker=next((q for q in sim.players if q is not self and q.scene==self.scene
+                                  and (q.x,q.y)==obstruction and not q.vehicle_driver),None)
+                    what=(f"{blocker.name}（{blocker.plan or '正在忙'}）" if blocker else '家具或墙壁')
+                    zone=world.zone_of(self.scene,self.x,self.y)
+                    self.remember(f"我在{zone}被{what}挡住去路，只能等待或绕行",4)
+                    sim.log('activity',f'🚧 {self.name}在{zone}被{what}挡住了',[self.pid],resident_memory=False)
                 # 目标被占时使用相邻空位；途中遇人先绕行，无法绕行再侧身让路。
                 if goal in sim.occupied(self.scene,self) and abs(goal[0]-self.x)+abs(goal[1]-self.y)<=2:
                     self.route_goal=goal=sim.free_position(self.scene,*goal,self)
@@ -520,6 +537,7 @@ class Player:
                 self.x, self.y = self.path.pop(0)
                 self.blocked_ticks=0
                 self._blocked_cell=None
+                self._block_notified=False
                 self.transport = mode
                 self.stats.energy -= sim.mechanics.get(mode+'_energy_per_tile',0)
                 if mode == 'car' and not car_fee_paid:
