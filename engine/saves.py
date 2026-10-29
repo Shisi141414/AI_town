@@ -156,7 +156,21 @@ class SaveStore:
             sim.user_prompt_template=sim.user_prompt_template.replace('话费每小时50元','话费每刻{phone_fee_per_tick:g}元').replace('话费每小时{phone_fee_per_hour:g}元','话费每刻{phone_fee_per_tick:g}元')
         sim.opening_hours={**DEFAULT_HOURS,**getattr(sim,'opening_hours',{})}
         defaults_activity=activity_defaults()
-        sim.activity_config={**defaults_activity,**{key:value for key,value in getattr(sim,'activity_config',{}).items() if key in defaults_activity}}
+        saved_activity=getattr(sim,'activity_config',{}) or {}
+        merged_activity={}
+        for key,value in defaults_activity.items():
+            row=saved_activity.get(key)
+            if not isinstance(row,dict):
+                merged_activity[key]=value;continue
+            clean=dict(value)
+            for field in ('duration','cost'):
+                if field in row:clean[field]=row[field]
+            eff=row.get('effects')
+            if isinstance(eff,dict):
+                # 字段级清洗：只保留新默认 effects 中仍存在的键（旧档废弃键丢弃）
+                clean['effects']={k:eff[k] for k in value['effects'] if k in eff}
+            merged_activity[key]=clean
+        sim.activity_config=merged_activity
         from .activities import activity_description_defaults
         default_descriptions=activity_description_defaults()
         sim.activity_descriptions={**default_descriptions,**{key:value for key,value in getattr(sim,'activity_descriptions',{}).items() if key in default_descriptions}}
