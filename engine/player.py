@@ -52,6 +52,8 @@ class Player:
         self.interaction_resume = False
         self.service_completed = False
         self.dining_tick = -1
+        self._suspended_activity = None     # 被中断活动的剩余进度（同key继续时恢复）
+        self._period_hp_at = -1             # 本刻生理期失血标记（归因用）
         self.work_paid = 0.0
         self.phone_paid = 0.0
         self.injury_alert = ''
@@ -505,8 +507,18 @@ class Player:
         self.gift_affinity_per_tick = 0.0
         self.activity_key = key
         self.activity_custom_duration = self.requested_duration is not None
-        self.activity_left = self.requested_duration or a["duration"]
-        self.activity_total = self.activity_left
+        sus = getattr(self, '_suspended_activity', None)
+        if sus and sus.get('key') == key:
+            # 从中断处继续：保留剩余时长与中间量（如做饭的产出计划）
+            self.activity_left = sus['left']
+            self.activity_total = max(sus.get('total', 0), self.activity_left)
+            if sus.get('cook_meals') is not None:
+                self._cook_meals = sus['cook_meals']
+            self.info_feedback = f'{a["name"]}从中断处继续（剩{self.activity_left * 10:g}分钟）'
+        else:
+            self.activity_left = self.requested_duration or a["duration"]
+            self.activity_total = self.activity_left
+        self._suspended_activity = None     # 选了其他活动即放弃剩余进度
         self.requested_duration = None
         self.state = "doing"
         # 物品类活动：购买获得/布置消耗

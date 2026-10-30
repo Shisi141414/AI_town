@@ -724,6 +724,8 @@ class Simulation:
             causes.add('starvation')
         if p.low_mood_ticks >= self.mechanics['low_mood_delay_ticks']:
             causes.add('low_mood')
+        if p.gender == '女' and getattr(p, '_period_hp_at', -1) == self.global_tick:
+            causes.add('period')            # 本刻生理期失血：可归因、不构成紧急情况
         return causes
 
     def _interrupt_health_losses(self,before):
@@ -737,6 +739,7 @@ class Simulation:
         'low_mood': '心情长期低落（连续3小时低于20；需要娱乐、社交、休息来回升心情）',
         'illness': '疾病发作（需要去诊所治疗或用药）',
         'attack': '被攻击受伤',
+        'period': '生理期腹痛（正常生理现象，少量失血，几天内自行结束；注意休息，无需治疗）',
     }
 
     def _alert_health_loss(self,p,lost,*,force=False,cause=None):
@@ -751,6 +754,19 @@ class Simulation:
         causes = {cause} if cause else self._injury_causes(p)
         if cause != 'attack' and causes & set(getattr(p,'_injury_break_done',[]) or []):
             return               # 该种伤害已提醒过，放行后续活动
+        if causes == {'period'} or cause == 'period':
+            # 生理期少量失血是正常现象：首次说明原因即可，
+            # 不打断活动、不丢失进度（与饥饿/疾病等需处置的伤害不同）
+            marks = [m for m in (getattr(p, '_injury_break_done', []) or []) if m != 'attack']
+            if 'period' not in marks:
+                marks.append('period')
+                p.injury_alert = (f'生理期腹痛，失去{lost:.2f}点生命（正常现象，会自行结束；'
+                                  f'注意休息，无需治疗，活动不受影响）')
+                p.remember('生理期腹痛掉了一点血，是正常现象，不用慌', 4)
+            p._injury_break_done = marks
+            p.last_health_alert_tick = self.global_tick
+            self.log('random', f'⚠️ {p.name}生理期腹痛失去{lost:.2f}点生命（正常现象，未打断活动）', [p.pid])
+            return
         # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
         active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
         if not active and causes:
@@ -768,7 +784,7 @@ class Simulation:
         p.last_health_alert_tick=self.global_tick
         prior=(p.activity or {}).get('name') or p._pending_key or p.plan or '当前行动'
         why='；'.join(self.INJURY_CAUSE_TEXT.get(c,c) for c in sorted(causes)) if causes else '原因不明，请检查身体状态'
-        p.injury_alert=f'刚失去{lost:.2f}点生命（原因：{why}），{prior}已中断；请优先处理病因再安排下一步。'
+        p.injury_alert=f'刚失去{lost:.2f}点生命（原因：{why}），{prior}已中断（处理好后再次选择它可从中断处继续）；请优先处理病因再安排下一步。'
         if p.pid in self.sex_proposals:self._decline_sex(p.pid,'受伤后中断')
         if p._conversation and p._conversation.phase!='ended':p._conversation._end('injury')
         partner=self.by_pid(p._bed_partner_pid) if p._bed_partner_pid else None
@@ -787,6 +803,13 @@ class Simulation:
     def _cancel_timed_action(self,p):
         from .interaction_points import release
         from .town_services import finish
+        # 单人活动中断时挂起剩余进度：再次选择同一活动可从中断处继续
+        if (p.state == 'doing' and p.activity and p.activity.get('need') != 'player'
+                and p.activity_left > 0):
+            p._suspended_activity = {
+                'key': p.activity_key, 'left': p.activity_left, 'total': p.activity_total,
+                'cook_meals': getattr(p, '_cook_meals', None),
+            }
         if p.activity and p.activity.get('_kind') in ('job','course','license_course'):
             finish(self,p,p.activity_key)
         if p.vehicle_driver:self.leave_vehicle(p)

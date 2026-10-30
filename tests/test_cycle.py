@@ -147,3 +147,81 @@ class CycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PeriodInjuryTests(unittest.TestCase):
+    """生理期失血：归因明确、不打断活动；中断活动可恢复进度。"""
+
+    def setUp(self):
+        self.sim = Simulation()
+        self.sim.spawn_players(2)
+        asyncio.run(self.sim.run_identity_phase())
+        self.f = self.sim.players[0]
+        self.f.gender = '女'
+
+    def _tick(self, n=1):
+        self.sim.global_tick += n
+        for p in self.sim.players:
+            p.day, p.world_tick, p.hour = self.sim.day, self.sim.global_tick, self.sim.hour
+
+    def test_period_loss_attributed_and_does_not_break_activity(self):
+        from engine import cycle as physio
+        f = self.f
+        f.cycle_anchor = self.sim.global_tick          # 进入生理期
+        f.scene, f.x, f.y = 'house', 13, 3             # 厨房灶位
+        f.items['ingredient'] = 4
+        f.state = 'idle'
+        self.sim._apply_decision(f, Decision(action='cook', duration_minutes=60, source='llm'))
+        for _ in range(20):
+            f.tick(self.sim)
+            if f.state == 'doing':
+                break
+        self.assertEqual(f.state, 'doing')
+        left0 = f.activity_left
+        hp0 = f.stats.hp
+        with patch.object(physio.random, 'random', return_value=0.0):  # 必定失血
+            f.passive_drain(self.sim)
+            self._tick(0)
+            self.sim._interrupt_health_losses({f.pid: hp0})
+        self.assertLess(f.stats.hp, hp0)                       # 确实掉了血
+        self.assertIn('生理期', f.injury_alert)                 # 原因明确
+        self.assertIn('period', f._injury_break_done)
+        self.assertEqual(f.state, 'doing')                     # 活动未被打断
+        self.assertEqual(f.activity_left, left0)               # 进度未丢失
+        # 同期后续失血不再打扰
+        f.injury_alert = ''
+        with patch.object(physio.random, 'random', return_value=0.0):
+            f.passive_drain(self.sim)
+            self._tick(0)
+            self.sim._interrupt_health_losses({f.pid: f.stats.hp})
+        self.assertEqual(f.injury_alert, '')
+
+    def test_interrupted_activity_resumes_with_progress(self):
+        f = self.f
+        f.gender = '男'
+        f.scene, f.x, f.y = 'house', 13, 3
+        f.items['ingredient'] = 4
+        f.state = 'idle'
+        self.sim._apply_decision(f, Decision(action='cook', duration_minutes=60, source='llm'))
+        for _ in range(20):
+            f.tick(self.sim)
+            if f.state == 'doing':
+                break
+        self.assertEqual(f.state, 'doing')
+        for _ in range(2):
+            f.tick(self.sim)                                   # 做了2刻
+        left_before = f.activity_left
+        self.sim._cancel_timed_action(f)                       # 模拟受伤中断
+        self.assertEqual(f.state, 'idle')
+        self.assertEqual(f._suspended_activity['key'], 'cook')
+        self.assertEqual(f._suspended_activity['left'], left_before)
+        # 再次选择同一活动：从中断处继续
+        f.state = 'idle'
+        self.sim._apply_decision(f, Decision(action='cook', source='llm'))
+        for _ in range(20):
+            f.tick(self.sim)
+            if f.state == 'doing':
+                break
+        self.assertEqual(f.state, 'doing')
+        self.assertEqual(f.activity_left, left_before)         # 进度恢复而非重来
+        self.assertIn('继续', f.info_feedback)

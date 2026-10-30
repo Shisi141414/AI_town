@@ -98,6 +98,7 @@ def tick_female_period(p, sim) -> None:
     if random.random() < PERIOD_HP_CHANCE:
         p.stats.hp = max(0.0, p.stats.hp - PERIOD_HP_LOSS)
         p.stats.clamp()
+        p._period_hp_at = sim.global_tick   # 本刻生理期失血标记，供扣血归因
 
 
 def description(p, sim) -> str:
