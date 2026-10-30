@@ -131,7 +131,9 @@ class ExecutionTests(unittest.TestCase):
         with patch.object(self.sim,'_apply_rule') as rule:
             self.sim._apply_decision(self.p,Decision(action='love',target='不存在',source='llm'))
         rule.assert_not_called()
-        self.assertEqual(self.p.state,'waiting_model')
+        # love 现为邀请制：target 无效时拒绝并说明理由（与 intimate 同款），等待下次决策
+        self.assertEqual(self.p.state,'idle')
+        self.assertIn('请指定', self.p.info_feedback)
 
     def test_content_blocks_and_reasoning_only_response(self):
         profile=self.profile()

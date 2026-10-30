@@ -312,8 +312,11 @@ class Player:
         if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):return route(sim,self,key)
 
         if key=='love' and self.decision and self.decision.location=='bed':
-            if target is None or self.affinity.get(target.pid,0)<55 or target.affinity.get(self.pid,0)<55:
-                self._rejection='我们之间的好感还不到可以同床共枕的程度'
+            # 防御路径：正常邀请流程在 simulation._consent_decision；直接调用时保留门槛
+            from . import relations as rel_mod
+            if target is None or (self.affinity.get(target.pid,0)<55
+                                  and not rel_mod.between(sim,self.pid,target.pid)):
+                self._rejection='我们还不是恋爱关系，好感也还不到可以同床共枕的程度'
                 return False
             return route_bed_pair(sim,self,target)
 

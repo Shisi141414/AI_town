@@ -157,3 +157,81 @@ class RelationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DateConsentTests(unittest.TestCase):
+    """约会改为邀请-同意制：发起→对方以 love 回应才成行，期间双方共同占用。"""
+
+    def setUp(self):
+        self.sim = Simulation()
+        self.sim.spawn_players(4)
+        asyncio.run(self.sim.run_identity_phase())
+        self.a, self.b = self.sim.players[0], self.sim.players[1]
+        for p in (self.a, self.b):
+            p.scene, p.x, p.y = 'house', 12, 20
+            p.state = 'idle'
+            p._conversation = None
+        self.a.affinity[self.b.pid] = 60
+        self.b.affinity[self.a.pid] = 60
+
+    def _love(self, sender, target):
+        self.sim._apply_decision(sender, Decision(action='love', target=target.name,
+                                                  source='llm', reason='想约会'))
+
+    def test_proposal_then_accept_both_locked_into_date(self):
+        self._love(self.a, self.b)
+        self.assertEqual(self.a.state, 'waiting_consent')
+        self.assertEqual(self.sim.sex_proposals[self.b.pid]['kind'], 'love')
+        self._love(self.b, self.a)                       # 对方以 love 回应 = 同意
+        self.assertEqual(self.a.state, 'doing')
+        self.assertEqual(self.b.state, 'doing')
+        self.assertEqual(self.a.activity_key, 'love')
+        self.assertEqual(self.b.activity_key, 'love')
+        self.assertIsNotNone(self.a._conversation)       # 对话锁定：期间两人都不决策
+        self.assertIsNotNone(self.b._conversation)
+
+    def test_decline_by_other_action(self):
+        self._love(self.a, self.b)
+        self.sim._apply_decision(self.b, Decision(action='think', source='llm', reason='先忙'))
+        self.assertEqual(self.sim.sex_proposals, {})
+        self.assertIn('婉拒', self.a.info_feedback)
+        self.assertEqual(self.a.state, 'idle')           # waiting_consent 解除
+
+    def test_busy_target_rejected_with_reason(self):
+        self.b.state = 'doing'
+        self._love(self.a, self.b)
+        self.assertIn('没有空', self.a.info_feedback)
+        self.assertEqual(self.sim.sex_proposals, {})
+
+    def test_low_affinity_without_relation_rejected(self):
+        self.a.affinity[self.b.pid] = 10
+        self.b.affinity[self.a.pid] = 10
+        self._love(self.a, self.b)
+        self.assertIn('propose_love', self.a.info_feedback)
+        self.assertEqual(self.sim.sex_proposals, {})
+
+    def test_relation_allows_date_despite_low_affinity(self):
+        from engine import relations as rel
+        rel.establish(self.sim, self.a, self.b, '恋爱')
+        self.a.affinity[self.b.pid] = 10
+        self.b.affinity[self.a.pid] = 10
+        self._love(self.a, self.b)
+        self.assertEqual(self.a.state, 'waiting_consent')
+
+    def test_kind_mismatch_declines_old_proposal(self):
+        # A 约会邀请在先；B 用亲密回应 → 视为婉拒约会，B 可另发起亲密
+        self._love(self.a, self.b)
+        self.sim._apply_decision(self.b, Decision(action='sex', target=self.a.name,
+                                                  source='llm', reason='更想亲密'))
+        self.assertEqual(self.sim.sex_proposals.get(self.a.pid, {}).get('kind'), 'sex')
+        self.assertIn('婉拒', self.a.info_feedback)
+
+    def test_invitation_text_distinguishes_kind(self):
+        self._love(self.a, self.b)
+        self.b.sex_invitation = ''
+        proposal = self.sim.sex_proposals[self.b.pid]
+        sender = self.sim.by_pid(proposal['from'])
+        text = (f'{sender.name}邀请你约会；若愿意，选择action=love、target={sender.name}；'
+                f'也可以选择其他行动婉拒。')
+        self.assertIn('约会', text)
+        self.assertIn('action=love', text)

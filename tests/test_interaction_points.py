@@ -88,6 +88,9 @@ class InteractionPointTests(unittest.TestCase):
     def test_bed_intimacy_routes_both_people_and_releases_positions(self):
         a,b=self.sim.players[:2];a.affinity[b.pid]=80;b.affinity[a.pid]=80
         self.sim._apply_decision(a,Decision(action='love',target=b.name,location='bed'))
+        # 约会需对方同意：b 以 love 回应后才双双上床
+        self.assertEqual(a.state,'waiting_consent')
+        self.sim._apply_decision(b,Decision(action='love',target=a.name,location='bed'))
         for _ in range(300):
             for p in (a,b):p.tick(self.sim)
             if a._conversation:break
