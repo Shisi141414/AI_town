@@ -167,27 +167,40 @@ class Simulation:
         return next((p for p in self.players if p.pid == pid), None)
 
     def occupied(self,scene,ignore=None):
-        cells={(p.x,p.y) for p in self.players if p is not ignore and p.scene==scene and not p.vehicle_driver}
+        """动态占位（仅决策层使用）：活动使用位预约 + 车辆位置。
+        角色身体不再算障碍——室内通道狭窄，互为障碍时寻路极易互相卡死；
+        走路与寻路只看静态墙/家具（position_free、travel_path），
+        只有分配活动使用位（route）、落点（free_position）等决策
+        仍用本集合避免抢占。"""
+        cells=set()
         from .interaction_points import active_slot
         if scene=='house':
             cells.update(tuple(slot['position']) for p in self.players if p is not ignore and (slot:=active_slot(p)) and slot.get('reserved',True))
         cells.update((v.x,v.y) for v in self.vehicles if scene=="town" and (ignore is None or v.id!=ignore.car_id))
         return cells
 
+    def human_cells(self,scene,ignore=None):
+        """角色身体格集合（供车辆驾驶避让等少数场景使用，不用于步行）。"""
+        return {(p.x,p.y) for p in self.players if p is not ignore and p.scene==scene and not p.vehicle_driver}
+
     def position_free(self,p,scene,x,y):
+        """步行可达判定：只看静态地图（墙、家具、水）与活动者自己的家具豁免格。
+        不检测其他角色——狭窄通道里对向行走互相穿透，不再卡死。"""
         from .interaction_points import access_cells
         swimming=(p is not None and scene=='town' and p.scene==scene and p.state=='doing'
                   and p.activity_key=='swim' and (x,y)==(p.x,p.y) and world.tile(scene,x,y)=='W')
-        return (world.walkable(scene,x,y) or swimming or (p is not None and (x,y) in access_cells(p,scene))) and (x,y) not in self.occupied(scene,p)
+        return world.walkable(scene,x,y) or swimming or (p is not None and (x,y) in access_cells(p,scene))
 
     def free_position(self,scene,x,y,p=None):
-        # 优先在原设施/卧室中找空格，再寻找邻近地面，兼容家具旁的交互点。
+        # 决策层落点：优先避开活动占位与其他角色（尽量不重叠出生/进门），
+        # 极端拥挤时退化为只避活动占位，绝不因找位置失败而卡死流程。
         ch=world.tile(scene,x,y)
-        occupied=self.occupied(scene,p)
-        candidates=[(a,b) for b in range(world.SIZE) for a in range(world.SIZE)
-                    if world.walkable(scene,a,b) and (a,b) not in occupied]
-        if not candidates:raise ValueError('场景没有可用的空位')
-        return min(candidates,key=lambda q:(0 if q==(x,y) else 1,
+        def candidates(blocked):
+            return [(a,b) for b in range(world.SIZE) for a in range(world.SIZE)
+                    if world.walkable(scene,a,b) and (a,b) not in blocked]
+        pool=candidates(self.occupied(scene,p)|self.human_cells(scene,p)) or candidates(self.occupied(scene,p))
+        if not pool:raise ValueError('场景没有可用的空位')
+        return min(pool,key=lambda q:(0 if q==(x,y) else 1,
                    0 if world.tile(scene,*q)==ch else 1,abs(q[0]-x)+abs(q[1]-y),q))
 
     def yield_position(self,p,requester):

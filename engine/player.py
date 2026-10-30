@@ -195,13 +195,15 @@ class Player:
     def travel_path(self, sim, tx, ty):
         car = next((v for v in sim.vehicles if v.id == self.car_id), None)
         if car and self.scene == "town":
-            approach=world.bfs_path('town',self.x,self.y,car.x,car.y,blocked=sim.occupied('town',self))
+            # 驾驶仍避让行人（车快、撞人危险）；步行寻路不避人，只走静态地图
+            humans=sim.human_cells('town',self)|sim.occupied('town',self)
+            approach=world.bfs_path('town',self.x,self.y,car.x,car.y,blocked=humans)
             if (self.x,self.y)!=(car.x,car.y) and not approach:return []
-            onward=world.travel_path('town',car.x,car.y,tx,ty,'car',blocked=sim.occupied('town',self))
+            onward=world.travel_path('town',car.x,car.y,tx,ty,'car',blocked=humans)
             if (car.x,car.y)!=(tx,ty) and not onward:return []
             return approach+onward
         from .interaction_points import access_cells
-        return world.travel_path(self.scene, self.x, self.y, tx, ty, self.travel_mode,blocked=sim.occupied(self.scene,self),allowed=access_cells(self,self.scene))
+        return world.travel_path(self.scene, self.x, self.y, tx, ty, self.travel_mode,allowed=access_cells(self,self.scene))
 
     def _plan_route(self, sim: "Simulation", dest_scene: str, tx: int, ty: int,
                     adjacent: bool = False):
@@ -336,8 +338,9 @@ class Player:
             return True
 
         if need=='pond_shore':
+            taken=sim.occupied('town',self)|sim.human_cells('town',self)
             shores={(x+dx,y+dy) for x,y in world.find_tiles('town','W')
-                    if key!='swim' or (x,y) not in sim.occupied('town',self)
+                    if key!='swim' or (x,y) not in taken
                     for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))
                     if sim.position_free(self,'town',x+dx,y+dy)}
             if not shores:return False
@@ -398,12 +401,33 @@ class Player:
                 self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
                 self.remember(f'{a["name"]}到达时未营业',3)
                 return
-        from .interaction_points import LOCAL_ACTIONS,options
+        from .interaction_points import LOCAL_ACTIONS,options,active_slot
         if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):
             if not self.interaction_slot or self.interaction_slot['key']!=key:
                 from .interaction_points import route
                 route(sim,self,key);return
-            if self.scene!='house' or (self.x,self.y)!=tuple(self.interaction_slot['position']):
+            point=tuple(self.interaction_slot['position'])
+            # 占用者只算「正在使用中」的人——同在等位的对手不算，
+            # 否则两个等位者会把对方当占用者互相死等
+            holder=next((o for o in sim.players if o is not self and o.state=='doing'
+                         and o.interaction_slot is not None
+                         and tuple(o.interaction_slot['position'])==point),None)
+            if holder is not None:
+                # 使用位仍被占用：退到旁边空格排队（等位上限24刻，防无限等待），
+                # 不与正在使用的人重叠上桌
+                self._wait_slot_ticks=getattr(self,'_wait_slot_ticks',0)+1
+                if self._wait_slot_ticks>=24:
+                    self._abandon_pending(sim,f'{holder.name}一直占着位置')
+                    return
+                self._stall_ticks=0          # 排队等位不算路阻停滞
+                if (self.x,self.y)==point:
+                    side=next((q for q in ((point[0]+dx,point[1]+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0)))
+                               if sim.position_free(self,'house',*q)),None)
+                    if side:
+                        self.path=[side];self.route_goal=side
+                self.state='moving';return
+            self._wait_slot_ticks=0
+            if self.scene!='house' or (self.x,self.y)!=point:
                 self.state='moving';return
         cost = a.get("cost", 0)
         energy_need=max(0,-a.get('effects',{}).get('energy',0))
@@ -418,10 +442,14 @@ class Player:
         if key in ('fish','swim'):
             waters=[(self.x+dx,self.y+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))
                     if self.scene=='town' and world.tile('town',self.x+dx,self.y+dy)=='W']
-            if key=='swim':waters=[q for q in waters if q not in sim.occupied('town',self)]
             if not waters:
                 self.state='idle';self._pending_key='';return
             if key=='swim':
+                # 下水格独占：避让已在水中的人与其他下水点
+                taken=sim.occupied('town',self)|sim.human_cells('town',self)
+                waters=[q for q in waters if q not in taken]
+                if not waters:
+                    self.state='idle';self._pending_key='';return
                 sim.drop_passengers(self);sim.release_car(self)
                 self.x,self.y=waters[0];self.transport='walk'
         # 一次性付款，避免获得物品后通过上车/中断活动绕过剩余费用。
@@ -496,14 +524,21 @@ class Player:
         if self.state != 'waiting_activity':
             self._wait_ticks=0
         if self.state == "moving":
-            # 停滞看护：位置连续多刻无进展 → 换空闲点位重试；仍无进展 → 放弃行动。
-            # 防止「设施使用位被长期占用」时角色永远卡在 moving（不吃不睡不决策）。
-            prev=getattr(self,'_last_moving_pos',None)
-            self._last_moving_pos=(self.x,self.y)
-            if prev==(self.x,self.y):
-                self._stall_ticks=getattr(self,'_stall_ticks',0)+1
+            # 停滞看护：以「到目标的距离是否创新低」衡量进展——
+            # 单纯看位置变化会被侧身让路的来回摇摆骗过（位置在变但永远没接近目标）。
+            goal_now=self.route_goal or (self.path[-1] if self.path else None)
+            if goal_now:
+                dist=abs(self.x-goal_now[0])+abs(self.y-goal_now[1])
+                best=getattr(self,'_best_goal_dist',None)
+                if best is None or goal_now!=getattr(self,'_best_goal_point',None):
+                    self._best_goal_dist=dist;self._best_goal_point=goal_now;self._stall_ticks=0
+                elif dist<best:
+                    self._best_goal_dist=dist;self._stall_ticks=0
+                # 等位/到达后的清零由 _start_local 负责；此处持平即视为无进展
+                else:
+                    self._stall_ticks=getattr(self,'_stall_ticks',0)+1
             else:
-                self._stall_ticks=0
+                self._stall_ticks=getattr(self,'_stall_ticks',0)+1
             if self._stall_ticks>=6 and self._pending_key:
                 from .interaction_points import LOCAL_ACTIONS,route
                 if self._pending_key in LOCAL_ACTIONS and self.interaction_slot:
@@ -513,8 +548,8 @@ class Player:
                     route(sim,self,self._pending_key)
                     new_point=tuple(self.interaction_slot['position']) if self.interaction_slot else None
                     if new_point and new_point!=old_point:
-                        self._stall_ticks=0
-            elif self._stall_ticks>=12:
+                        self._stall_ticks=0;self._best_goal_dist=None
+            elif self._stall_ticks>=15:
                 self._abandon_pending(sim,'路上耽搁太久')
                 return
             if self.route_goal is None and self.path:self.route_goal=self.path[-1]
@@ -647,6 +682,8 @@ class Player:
         self.requested_duration = None
         self.state = "idle"
         self._stall_ticks = 0
+        self._wait_slot_ticks = 0
+        self._best_goal_dist = None
         self.blocked_ticks = 0
         self.remember(f'{label}（{why}）一直没法进行，我先算了，做点别的', 4)
         sim.log('activity', f'⏱ {self.name} {why}，放弃{label}，重新安排',

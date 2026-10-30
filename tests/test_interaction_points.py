@@ -60,12 +60,15 @@ class InteractionPointTests(unittest.TestCase):
         self.assertEqual(len({(p.x,p.y) for p in self.sim.players[:4]}),4)
         fifth=self.sim.players[4];self.sim._apply_decision(fifth,Decision(action='eat'))
         satiety=fifth.stats.satiety
-        for _ in range(50):fifth.tick(self.sim)
+        # 等位期：保持 moving、不与用餐者同格、不获得饱食收益
+        for _ in range(10):fifth.tick(self.sim)
         self.assertEqual(fifth.state,'moving')
+        self.assertNotIn((fifth.x,fifth.y),[(p.x,p.y) for p in self.sim.players[:4]])
         self.assertLessEqual(fifth.stats.satiety,satiety)
         before=[(p.x,p.y) for p in self.sim.players[:4]]
         self.sim.repair_positions()
         self.assertEqual([(p.x,p.y) for p in self.sim.players[:4]],before)
+        # 原使用者离席后，等位者接上同一个餐位
         desired=tuple(fifth.interaction_slot['position'])
         occupant=next(p for p in self.sim.players[:4] if (p.x,p.y)==desired)
         occupant._finish_activity(self.sim,occupant.activity)
