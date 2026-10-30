@@ -327,7 +327,7 @@ class Player:
                 return False
             if max(abs(target.x - self.x), abs(target.y - self.y)) > 6 \
                     and not world.same_place(self, target):
-                self._rejection='对方离我太远，够不着'
+                self._rejection='对方离我太远，够不着；你们需在同一地点（同一设施区域）才能对话或互动'
                 return False
             if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
                 self._rejection=f'{target.name}身体很健康，用不上药品'

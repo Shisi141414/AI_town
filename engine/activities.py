@@ -222,7 +222,7 @@ ACTIVITIES: dict[str, dict] = {
         "name": "对话", "emoji": "💬", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
         "effects": {},
-        "desc": "与身边的人对话：交流信息、分享想法、商量事情或增进了解；不产生心情好感变化，每轮微耗精力，3轮约占1刻时间",
+        "desc": "与同一地点的人对话：交流信息、分享想法、商量事情或增进了解；不产生心情好感变化，每轮微耗精力，3轮约占1刻时间",
     },
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
@@ -257,7 +257,7 @@ ACTIVITIES: dict[str, dict] = {
     "use_medicine": {
         "name":"给室友用药", "emoji":"💊", "duration":1, "need":"player",
         "scene":"any", "cost":0, "needs_item":"medicine", "effects":{"energy":-0.5},
-        "desc":"在室友身边用药品疗伤或缓解疾病",
+        "desc":"与室友在同一地点（同一设施区域）用药品疗伤或缓解疾病",
     },
     "attack": {
         "name": "攻击", "emoji": "⚔️", "duration": 1, "need": "player",
@@ -319,10 +319,10 @@ def activity_description_defaults() -> dict[str, str]:
         "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近来回踱步放松；不会移动到别处（回家需直接选sleep或visit）",
-        "chat":"在室友身边；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
-        "love":"在室友身边或床上；约会、增进感情", "sex":"在室友身边或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
-        "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
-        "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",
+        "chat":"与室友在同一地点（同一设施区域）；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
+        "love":"与室友在同一地点（同一设施区域）或床上；约会、增进感情", "sex":"与室友在同一地点（同一设施区域）或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
+        "gift":"与室友在同一地点（同一设施区域）；赠送物品、增进感情", "attack":"与室友在同一地点（同一设施区域）；伤害对方、恶化关系",
+        "give_meal":"与室友在同一地点；把饭菜送给对方当场吃", "use_medicine":"与室友在同一地点；消耗药品治疗伤病",
         "destroy":"在公共设施附近；破坏设施、发泄情绪",
         "home_treat":"在家中；用医学技能照护自己或室友", "stock":"在自己卧室电脑前；交易股票，可能盈亏",
     }
@@ -400,7 +400,7 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
             detail = "回自己卧室床上睡觉（夜间恢复更高）；从镇上选它会自动回家"
         place_hint=''
         if places:
-            labels={'here':'当前位置','near_player':'室友身边','own_computer':'自己的电脑','own_bedroom':'自己的卧室','house_common':'公共区','house_patient':'病人旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣区','house:h':'卧室'}
+            labels={'here':'当前位置','near_player':'同一地点','own_computer':'自己的电脑','own_bedroom':'自己的卧室','house_common':'公共区','house_patient':'病人旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣区','house:h':'卧室'}
             from .town_services import NAMES
             visible=[labels.get(loc,NAMES.get(loc[5:],loc) if loc.startswith('town:') else loc) for current,locations in places.items() if current in (scene,'any') for loc in locations]
             if visible:place_hint='｜可在'+ '、'.join(dict.fromkeys(visible))

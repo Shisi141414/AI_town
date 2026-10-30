@@ -841,12 +841,15 @@ class Simulation:
                 self._apply_rule(p)
 
     def _observe_nearby(self, observer: Player) -> list[Player]:
+        # 与社交发起判定（begin_activity 的 player 类）完全一致：
+        # 同一地点（同设施区）或切比雪夫距离≤6，提示词不再显示"够不着"的人
         nearby = [other for other in self.players if other is not observer
                   and other.scene == observer.scene
-                  and abs(other.x-observer.x)+abs(other.y-observer.y) <= 8]
+                  and (world.same_place(observer, other)
+                       or max(abs(other.x-observer.x), abs(other.y-observer.y)) <= 6)]
         if nearby:
             observed = brain.nearby_description(nearby)
-            observer.remember(f"第{self.day}天 {self.clock}，我观察到附近室友：{observed}", 4)
+            observer.remember(f"第{self.day}天 {self.clock}，我身边同一地点的室友：{observed}", 4)
         return nearby
 
     async def _decide_one(self, p: Player) -> None:

@@ -205,7 +205,7 @@ class MechanicsDiscoveryTests(unittest.TestCase):
 
     def test_model_decision_records_only_visible_roommates(self):
         a,b,c=self.sim.players
-        a.x,a.y=10,10;b.x,b.y=18,10;c.x,c.y=19,10
+        a.x,a.y=10,10;b.x,b.y=14,10;c.x,c.y=19,10  # b切比雪夫4可见；c距离9不可见
         self.sim.profile=ApiProfile(id='stub',name='stub',api_key='fake',default_model='stub')
         before={p.pid:p.memory.counts()['1'] for p in (a,b,c)}
         with patch('engine.brain.decide_llm',new_callable=AsyncMock,return_value=Decision(action='think')) as decide,patch.object(self.sim,'_apply_decision'):
