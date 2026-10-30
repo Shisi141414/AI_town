@@ -90,7 +90,9 @@ def arrive_bed(sim,p):
     if other.state!='waiting_activity':return
     a=sim.by_pid(p._bed_initiator_pid);b=other if a is p else p
     key=p._pending_key
-    if not a or (key=='love' and (a.affinity.get(b.pid,0)<55 or b.affinity.get(a.pid,0)<55)):
+    from . import relations as rel_mod
+    if not a or (key=='love' and not rel_mod.between(sim,a.pid,b.pid)
+                 and (a.affinity.get(b.pid,0)<55 or b.affinity.get(a.pid,0)<55)):
         for q in (p,other):q.state='idle';q._pending_key='';release(sim,q)
         return
     a._start_local(key,sim);b._start_local(key,sim)

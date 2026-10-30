@@ -343,10 +343,13 @@ class Player:
                 self._rejection=f'{target.name}吃得很饱（饱食95以上），现在不需要饭菜'
                 return False
             if key == "love":
+                from . import relations as rel_mod
+                rel = rel_mod.between(sim, self.pid, target.pid)
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
                           and target.affinity.get(self.pid, 0) >= a["consent_threshold"])
-                if not mutual:
-                    self._rejection='我们之间的好感还不够亲近，恋爱没有成'
+                if not (rel or mutual):
+                    self._rejection=(f'我们还不是恋爱关系，且好感未互达{a["consent_threshold"]}，约会没有成'
+                                     f'（好感足够可先 propose_love 建立关系）')
                     return False
             self._pending_key = key
             self._pending_target_pid = target.pid
@@ -948,7 +951,7 @@ class Player:
             else:
                 physio.satisfy_female(self, sim, how='亲密')
         if key == 'love' and self.gender == '女':
-            physio.satisfy_female(self, sim, how='恋爱')
+            physio.satisfy_female(self, sim, how='约会')
         if key=='use_medicine' and self.target_player:
             target=self.target_player
             if self.items.get('medicine',0)>0 and self.scene==target.scene and max(abs(self.x-target.x),abs(self.y-target.y))<=3:

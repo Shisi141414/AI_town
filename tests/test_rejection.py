@@ -58,8 +58,8 @@ class RejectionTests(unittest.TestCase):
         self.a.affinity[self.b.pid] = 30.0
         self.b.affinity[self.a.pid] = 40.0
         self.sim._apply_decision(self.a, Decision(action='love', target=self.b.name, source='llm'))
-        self.assertIn('好感还不够', self.a.info_feedback)
-        self.assertIn('恋爱', self.a.memory.brief(0, k=10, query='被拒绝'))
+        self.assertIn('好感未互达', self.a.info_feedback)   # 新文案：未建立关系且好感不足
+        self.assertIn('约会', self.a.memory.brief(0, k=10, query='被拒绝'))
         self.assertIn('好感', self.b.memory.brief(0, k=10, query='没有成行'))
 
     def test_sex_decline_carries_target_reason(self):

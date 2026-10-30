@@ -90,6 +90,8 @@ class Simulation:
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self.loan_queue: list[tuple] = []       # (borrower_pid, lender_pid) 急救借款
         self.sex_proposals: dict[str, dict] = {}
+        self.relations: dict[str, dict] = {}           # 关系表：排序pid对 → {type,a,b,since,key}
+        self.relation_proposals: dict[str, dict] = {}  # 被邀请pid → {from,type,expires}
         self._affinity_busy = False
         self._loan_busy = False
         self._loop_task: asyncio.Task | None = None
@@ -567,6 +569,9 @@ class Simulation:
         for target_pid,proposal in list(self.sex_proposals.items()):
             if self.global_tick >= proposal['expires']:
                 self._decline_sex(target_pid,'邀请已过期')
+        for target_pid,proposal in list(self.relation_proposals.items()):
+            if self.global_tick >= proposal['expires']:
+                self._decline_relation(target_pid,'邀请已过期')
         await self.maintain_memories()
 
         # 1. 决策（idle 且不在对话中的玩家；住院/待收治者走住院专属决策）
@@ -889,6 +894,9 @@ class Simulation:
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
         p.sex_invitation=(f'{sender.name}邀请你亲密互动；若愿意，选择action=intimate、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
+        from . import relations as rel_mod
+        p.relations_desc = rel_mod.describe(p, self)
+        p.relation_invitation = rel_mod.invitation_text(self, p)
         p.known_names = {o.pid: o.name for o in self.players}
         p.known_roommates = [(o.name, o.gender) for o in others]
         from .activity_rules import catalog as activity_catalog
@@ -997,10 +1005,17 @@ class Simulation:
             return
         if key != 'sex' and p.pid in self.sex_proposals:
             self._decline_sex(p.pid,('我选择了别的安排'+(f'（{d.reason}）' if getattr(d,'reason','') else '')),by_target=True)
+        # 收到关系邀请者若提出反向关系请求（互表），在 _relation_decision 内直接确立；
+        # 其余非接受行动（含 relation_end）视为婉拒
+        if key not in ('relation_accept','propose_love','propose_friend') and p.pid in self.relation_proposals:
+            self._decline_relation(p.pid,'对方选择了其他安排',by_target=True)
         if key in ('sex','phone'):
             from .activity_rules import available_here
             if not available_here(self,p,key):
                 p.info_feedback='当前不在这项活动允许的地点';p.remember(p.info_feedback,3);p.state='idle';return
+        if key in ('propose_love','propose_friend','relation_accept','relation_end'):
+            self._relation_decision(p,d,key)
+            return
         if key == 'sex':
             self._sex_decision(p,d)
             return
@@ -1130,6 +1145,69 @@ class Simulation:
                      f"🧠 {p.name} 决定{a['name']}"
                      + (f"（对象:{d.target}）" if d.target else "")
                      + f" —— {d.reason}", [p.pid])
+
+    def _decline_relation(self,target_pid,reason,by_target=False):
+        proposal=self.relation_proposals.pop(target_pid,None)
+        if not proposal:return
+        sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
+        if sender and target:
+            sender.remember(f'我向{target.name}提出建立{proposal["type"]}关系，被婉拒：{reason}',6)
+            if by_target:
+                target.remember(f'我婉拒了{sender.name}建立{proposal["type"]}关系的提议：{reason}',5)
+            sender.info_feedback=f'{target.name}婉拒了你的{proposal["type"]}关系提议'
+            self.log('social',f'{sender.name}向{target.name}提出建立{proposal["type"]}关系，未获回应',[sender.pid,target.pid])
+
+    def _relation_decision(self,p,d,key):
+        """propose_love / propose_friend / relation_accept / relation_end"""
+        from . import relations as rel_mod
+        if key=='relation_accept':
+            proposal=self.relation_proposals.pop(p.pid,None)
+            if not proposal:
+                p.state='idle';p.info_feedback='当前没有等待你回应的关系邀请';return
+            sender=self.by_pid(proposal['from'])
+            if sender is None:
+                p.state='idle';p.info_feedback='邀请方已不在';return
+            rel=rel_mod.establish(self,sender,p,proposal['type'])
+            p.state='idle';sender.state='idle';p.info_feedback=f'你和{sender.name}确立了{rel["type"]}关系'
+            return
+        if key=='relation_end':
+            target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None) if d.target else None
+            rel=rel_mod.end(self,p,target)
+            if not rel:
+                p.state='idle'
+                p.info_feedback='你现在没有可结束的关系' if target is None else f'你和{target.name}之间没有关系'
+            else:
+                p.state='idle'
+            return
+        # propose_love / propose_friend
+        rtype='恋爱' if key=='propose_love' else '挚友'
+        target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
+        if not target:
+            p.state='idle';p.info_feedback='请通过 target 指定你想邀请的室友';return
+        # 对方恰好也向我提出过 → 两情相悦，直接确立
+        pending=self.relation_proposals.get(p.pid)
+        if pending and pending['from']==target.pid:
+            self.relation_proposals.pop(p.pid,None)
+            rel=rel_mod.establish(self,target,p,pending['type'])
+            p.state='idle';target.state='idle'
+            p.info_feedback=f'你与{target.name}互相表白成功，确立了{rel["type"]}关系'
+            return
+        if self.relation_proposals.get(target.pid,{}).get('from')==p.pid:
+            p.state='idle';p.info_feedback=f'你已向{target.name}提出过建立关系，仍在等待对方回应';return
+        existing=rel_mod.between(self,p.pid,target.pid)
+        if existing:
+            p.state='idle'
+            p.info_feedback=f'你和{target.name}已经是{existing["type"]}关系'
+            p.remember(f'我想和{target.name}确立{rtype}关系，但我们已经是{existing["type"]}关系了',4)
+            return
+        if p.scene!=target.scene:
+            p.state='idle';p.info_feedback=f'你们不在同一地点，无法当面提出（先与{target.name}会合）';return
+        if target.state not in ('idle','waiting_model') or target._conversation or p._conversation:
+            p.state='idle';p.info_feedback='对方现在没有空回应邀请';return
+        self.relation_proposals[target.pid]={'from':p.pid,'type':rtype,'expires':self.global_tick+rel_mod.PROPOSAL_TTL}
+        p.remember(f'我向{target.name}提出建立{rtype}关系，等待对方回应',7)
+        p.state='idle';p.info_feedback=f'已向{target.name}提出建立{rtype}关系，等待对方决定'
+        self.log('social',f'💌 {p.name} 向 {target.name} 提出建立{rtype}关系，等待对方决定',[p.pid,target.pid])
 
     def _decline_sex(self,target_pid,reason,by_target=False):
         proposal=self.sex_proposals.pop(target_pid,None)

@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','fridge','activity_overrides','disabled_activities','custom_activities','shop_car','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','fridge','relations','relation_proposals','activity_overrides','disabled_activities','custom_activities','shop_car','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -183,6 +183,8 @@ class SaveStore:
         sim.disabled_activities=list(getattr(sim,'disabled_activities',[]))
         sim.custom_activities=getattr(sim,'custom_activities',{})
         sim.shop_car=getattr(sim,'shop_car',{'name':'私家汽车','emoji':'🚗','enabled':True})
+        if not isinstance(getattr(sim,'relations',None),dict):sim.relations={}
+        if not isinstance(getattr(sim,'relation_proposals',None),dict):sim.relation_proposals={}
         sim.fridge=getattr(sim,'fridge',None) or {'ingredient':0,'meals':[]}
         if not isinstance(sim.fridge.get('meals'),list):sim.fridge['meals']=[]
         sim.fridge.setdefault('ingredient',0)
