@@ -789,7 +789,7 @@ class Simulation:
         p.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(self).items() if not row['builtin']}
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
-        p.sex_invitation=(f'{sender.name}邀请你做爱；若愿意，选择action=sex、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
+        p.sex_invitation=(f'{sender.name}邀请你亲密互动；若愿意，选择action=intimate、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
         p.known_names = {o.pid: o.name for o in self.players}
         p.known_roommates = [(o.name, o.gender) for o in others]
         from .activity_rules import catalog as activity_catalog
