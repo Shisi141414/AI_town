@@ -59,14 +59,14 @@ ACTIVITIES: dict[str, dict] = {
         "scene": "house", "cost": 0,
         "effects": {"satiety": 13, "mood": 2},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "在餐厅吃饭（需先有饭：做饭后60 tick内有效，否则去饭店）",
+        "desc": "在餐厅吃饭（需先有饭：做饭后60 tick内有效，否则去饭店）；饱食达上限（默认95）时不能吃",
     },
     "eat_out": {
         "name": "下馆子", "emoji": "🍜", "duration": 3, "need": "facility:R",
         "scene": "town", "cost": 10,
         "effects": {"satiety": 15, "mood": 3},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "去镇上饭店吃饭（花 10 元，不用自己做）",
+        "desc": "去镇上饭店吃饭（花 10 元，不用自己做）；饱食达上限（默认95）时会被拒，等饿了再来",
     },
     "watch_tv": {
         "name": "看电视", "emoji": "📺", "duration": 3, "need": "facility:L",

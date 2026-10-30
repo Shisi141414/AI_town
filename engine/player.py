@@ -270,7 +270,10 @@ class Player:
         a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
             return False
-        if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
+        if key in ('eat', 'eat_out') and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
+            # 家中用餐与饭店用餐同一饱食上限：避免在饭店相遇后饱着肚子无休止聚餐
+            cap = sim.mechanics.get('meal_block_satiety', 95.0)
+            self._rejection = f'我吃得很饱（饱食{self.stats.satiety:.0f}，达到{cap:.0f}上限），等饿了再吃'
             self.remember('我吃得很饱，暂时吃不下饭', 3)
             return False
         if a.get('need') is None and a.get('scene') not in ('any',self.scene):
