@@ -254,6 +254,13 @@ ACTIVITIES: dict[str, dict] = {
         "scene":"any", "cost":0, "needs_item":"meal", "effects":{"mood":1},
         "desc":"把做好的饭菜送给附近室友，对方当场吃掉",
     },
+    "self_relief": {
+        "name": "自行解决", "emoji": "🌙", "duration": 3, "need": "facility:b",
+        "scene": "house", "cost": 0, "male_only": True,
+        "effects": {"energy": -20, "mood": 2},
+        "fixed_duration": True,
+        "desc": "在卫生间独处释放生理紧张（30分钟，共损耗60精力）；释放后精力/饱食/心情消耗恢复基线，开始新的生理周期",
+    },
     "use_medicine": {
         "name":"给室友用药", "emoji":"💊", "duration":1, "need":"player",
         "scene":"any", "cost":0, "needs_item":"medicine", "effects":{"energy":-0.5},
@@ -323,6 +330,7 @@ def activity_description_defaults() -> dict[str, str]:
         "love":"与室友在同一地点（同一设施区域）或床上；约会、增进感情", "sex":"与室友在同一地点（同一设施区域）或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
         "gift":"与室友在同一地点（同一设施区域）；赠送物品、增进感情", "attack":"与室友在同一地点（同一设施区域）；伤害对方、恶化关系",
         "give_meal":"与室友在同一地点；把饭菜送给对方当场吃", "use_medicine":"与室友在同一地点；消耗药品治疗伤病",
+        "self_relief":"在卫生间独处释放生理紧张（仅男性；释放后消耗倍率恢复基线）",
         "destroy":"在公共设施附近；破坏设施、发泄情绪",
         "home_treat":"在家中；用医学技能照护自己或室友", "stock":"在自己卧室电脑前；交易股票，可能盈亏",
     }
@@ -481,6 +489,7 @@ KEY_NOTES: dict[str, str] = {
     "stock": "在本机交易；场所股受营业情况影响，可能亏损",
     "buy_car": "需已到商店；买车后仍需驾照才能驾驶",
     "treat": "诊所24小时营业",
+    "self_relief": "仅男性；释放后生理周期消耗倍率归1并开始新周期（互动同样有效）",
 }
 
 _STAT_LABELS = (("hp", "生命"), ("satiety", "饱食"), ("energy", "精力"),

@@ -546,6 +546,11 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
         return Decision(action="computer_game", reason="回家玩电脑游戏", source="rule")
     if s.money < 20:
         return Decision(action="work", reason="手头紧，去赚点钱", source="rule")
+    # 生理周期：男性紧张度高且精力充足 → 卫生间释放
+    if p.gender == '男' and p.scene == 'house' and s.energy >= 70:
+        from . import cycle as physio
+        if physio.male_tension(p, None) > 0.75:
+            return Decision(action="self_relief", reason="身体紧张得难受，去卫生间释放一下", source="rule")
     if s.mood < 25:
         roll = random.random()
         if roll < 0.15 and others:

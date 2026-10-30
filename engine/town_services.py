@@ -245,6 +245,8 @@ def prompt_context(sim,p):
     from .shop_products import catalog as shop_catalog
     lines.append('商店商品：'+'、'.join(f'{row["name"]} {row["price"]:g}元' for row in shop_catalog(sim).values() if row['enabled']))
    break
+ from . import cycle as physio
+ lines.append('生理周期（5天一轮）：'+physio.description(p,sim))
  fridge=getattr(sim,'fridge',None) or {'ingredient':0,'meals':[]}
  fridge_meals=len(fridge.get('meals',[]))
  if fridge.get('ingredient') or fridge_meals:

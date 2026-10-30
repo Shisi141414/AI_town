@@ -130,6 +130,10 @@ class Player:
         self._final_scene: str | None = None
         self.model = ""
         self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0, "ingredient": 0}
+        # 生理周期（cycle.py）：周期锚点/黄体期满足标记/经期提示标记
+        self.cycle_anchor = 0
+        self.cycle_satisfied_anchor = -1
+        self.cycle_noticed = -1
         self.meal_qualities: list[int] = []
         self.meal_expiry: list[int] = []      # 每份饭菜的到期tick（与数量FIFO对应）
         self.eating_quality = 0
@@ -270,6 +274,9 @@ class Player:
         a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
             self._rejection='这项活动不存在或已被关闭，请改选其他行动'
+            return False
+        if a.get('male_only') and self.gender != '男':
+            self._rejection='这项活动只有男性居民可以进行'
             return False
         if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
             self.remember('我吃得很饱，暂时吃不下饭', 3)
@@ -823,6 +830,14 @@ class Player:
                 return
         from .town_services import step_effects
         eff=step_effects(sim,self,key,eff)
+        # 生理周期：负面精力/饱食/心情效果按当前倍率加重
+        # （「自行解决」是释放动作本身，代价固定不放大）
+        from . import cycle as physio
+        if key != 'self_relief':
+            _pm = physio.multipliers(self, sim)
+            for _s in ('satiety', 'energy', 'mood'):
+                if eff.get(_s, 0) < 0:
+                    eff[_s] = eff[_s] * _pm[_s]
         if act.is_night(self.hour) and a.get("night_bonus"):
             for stat, bonus in a["night_bonus"].items():
                 eff[stat] = eff.get(stat, 0) + bonus
@@ -924,6 +939,16 @@ class Player:
                 sim.log('activity',f'🍱 {self.name}做好{produced}份饭（随身{keep}份、冰箱{chilled}份，消耗{produced}份食材）',[self.pid])
             else:
                 sim.log('activity',f'🍳 {self.name}的做饭中途结束，没有产出饭菜',[self.pid])
+        from . import cycle as physio
+        if key == 'self_relief' and self.gender == '男':
+            physio.release_male(self, sim)
+        if key == 'sex':
+            if self.gender == '男':
+                physio.release_male(self, sim, how='互动')
+            else:
+                physio.satisfy_female(self, sim, how='亲密')
+        if key == 'love' and self.gender == '女':
+            physio.satisfy_female(self, sim, how='恋爱')
         if key=='use_medicine' and self.target_player:
             target=self.target_player
             if self.items.get('medicine',0)>0 and self.scene==target.scene and max(abs(self.x-target.x),abs(self.y-target.y))<=3:
@@ -1000,10 +1025,13 @@ class Player:
             # 待收治（借款中）：不做消耗，等待结果
             self.stats.clamp()
             return
+        from . import cycle as physio
+        physio.tick_female_period(self, sim)
+        _mults = physio.multipliers(self, sim)
         hp_before=self.stats.hp
         for k, v in act.PASSIVE_DRAIN.items():
-            if k == 'mood':v = -sim.mechanics['base_mood_drain']
-            if k == 'satiety':v = -sim.mechanics['base_satiety_drain']
+            if k == 'mood':v = -sim.mechanics['base_mood_drain'] * _mults['mood']
+            if k == 'satiety':v = -sim.mechanics['base_satiety_drain'] * _mults['satiety']
             if k == 'energy':v = sim.mechanics['base_energy_regen']
             if k == "satiety" and (self.vehicle_driver or self.transport == "car"):
                 continue
