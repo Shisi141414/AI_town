@@ -188,7 +188,10 @@
       <input id="npColor" type="color" value="#7f8c8d" style="width:40px;height:32px;border:1px solid #d0d7de;border-radius:6px">
     </div>
     <button class="btn" id="btnAddPlayer" style="width:100%;margin-top:6px">＋ 入住小镇</button>
-    <div class="hint">模拟开始后锁定；重置世界后恢复默认 3 位居民。手动添加的居民跳过起名阶段。</div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px">
+      <input type="checkbox" id="npJoinIdentity" checked> 开局由模型自选姓名、性别与颜色（上面的名字只作占位）
+    </label>
+    <div class="hint">模拟开始后锁定；重置世界后恢复默认 3 位居民。勾选自选身份时，新居民与默认居民一样参与开局的起名阶段。</div>
 
     <div class="section-title">记忆查看器</div>
     <div class="form-row"><select id="memPlayer" style="width:100%"></select></div>

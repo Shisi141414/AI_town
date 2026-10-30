@@ -712,6 +712,7 @@ class PlayerIn(BaseModel):
     name: str = Field(min_length=1, max_length=20, pattern=r"^[^<>\x00-\x1f]+$")
     color: str = Field(default="#7f8c8d", pattern=r"^#[0-9a-fA-F]{6}$")
     emoji: str = Field(default="🙂", max_length=16)
+    join_identity: bool = Field(default=True)
 
 
 class TravelIn(BaseModel):
@@ -768,7 +769,7 @@ async def add_player(p_in: PlayerIn):
     if sim.running or sim.identity_phase:
         raise HTTPException(400, "模拟运行中无法添加玩家，请先暂停/停止")
     try:
-        p = sim.add_player_manual(p_in.name, p_in.color, p_in.emoji)
+        p = sim.add_player_manual(p_in.name, p_in.color, p_in.emoji, join_identity=p_in.join_identity)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return p.snapshot().model_dump()

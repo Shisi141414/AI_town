@@ -226,8 +226,9 @@ class Simulation:
             out.append(p)
         return out
 
-    def add_player_manual(self, name: str, color: str, emoji: str) -> Player:
-        """未运行时手动添加玩家（有名字，跳过身份阶段）"""
+    def add_player_manual(self, name: str, color: str, emoji: str, join_identity: bool = True) -> Player:
+        """未运行时手动添加玩家。join_identity=True 时保留占位名，开局身份阶段
+        仍由模型自选姓名/性别/颜色（与默认居民对称）；False 则固定手动身份。"""
         if any(p.name == name for p in self.players):
             raise ValueError(f"玩家 {name} 已存在")
         import random as _r
@@ -238,11 +239,11 @@ class Simulation:
         pid = uuid.uuid4().hex[:8]
         p = Player(pid=pid, name=name, color=color,
                    emoji=emoji or "🙂", bedroom=(bx, by), memory_path=(self.memory_dir / f"{pid}.sqlite3") if self.memory_dir else None)
-        p.identity_done = True
+        p.identity_done = not join_identity
         self.players.append(p)
         if self.recorder and not self.recorder.closed:
             p.memory.sink=lambda data:self.record("memory",{"pid":p.pid,**data})
-        self.log("system", f"🎉 {name} {p.emoji} 入住小镇", [p.pid],scope="game")
+        self.log("system", f"🎉 {name} {p.emoji} 入住小镇" + ("，等待自选身份" if join_identity else ""), [p.pid],scope="game")
         return p
 
     def remove_player(self, pid: str) -> Player | None:

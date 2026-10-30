@@ -541,7 +541,8 @@ $("btnAddPlayer").onclick = async () => {
   const name = $("npName").value.trim();
   if (!name) return toast("名字不能为空", false);
   try {
-    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂"});
+    await jpost(`${API}/players`, {name, color: $("npColor").value, emoji: $("npEmoji").value || "🙂",
+      join_identity: $("npJoinIdentity").checked});
     $("npName").value = "";
     toast(`${name} 已入住`);
     await refreshState(); loadBinds(); renderPlayerAdmin();
