@@ -637,11 +637,24 @@ async function refreshState() {
 
 
 /* ================= 过程回放（只读） ================= */
+function selectedSaveIds(){
+  return [...document.querySelectorAll('#saveEntries .archive-select:checked')].map(input=>input.value);
+}
+function updateSaveSelection(){
+  const count=selectedSaveIds().length;
+  $("btnDeleteSelectedSaves").textContent=`删除所选（${count}）`;
+  $("btnDeleteSelectedSaves").disabled=replayMode||count===0;
+  $("btnSelectAllSaves").disabled=replayMode||!document.querySelector('#saveEntries .archive-select');
+  $("btnClearSaveSelection").disabled=replayMode||count===0;
+}
 async function loadSaves(){
   const d=await jget(`${API}/saves`);
   const open=new Set([...document.querySelectorAll('#saveEntries details[open]')].map(e=>e.dataset.id));
+  const selected=new Set(selectedSaveIds());
   $("currentSave").textContent=`当前世界：${d.items.find(s=>s.id===d.current)?.name||d.current||"未创建"}`;
-  $("saveEntries").innerHTML=d.items.map(s=>`<details class="archive-entry" data-id="${esc(s.id)}" ${open.has(s.id)?'open':''}>
+  $("saveEntries").innerHTML=d.items.map(s=>`<div class="archive-row">
+    <input class="archive-select" type="checkbox" value="${esc(s.id)}" aria-label="选择存档 ${esc(s.name)}" ${selected.has(s.id)&&s.id!==d.current?'checked':''} ${s.id===d.current||replayMode?'disabled':''} title="${s.id===d.current?'当前存档不可删除':'选择此存档进行批量删除'}">
+    <details class="archive-entry" data-id="${esc(s.id)}" ${open.has(s.id)?'open':''}>
     <summary><span class="archive-name">${s.favorite?'★ ':''}${esc(s.name)}</span>${s.id===d.current?'<span class="tag">当前</span>':''}<small>第${s.day}天 ${esc(s.clock)} · ${s.residents}位居民</small></summary>
     <div class="archive-body"><p class="hint">保存于 ${esc(new Date(s.updated).toLocaleString())}<br>${esc(s.reason)} · ${s.memory_count}条记忆<br>${s.context_complete?'完整世界与模型上下文':'早期存档：未记录当时的全部运行设置'}</p>
     <div class="archive-actions">
@@ -650,7 +663,8 @@ async function loadSaves(){
       <button class="btn" data-action="rename" ${replayMode?'disabled':''}>重命名</button>
       <button class="btn" data-action="favorite" data-favorite="${s.favorite}" ${replayMode?'disabled':''}>${s.favorite?'★ 已收藏':'☆ 收藏'}</button>
       <button class="btn warn" data-action="delete" ${s.id===d.current||replayMode?'disabled':''} title="${s.id===d.current?'先切换到其他存档后可删除':'删除此存档'}">删除存档</button>
-    </div></div></details>`).join('')||'<p class="hint">还没有存档</p>';
+    </div></div></details></div>`).join('')||'<p class="hint">还没有存档</p>';
+  updateSaveSelection();
 }
 async function refreshRestoredWorld(){
   stopReplay();replayMode=false;replayRequest++;replayLocks(false);$("replayControls").hidden=true;
@@ -663,6 +677,23 @@ $("btnSaveWorld").onclick=async()=>{
   await jpost(`${API}/saves/current`);await refreshState();await loadSaves();toast("已创建独立存档，保持暂停");
 };
 $("btnRefreshSaves").onclick=loadSaves;
+$("saveEntries").onchange=e=>{if(e.target.matches('.archive-select'))updateSaveSelection();};
+$("btnSelectAllSaves").onclick=()=>{
+  document.querySelectorAll('#saveEntries .archive-select:not(:disabled)').forEach(input=>input.checked=true);
+  updateSaveSelection();
+};
+$("btnClearSaveSelection").onclick=()=>{
+  document.querySelectorAll('#saveEntries .archive-select').forEach(input=>input.checked=false);
+  updateSaveSelection();
+};
+$("btnDeleteSelectedSaves").onclick=async()=>{
+  const ids=selectedSaveIds();if(!ids.length||replayMode)return;
+  const names=ids.map(id=>document.querySelector(`#saveEntries details[data-id="${id}"] .archive-name`)?.textContent.trim()||id);
+  const preview=names.slice(0,5).join('、')+(names.length>5?'等':'');
+  if(!confirm(`确定删除 ${ids.length} 个存档（${preview}）？居民、记忆和世界检查点将一并删除，此操作不能撤销。`))return;
+  const result=await jpost(`${API}/saves/delete-selected`,{ids});
+  await loadSaves();toast(`已删除 ${result.deleted} 个存档`);
+};
 $("saveEntries").onclick=async e=>{
   const button=e.target.closest('button[data-action]');if(!button)return;
   const entry=button.closest('[data-id]'),id=entry.dataset.id,action=button.dataset.action;
@@ -701,6 +732,8 @@ function stopReplay(){replayPlayVersion++;clearTimeout(replayTimer);replayTimer=
 function replayLocks(active){
   for(const id of ["btnReset","speedSel","btnSaveWorld"])$(id).disabled=active;
   for(const button of document.querySelectorAll('#saveEntries button:not([data-action="replay"])'))button.disabled=active||button.dataset.action==='delete'&&!!button.closest('details').querySelector('.tag');
+  for(const input of document.querySelectorAll('#saveEntries .archive-select'))input.disabled=active||!!input.closest('.archive-row').querySelector('.tag');
+  updateSaveSelection();
   for(const panel of ["api","settings"])document.querySelector(`nav [data-panel="${panel}"]`).disabled=active;
 }
 async function showReplayFrame(index){

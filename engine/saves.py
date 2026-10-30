@@ -275,6 +275,21 @@ class SaveStore:
         if target.parent!=root:raise ValueError('存档路径超出范围')
         shutil.rmtree(target)
 
+    def delete_many(self,ids):
+        if not ids:raise ValueError('请先选择要删除的存档')
+        unique=list(dict.fromkeys(ids))
+        active=self.current()
+        root=self.root.resolve()
+        targets=[]
+        for sid in unique:
+            self.read(sid)
+            if active and active['id']==sid:raise ValueError('不能删除当前存档')
+            target=self.folder(sid).resolve()
+            if target.parent!=root:raise ValueError('存档路径超出范围')
+            targets.append(target)
+        for target in targets:shutil.rmtree(target)
+        return len(targets)
+
     def listing(self):
         if not self.root.exists():return []
         out=[]

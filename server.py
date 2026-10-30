@@ -841,6 +841,21 @@ async def delete_save(sid:str):
         return {'ok':True}
 
 
+class SaveBatchDelete(BaseModel):
+    ids: list[str] = Field(min_length=1,max_length=500)
+
+
+@app.post('/api/saves/delete-selected')
+async def delete_selected_saves(request:SaveBatchDelete):
+    async with _control_lock:
+        if getattr(sim,'save_id',None) in request.ids:
+            raise HTTPException(409,'不能删除当前存档')
+        try:count=save_store().delete_many(request.ids)
+        except FileNotFoundError:raise HTTPException(404,'有存档已不存在，请刷新列表后重试')
+        except ValueError as exc:raise HTTPException(409,str(exc))
+        return {'ok':True,'deleted':count}
+
+
 async def continue_checkpoint(data,source):
     global sim,_identity_started,config
     store=save_store()

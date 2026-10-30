@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -40,3 +41,17 @@ class SaveTests(unittest.TestCase):
 
     def test_save_id_rejects_path_escape(self):
         with self.assertRaises(ValueError):SaveStore(Path('.')).folder('../elsewhere')
+
+    def test_batch_delete_validates_all_before_removing_any(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store=SaveStore(Path(temp))
+            ids=[store.allocate() for _ in range(3)]
+            for sid in ids:
+                (store.folder(sid)/'state.json').write_text(json.dumps({'version':1,'id':sid}),'utf-8')
+            store.activate(ids[0])
+            with self.assertRaises(ValueError):store.delete_many([ids[1],ids[0]])
+            self.assertTrue((store.folder(ids[1])/'state.json').exists())
+            self.assertEqual(store.delete_many([ids[1],ids[2],ids[1]]),2)
+            self.assertFalse(store.folder(ids[1]).exists())
+            self.assertFalse(store.folder(ids[2]).exists())
+            self.assertTrue(store.folder(ids[0]).exists())

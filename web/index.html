@@ -56,6 +56,7 @@
     <p class="hint" id="currentSave">正在读取当前存档…</p>
     <p class="hint">每次保存创建独立条目，包含居民记忆、对话、活动进度、提示词与模型绑定。从此处继续会创建副本，原档保留。</p>
     <div class="archive-toolbar"><button class="btn primary" id="btnSaveWorld">保存当前</button><button class="btn" id="btnRefreshSaves">刷新列表</button></div>
+    <div class="archive-batch"><button class="btn" id="btnSelectAllSaves">全选可删除</button><button class="btn" id="btnClearSaveSelection">取消选择</button><button class="btn warn" id="btnDeleteSelectedSaves" disabled>删除所选（0）</button></div>
     <div id="saveEntries" class="archive-list" aria-label="世界存档列表"></div>
     <details class="history-recordings"><summary>历史过程记录</summary>
       <p class="hint">查看独立录制；旧录制没有完整上下文时仅可回放。</p>
@@ -272,7 +273,7 @@
 <div id="toast"></div>
 
 <script src="/static/pixel-scene.js"></script>
-<script src="/static/app.js?v=20261029-resident-prompts"></script>
+<script src="/static/app.js?v=20261030-batch-saves"></script>
 <script src="/static/town-buildings.js?v=20261029-shop-rules"></script>
 <script src="/static/mechanics.js?v=20261029-multi-places"></script>
 </body>
