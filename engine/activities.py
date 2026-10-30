@@ -564,7 +564,8 @@ def quantitative_descriptions(sim) -> dict[str, str]:
                 parts.append(f"需消耗{label}")
             for stat, bonus in (a.get("night_bonus") or {}).items():
                 if bonus:
-                    parts.append(f"夜间{stat}+{bonus:g}/刻")
+                    label = dict(_STAT_LABELS).get(stat, stat)
+                    parts.append(f"夜间{label}+{bonus:g}/刻")
         if key == "cook":
             shelf = int(sim.mechanics.get("meal_shelf_life_ticks", 36))
             parts.append("时长30/45/60/80分钟→产出1/2/3/4份饭菜（每份耗1食材）")
