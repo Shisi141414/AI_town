@@ -62,6 +62,21 @@ class RejectionTests(unittest.TestCase):
         self.assertIn('约会', self.a.memory.brief(0, k=10, query='被拒绝'))
         self.assertIn('好感', self.b.memory.brief(0, k=10, query='没有成行'))
 
+    def test_eat_out_blocked_when_satiety_high(self):
+        # 饱食达上限时饭店用餐与家中用餐同样被拒，且给出理由（防饭店无限聚餐）
+        self.a.stats.satiety = 96.0
+        ok = self.a.begin_activity('eat_out', self.sim)
+        self.assertFalse(ok)
+        self.assertIn('上限', self.a._rejection)
+        # 家中用餐同门槛
+        ok = self.a.begin_activity('eat', self.sim)
+        self.assertFalse(ok)
+        self.assertIn('吃得很饱', self.a._rejection)
+        # 饿了才允许下馆子
+        self.a.stats.satiety = 40.0
+        self.assertTrue(self.a.begin_activity('eat_out', self.sim)
+                        or 'eat_out' == self.a._pending_key)
+
     def test_sex_decline_carries_target_reason(self):
         # a 邀请 → b 选择其他行动 → 拒绝带 b 的理由
         self.sim.sex_proposals[self.b.pid] = {
