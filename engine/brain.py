@@ -67,7 +67,7 @@ USER_TEMPLATE = """# 本次决定
 - 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 填关键词（如 岗位、时薪、急救、课程、商品，或具体名称如 咖啡馆、厨师），留空只看目录。search/read 的查询结果会自动存入你的记忆，不必反复查询。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
 - 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
 - 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell、shares 和 symbol 交易小镇股票（symbol 填代码：index 小镇指数、R 饭店、M 影院、C 咖啡馆、G 健身房、S 商店、B 诊所；场所股价格受近期营业情况影响），可能亏损。
-- 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
+- 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照（学校U驾照课程），乘车不需要；小镇门口常备一辆共享汽车，考取驾照后即可直接驾驶，不必自己买车。ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
 - 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。在镇上选 sleep 会自动回家睡觉。wander 闲逛只是原地踱步，不会带你回家。
 
 ## 输出格式

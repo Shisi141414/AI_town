@@ -394,8 +394,21 @@ class Simulation:
         names = {o.pid: o.name for o in self.players}
         cars = "；".join(f"{'共用车' if not v.owner_id else names.get(v.owner_id,'已离开室友')+'的私家车'}停在({v.x},{v.y})，"
                         + (f"由{names.get(v.driver_id,'室友')}使用" if v.driver_id else "空闲") for v in self.vehicles)
+        # 出行引导：让「学驾照→开共用车→买私车」这条路对模型可见
+        tips = []
+        shared_free = any(not v.owner_id and not v.driver_id for v in self.vehicles)
+        own_car = any(v.owner_id == p.pid for v in self.vehicles)
+        license_fee = self.town_config.get('U', {}).get('license_driving', {}).get('price', 80)
+        car_price = self.town_config.get('S', {}).get('car', {}).get('price', 1000)
+        if not p.driver_license:
+            tips.append(f"我还没有驾照：到学校U上驾照课程（{license_fee:g}元），取得后即可驾驶共享汽车（无需自己买车）")
+        elif not own_car and shared_free:
+            tips.append("我有驾照，附近空闲的共用车可直接用 travel_mode=car 驾驶")
+        if not own_car and p.stats.money >= car_price + 200:
+            tips.append(f"现金充足（{p.stats.money:.0f}元）：可到商店S购买私家汽车（{car_price:g}元，action=buy_car）")
         return (f"当前位置({p.x},{p.y})。"
-                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。")
+                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。"
+                + "".join(f"💡{t}。" for t in tips))
 
     def drop_passengers(self, driver):
         for pid in list(driver.passengers):
