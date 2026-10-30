@@ -89,9 +89,6 @@ class Player:
         self.scene = "house"
         self.travel_mode = "walk"
         self.transport = "walk"
-        if self.interaction_slot and not self.interaction_slot.get('reserved',True):
-            point=tuple(self.interaction_slot['position'])
-            if point not in sim.occupied('house',self):self.interaction_slot['reserved']=True
         self.vehicle_driver = None
         self.passengers = []
         self.car_id = None
@@ -489,9 +486,37 @@ class Player:
 
         self.transport = "walk"
         if self.state=='waiting_activity':
+            # 床伴活动等对方到位：等太久（12刻）就放弃，避免一方卡死时双方僵持
+            self._wait_ticks=getattr(self,'_wait_ticks',0)+1
+            if self._wait_ticks>=12:
+                self._abandon_pending(sim,'对方一直没到')
+                return
             from .interaction_points import arrive_bed
             arrive_bed(sim,self);return
+        if self.state != 'waiting_activity':
+            self._wait_ticks=0
         if self.state == "moving":
+            # 停滞看护：位置连续多刻无进展 → 换空闲点位重试；仍无进展 → 放弃行动。
+            # 防止「设施使用位被长期占用」时角色永远卡在 moving（不吃不睡不决策）。
+            prev=getattr(self,'_last_moving_pos',None)
+            self._last_moving_pos=(self.x,self.y)
+            if prev==(self.x,self.y):
+                self._stall_ticks=getattr(self,'_stall_ticks',0)+1
+            else:
+                self._stall_ticks=0
+            if self._stall_ticks>=6 and self._pending_key:
+                from .interaction_points import LOCAL_ACTIONS,route
+                if self._pending_key in LOCAL_ACTIONS and self.interaction_slot:
+                    # 等交互位超过1小时：重新挑一个当前空闲的使用位；
+                    # 只有真的换到了别的点位才重置停滞计数（全忙时继续等到上限放弃）
+                    old_point=tuple(self.interaction_slot['position'])
+                    route(sim,self,self._pending_key)
+                    new_point=tuple(self.interaction_slot['position']) if self.interaction_slot else None
+                    if new_point and new_point!=old_point:
+                        self._stall_ticks=0
+            elif self._stall_ticks>=12:
+                self._abandon_pending(sim,'路上耽搁太久')
+                return
             if self.route_goal is None and self.path:self.route_goal=self.path[-1]
             goal=self.route_goal
             if goal and (self.x,self.y)!=goal and (not self.path or abs(self.path[0][0]-self.x)+abs(self.path[0][1]-self.y)!=1 or not sim.position_free(self,self.scene,*self.path[0])):
@@ -600,6 +625,32 @@ class Player:
     @property
     def pending_key(self) -> str:
         return self._pending_key
+
+    def _abandon_pending(self, sim: "Simulation", why: str):
+        """放弃排定/等待中的行动（超时兜底）：释放使用位与路线，回到空闲。
+        触发场景：设施使用位被长期占用、床伴迟迟不到、路线长期走不通。"""
+        from .interaction_points import release
+        key = self._pending_key
+        label = (act.ACTIVITIES.get(key, {}).get('name') if key else '') or self.plan or '原定行动'
+        release(sim, self)
+        self.path = []
+        self.route_goal = None
+        self._final_goal = None
+        self._final_scene = None
+        self._pending_key = ""
+        self._pending_target_pid = None
+        self.activity = None
+        self.activity_key = ""
+        self.activity_left = 0
+        self.activity_total = 0
+        self.target_player = None
+        self.requested_duration = None
+        self.state = "idle"
+        self._stall_ticks = 0
+        self.blocked_ticks = 0
+        self.remember(f'{label}（{why}）一直没法进行，我先算了，做点别的', 4)
+        sim.log('activity', f'⏱ {self.name} {why}，放弃{label}，重新安排',
+                [self.pid], scope='game')
 
     def _start_social(self, key: str, sim: "Simulation", t: "Player"):
         if t.scene != self.scene or (max(abs(t.x - self.x), abs(t.y - self.y)) > 2
@@ -765,8 +816,9 @@ class Player:
         from .town_services import finish
         finish(sim,self,key)
         if key == "computer":
-            from .resident_tools import use_computer
+            from .resident_tools import use_computer, remember_computer_use
             use_computer(sim,self,self.decision)
+            remember_computer_use(self)
         if key=='cook' and self.activity_left<=0:
             quality=min(5,int(self.skills.get('cooking',0)//100))
             self.items['meal']=self.items.get('meal',0)+2

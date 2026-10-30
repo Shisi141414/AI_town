@@ -103,10 +103,15 @@ def pay(sim, p, lender, amount: float) -> None:
 
 
 def refuse(sim, p, need: float) -> None:
-    """借款不足：不收治。标记拒收，避免每刻重复借款。"""
+    """借款不足：不收治住院，但按「先救人后收费」做最低限度的急救处置——
+    否则被拒者会带着饥饿与重伤在原地硬扛，几乎必然死亡。"""
     p.refused_hospital = True
-    p.remember(f"凑不齐{need:.0f}元急救费，诊所拒绝收治，我只能硬扛", 9)
-    sim.log("system", f"💸 {p.name} 凑不齐{sim.mechanics['hospital_cost']:.0f}元急救费，诊所拒绝收治",
+    p.stats.hp = max(p.stats.hp, 25.0)
+    p.stats.satiety = max(p.stats.satiety, 30.0)
+    p.stats.mood = max(p.stats.mood, 20.0)
+    p.stats.clamp()
+    p.remember(f"凑不齐{need:.0f}元急救费，诊所只做了基本处置让我先活下来", 9)
+    sim.log("system", f"💸 {p.name} 凑不齐{sim.mechanics['hospital_cost']:.0f}元急救费，诊所只做基本处置（生命25/饱食30保底）",
             [p.name], scope="game")
 
 

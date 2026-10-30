@@ -136,8 +136,11 @@ class ExecutionTests(unittest.TestCase):
     def test_content_blocks_and_reasoning_only_response(self):
         profile=self.profile()
         self.assertEqual(_extract_text(profile,{'choices':[{'message':{'content':[{'type':'text','text':'{"action":"sleep"}'}]}}]}),'{"action":"sleep"}')
+        # 推理模型兜底：content 为空时取 reasoning_content 末尾，不再是错误
+        self.assertEqual(_extract_text(profile,{'choices':[{'message':{'content':None,'reasoning_content':'仍在思考'}}]}),'仍在思考')
+        # content 与 reasoning 都为空才报错
         with self.assertRaises(LLMError):
-            _extract_text(profile,{'choices':[{'message':{'content':None,'reasoning_content':'仍在思考'}}]})
+            _extract_text(profile,{'choices':[{'message':{'content':None,'reasoning_content':''}}]})
 
     def test_recording_contains_frames_memory_models_and_no_credentials(self):
         with tempfile.TemporaryDirectory() as temp:

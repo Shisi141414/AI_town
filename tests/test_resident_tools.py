@@ -68,7 +68,9 @@ class ResidentToolTests(unittest.TestCase):
         self.a.computer_files=[{'id':'private-1','title':'私人计划','content':'明晚在花园见面'}]
         self.a.decision=Decision(action='computer',operation='read',file_id='private-1')
         use_computer(self.sim,self.a,self.a.decision)
-        self.assertFalse(self.a.computer_feedback)
+        # 不在电脑前：操作不生效且不泄露文件内容，但给出明确反馈引导模型
+        self.assertIn('操作没有生效', self.a.computer_feedback)
+        self.assertNotIn('明晚在花园见面', self.a.computer_feedback)
         self.assertFalse(self.a.computer_operation_done)
     def test_computer_game_duration_and_desk_no_collision(self):
         for p in self.sim.players:

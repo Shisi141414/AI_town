@@ -381,6 +381,12 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
         menu_key = disg['key'] if disg else k
         menu_name = disg['name'] if disg else a['name']
         sections[group].append(f"- {menu_key}: {menu_name}{extra}｜{detail}{place_hint}")
+    # 在家时给一条跨场景引导：挣钱类场所必须到场才可见，缺钱时模型无从得知，
+    # 这里固定提示 visit 方向，避免全员坐吃山空。
+    if scene == "house":
+        sections["小镇日常"].append(
+            "- visit: 前往小镇场所（target 填代码/名称）｜缺钱可去事务所O（上班）、田园F（劳作）挣钱；"
+            "商店S购物、饭店R吃饭、诊所B看病。到场后才会列出当地具体项目")
     return "\n\n".join(f"{title}：\n"+"\n".join(rows) for title,rows in sections.items() if rows)
 
 

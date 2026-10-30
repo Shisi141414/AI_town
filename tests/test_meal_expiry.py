@@ -21,28 +21,30 @@ class MealExpiryTests(unittest.TestCase):
         """模拟做好饭（与 cook 完成结算同逻辑）。"""
         self.p.items['meal'] = self.p.items.get('meal', 0) + n
         self.p.meal_qualities.extend([quality] * n)
-        self.p.meal_expiry.extend([self.sim.global_tick + 20] * n)
+        self.p.meal_expiry.extend([self.sim.global_tick + self.sim.mechanics['meal_shelf_life_ticks']] * n)
 
     def test_meal_expires_after_20_ticks_with_memory(self):
         self.cook(2)
-        for _ in range(19):
+        shelf = int(self.sim.mechanics['meal_shelf_life_ticks'])
+        for _ in range(shelf-1):
             self.sim.global_tick += 1
             self.p.world_tick = self.sim.global_tick
             self.p.passive_drain(self.sim)
-        self.assertEqual(self.p.items['meal'], 2)      # 19刻仍在
+        self.assertEqual(self.p.items['meal'], 2)      # 保质期前一刻仍在
         self.sim.global_tick += 1
         self.p.world_tick = self.sim.global_tick
         self.p.passive_drain(self.sim)
-        self.assertEqual(self.p.items['meal'], 0)      # 20刻整过期
+        self.assertEqual(self.p.items['meal'], 0)      # 到期整刻过期
         self.assertEqual(self.p.meal_expiry, [])
         self.assertIn('过期变质', self.p.memory.brief(0, k=10, query='饭菜'))
 
     def test_partial_expiry_keeps_newer_meal(self):
         self.cook(2)
-        self.sim.global_tick += 15                     # 第一批还剩5刻
+        shelf = int(self.sim.mechanics['meal_shelf_life_ticks'])
+        self.sim.global_tick += shelf-5                # 第一批还剩5刻
         self.p.world_tick = self.sim.global_tick
-        self.cook(1)                                   # 新饭（20刻）
-        self.sim.global_tick += 6                      # 第一批到期，新饭还剩14刻
+        self.cook(1)                                   # 新饭（整段保质期）
+        self.sim.global_tick += 6                      # 第一批到期，新饭还剩shelf-6刻
         self.p.world_tick = self.sim.global_tick
         self.p.passive_drain(self.sim)
         self.assertEqual(self.p.items['meal'], 1)
@@ -56,7 +58,7 @@ class MealExpiryTests(unittest.TestCase):
         prompt = brain.build_user_prompt(self.p, [], '08:00')
         self.assertIn('家常饭菜×1（', prompt)
         self.assertIn('刻后过期）', prompt)
-        self.assertIn('20', prompt)
+        self.assertIn(str(int(self.sim.mechanics['meal_shelf_life_ticks'])), prompt)
 
     def test_give_meal_pops_expiry(self):
         self.cook(1)
@@ -74,7 +76,7 @@ class MealExpiryTests(unittest.TestCase):
         self.p.items['meal'] = 1
         self.p.passive_drain(self.sim)
         self.assertEqual(len(self.p.meal_expiry), 1)
-        self.assertEqual(self.p.meal_expiry[0], self.sim.global_tick + 20)
+        self.assertEqual(self.p.meal_expiry[0], self.sim.global_tick + self.sim.mechanics['meal_shelf_life_ticks'])
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ class SearchTests(unittest.TestCase):
     def test_life_rules_cover_hospital(self):
         r = search_knowledge(self.sim, '急救')
         text = json.dumps(r, ensure_ascii=False)
-        self.assertIn('1200', text)      # 急救费
+        self.assertIn(str(int(self.sim.mechanics['hospital_cost'])), text)      # 急救费
         self.assertIn('100', text)       # 房费
         text2 = json.dumps(search_knowledge(self.sim, '住院'), ensure_ascii=False)
         self.assertIn('死亡', text2)

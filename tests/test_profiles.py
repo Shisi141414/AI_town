@@ -47,6 +47,12 @@ class ProfileProbeTests(unittest.TestCase):
         response = Mock(status_code=200)
         response.json.return_value = {'choices': [{'message': {'content': None, 'reasoning_content': 'thinking'}}]}
         with patch.object(llm.requests, 'post', return_value=response):
+            # 推理模型兜底：content 为空但 reasoning_content 有内容 → 视为连通成功
+            ok, message = llm.test_profile(self.profile)
+            self.assertTrue(ok)
+        response2 = Mock(status_code=200)
+        response2.json.return_value = {'choices': [{'message': {'content': None}}]}
+        with patch.object(llm.requests, 'post', return_value=response2):
             ok, message = llm.test_profile(self.profile)
             self.assertFalse(ok)
             self.assertIn('最终回答', message)

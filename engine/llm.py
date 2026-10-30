@@ -72,9 +72,15 @@ def _extract_text(p: ApiProfile, data: dict) -> str:
         content=message.get("content")
         if isinstance(content,list):
             content="".join(part.get("text","") for part in content if isinstance(part,dict))
-        if not isinstance(content,str) or not content.strip():
-            raise LLMError("模型暂未输出最终回答，可能仍在推理或输出额度不足")
-        return content.strip()
+        if isinstance(content,str) and content.strip():
+            return content.strip()
+        # 推理模型兜底：最终回答为空（思考阶段耗尽输出额度）时，
+        # 取思考过程的末尾——数值类调用的结论通常就在末尾，由上层解析器钳制。
+        for field in ("reasoning_content", "reasoning"):
+            thinking = message.get(field)
+            if isinstance(thinking, str) and thinking.strip():
+                return thinking.strip()[-600:]
+        raise LLMError("模型暂未输出最终回答，可能仍在推理或输出额度不足")
     except (KeyError, IndexError, TypeError) as e:
         raise LLMError(f"响应结构异常: {e}: {json.dumps(data, ensure_ascii=False)[:300]}") from e
 

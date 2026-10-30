@@ -237,6 +237,8 @@ def prompt_context(sim,p):
     lines.append('商店商品：'+'、'.join(f'{row["name"]} {row["price"]:g}元' for row in shop_catalog(sim).values() if row['enabled']))
    break
  if p.info_feedback:lines.append('上次行动反馈：'+p.info_feedback)
+ if p.stats.money<40:
+  lines.append('💡 现金紧张：可先前往事务所O（上班，时薪约36元）或田园F（劳作，时薪约32元），到场后选择work/farm_work挣钱')
  lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
   +';'.join(f'{k} {row["name"]} {row["price"]:.2f}元' for k,row in sim.stocks.items()))
  holdings=[f'{sim.stocks[k]["name"]}{v["shares"]}份（成本{v["cost"]:g}元）'

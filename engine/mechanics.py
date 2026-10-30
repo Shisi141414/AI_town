@@ -3,7 +3,7 @@ from copy import deepcopy
 import math
 
 DEFAULT_RULES = {
-    'base_satiety_drain': .4, 'base_mood_drain': 1.0, 'base_energy_regen': 1.0,
+    'base_satiety_drain': .4, 'base_mood_drain': .6, 'base_energy_regen': 1.0,
     'illness_mood_drain': 4.0,
     'high_satiety_hp_threshold': 80.0, 'high_satiety_hp_gain': .3,
     'starvation_hp_loss': 2.0, 'decor_mood_per_200': 1.0,
@@ -28,9 +28,9 @@ DEFAULT_RULES = {
     'negative_mood_at_threshold': 2, 'negative_mood_at_0': 5,
     # ---- 急救与住院 ----
     'meal_block_satiety': 95.0,        # 饱食高于此值不能吃饭/送饭
-    'meal_shelf_life_ticks': 20,       # 饭菜保质期（刻），过期自动消失
+    'meal_shelf_life_ticks': 36,       # 饭菜保质期（刻）＝6小时，过期自动消失
     'hospital_trigger_hp': 10.0,      # 生命低于此值触发紧急送医
-    'hospital_cost': 1200.0,          # 急救费；资产不足需向室友借钱补齐
+    'hospital_cost': 300.0,           # 急救费；资产不足需向室友借钱补齐
     'hospital_fee_halfday': 100.0,    # 住院房费（每半天）
     'hospital_heal_multiplier': 2.0,  # 住院每刻生命恢复 = 倍率×自然恢复
     'hospital_mood_gain': 15.0,       # 每半天住院恢复心情

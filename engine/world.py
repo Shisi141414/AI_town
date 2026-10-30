@@ -77,6 +77,17 @@ def _vwall(g, x, y0, y1, holes):
 BEDROOM_RECTS = [(4, 1, 9, 4), (1, 6, 6, 9), (1, 11, 6, 14),
                  (1, 16, 6, 19), (4, 21, 9, 24)]
 BEDROOM_ANCHORS = [(6, 3), (3, 8), (3, 13), (3, 18), (6, 23)]
+# 卧室主人名（按 BEDROOM_RECTS 顺序），由 Simulation 刷新；
+# 未入住/主人离开时为 None，区域名回落为通用「卧室」。
+BEDROOM_OWNERS: list[str | None] = [None] * len(BEDROOM_RECTS)
+
+
+def bedroom_index_at(x: int, y: int) -> int | None:
+    """坐标落在哪间卧室（返回矩形序号）；不在任何卧室内返回 None。"""
+    for i, (x0, y0, x1, y1) in enumerate(BEDROOM_RECTS):
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            return i
+    return None
 
 
 def build_house() -> list[list[str]]:
@@ -193,8 +204,16 @@ def find_tiles(scene: str, ch: str) -> list[tuple[int, int]]:
 
 
 def zone_of(scene: str, x: int, y: int) -> str:
-    f = facility_at(scene, x, y)
-    return f["name"] if f else "路上"
+    ch = tile(scene, x, y)
+    f = FACILITY_CHARS.get(ch)
+    if not f:
+        return "路上"
+    if scene == "house" and ch == "h":
+        i = bedroom_index_at(x, y)
+        owner = BEDROOM_OWNERS[i] if i is not None else None
+        if owner:
+            return f"{owner}的卧室"
+    return f["name"]
 
 
 def same_place(p1, p2) -> bool:

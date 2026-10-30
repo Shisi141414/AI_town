@@ -1,7 +1,7 @@
 """心情机制回归测试（2026-10 改版）：
 
-规则锚点：
-- 基础：每 tick 心情 -1（PASSIVE_DRAIN）
+规则锚点（基础消耗从机制面板读取，默认 0.6/tick，2026-10-30 平衡性下调）：
+- 基础：每 tick 心情 -base_mood_drain
 - 同区域室友好感 > 60：每 tick +2 起，随好感线性上升，80 → +6（斜率 0.2/点）
 - 患病：每 tick -4（固定）
 - 同区域室友好感 < 30：每 tick -2 起，随好感下降加重，0 → -5（斜率 0.1/点）
@@ -74,36 +74,42 @@ class PassiveDrainMoodTests(unittest.TestCase):
         return p.stats.mood - before
 
     def test_base_drain_one_per_tick(self):
-        # 好感中性（50）且无其他因素：每 tick -1
-        self.assertAlmostEqual(self.drain_mood_delta(self.a), -1.0)
+        # 好感中性（50）且无其他因素：每 tick -base_mood_drain（默认0.6）
+        base = self.sim.mechanics['base_mood_drain']
+        self.assertAlmostEqual(self.drain_mood_delta(self.a), -base)
 
     def test_affectionate_roommate_boosts_mood(self):
-        # 好感 80 的室友同区域：-1 + 6 = +5
+        # 好感 80 的室友同区域：-base + 6
+        base = self.sim.mechanics['base_mood_drain']
         self.a.affinity[self.b.pid] = 80.0
-        self.assertAlmostEqual(self.drain_mood_delta(self.a), 5.0)
-        # 单向好感：b 对 a 仍是 50，b 只扣基础 -1
-        self.assertAlmostEqual(self.drain_mood_delta(self.b), -1.0)
+        self.assertAlmostEqual(self.drain_mood_delta(self.a), 6.0 - base)
+        # 单向好感：b 对 a 仍是 50，b 只扣基础
+        self.assertAlmostEqual(self.drain_mood_delta(self.b), -base)
 
     def test_disliked_roommate_drains_mood(self):
-        # 好感 0 的室友同区域：-1 - 5 = -6
+        # 好感 0 的室友同区域：-base - 5
+        base = self.sim.mechanics['base_mood_drain']
         self.a.affinity[self.b.pid] = 0.0
-        self.assertAlmostEqual(self.drain_mood_delta(self.a), -6.0)
+        self.assertAlmostEqual(self.drain_mood_delta(self.a), -5.0 - base)
 
     def test_relationship_effect_requires_same_zone(self):
-        # b 去室外（不同场景）：好感 80 也不再提供增益，只剩基础 -1
+        # b 去室外（不同场景）：好感 80 也不再提供增益，只剩基础消耗
+        base = self.sim.mechanics['base_mood_drain']
         self.a.affinity[self.b.pid] = 80.0
         self.b.scene, self.b.x, self.b.y = "town", 2, 12
-        self.assertAlmostEqual(self.drain_mood_delta(self.a), -1.0)
+        self.assertAlmostEqual(self.drain_mood_delta(self.a), -base)
 
     def test_illness_flat_minus_four(self):
         self.a.illness_severity = 2
-        # -1（基础）-4（患病）= -5
-        self.assertAlmostEqual(self.drain_mood_delta(self.a), -5.0)
+        # -base（基础）-4（患病）
+        base = self.sim.mechanics['base_mood_drain']
+        self.assertAlmostEqual(self.drain_mood_delta(self.a), -4.0 - base)
 
     def test_low_energy_extra_mood_drain(self):
         # 精力结算顺序：先被动 +1 恢复，再判定阈值；10+1=11 → 罚 (20-11)/10
         self.a.stats.energy = 10.0
-        expected = -1.0 - (20.0 - (10.0 + 1.0)) / 10.0
+        base = self.sim.mechanics['base_mood_drain']
+        expected = -base - (20.0 - (10.0 + 1.0)) / 10.0
         self.assertAlmostEqual(self.drain_mood_delta(self.a), expected)
         self.assertAlmostEqual(self.a.stats.energy, 11.0)
 

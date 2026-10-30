@@ -34,7 +34,8 @@ class EmergencyTests(unittest.TestCase):
         self.a = self.sim.players[0]
 
     def test_hp_threshold_triggers_admission_with_cash(self):
-        # 现金足够：直接收治（1200急救费 + 首个半天房费100）
+        # 现金足够：直接收治（急救费 + 首个半天房费）
+        cost=self.sim.mechanics['hospital_cost']+self.sim.mechanics['hospital_fee_halfday']
         self.a.stats.money = 2000.0
         self.a.stats.hp = 8.0
         self.a.stats.mood = 10.0
@@ -42,11 +43,13 @@ class EmergencyTests(unittest.TestCase):
         self.a.stats.energy = 5.0
         self.a.passive_drain(self.sim)
         self.assertTrue(self.a.hospitalized)
-        self.assertAlmostEqual(self.a.stats.money, 700.0)   # 2000-1200-100
+        self.assertAlmostEqual(self.a.stats.money, 2000.0-cost)
         # 收治即急救处置：心情+15 饱食/精力满；生命走30保底后每刻0.6×自然恢复
-        # （本刻先跑过日常消耗：心情10-1基础-低精力罚(20-(5+1))/10≈7.6，+15→22.6）
+        # （本刻先跑过日常消耗：心情10-base基础-低精力罚(20-(5+1))/10，再+15）
+        base = self.sim.mechanics['base_mood_drain']
+        expected_mood = 10.0 - base - (20.0 - (5.0 + 1.0)) / 10.0 + 15.0
         self.assertAlmostEqual(self.a.stats.hp, 30.0)      # 30保底；+0.6/刻从下一刻开始
-        self.assertAlmostEqual(self.a.stats.mood, 22.6, places=2)
+        self.assertAlmostEqual(self.a.stats.mood, expected_mood, places=2)
         self.assertAlmostEqual(self.a.stats.satiety, 100.0)
         self.assertAlmostEqual(self.a.stats.energy, 100.0)
         # 送进诊所（B）
@@ -69,14 +72,14 @@ class EmergencyTests(unittest.TestCase):
         drain(self.sim)
         self.assertTrue(self.a.hospitalized)
         self.assertFalse(self.a.awaiting_admission)
-        # 借款总额 ≥1200，室友钱减少、记账
+        # 借款总额 ≥急救费，室友钱减少、记账
         total = sum(self.a.loans.values())
-        self.assertGreaterEqual(total, 1200.0)
+        self.assertGreaterEqual(total, self.sim.mechanics['hospital_cost'])
         self.assertLess(self.b.stats.money, 2000.0)
         self.assertTrue(any(t['reason'].startswith('借钱给') for t in self.b.transactions))
 
     def test_cannot_borrow_enough_refuses_and_death(self):
-        # 室友也没钱：不收治，归零死亡
+        # 室友也没钱：不收治，但按「先救人后收费」做最低处置（生命25/饱食30保底）
         self.b = self.sim.players[1]
         self.b.stats.money = 30.0
         self.a.stats.hp = 5.0
@@ -84,7 +87,9 @@ class EmergencyTests(unittest.TestCase):
         drain(self.sim)
         self.assertFalse(self.a.hospitalized)
         self.assertFalse(self.a.awaiting_admission)
-        # 归零 → 死亡：移除玩家
+        self.assertGreaterEqual(self.a.stats.hp, 25.0)
+        self.assertGreaterEqual(self.a.stats.satiety, 30.0)
+        # 生命仍可因持续饥饿等归零 → 死亡：移除玩家
         self.a.stats.hp = 0.0
         self.a.passive_drain(self.sim)
         self.assertNotIn(self.a, self.sim.players)

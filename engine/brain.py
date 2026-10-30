@@ -64,7 +64,7 @@ USER_TEMPLATE = """# 本次决定
 ## 行动方法
 - 探索：action=visit 的 target 填场所代码或名称；抵达后用 action=inspect 的 target 填当地项目 key，可询问该项目的时薪、最低时间、学费等明确规则。查询占用一次决策。小镇没有其他参与者。
 - 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
-- 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 留空返回信息目录，填目录名或具体名称（如咖啡馆、厨师）查详情。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
+- 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 填关键词（如 岗位、时薪、急救、课程、商品，或具体名称如 咖啡馆、厨师），留空只看目录。search/read 的查询结果会自动存入你的记忆，不必反复查询。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
 - 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
 - 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell、shares 和 symbol 交易小镇股票（symbol 填代码：index 小镇指数、R 饭店、M 影院、C 咖啡馆、G 健身房、S 商店、B 诊所；场所股价格受近期营业情况影响），可能亏损。
 - 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
@@ -257,7 +257,12 @@ def parse_decision(text: str) -> Decision | None:
         target=d.get('target',d.get('对象',''))
         mode=d.get('travel_mode')
         try:
-            extra={k:d[k] for k in ("emoji","amount","money_from","operation","file_id","title","content","offset","shares","location","memory_note") if k in d}
+            # 超长字段截断而不是整条决策被校验拒绝（模型偶尔写长查询词/标题）
+            limits={"query":60,"title":120,"content":20000,"memory_note":300}
+            def _clip(key, value):
+                limit=limits.get(key)
+                return str(value)[:limit] if isinstance(value,str) and limit else value
+            extra={k:_clip(k,d[k]) for k in ("emoji","amount","money_from","operation","file_id","title","content","offset","shares","query","symbol","location","memory_note") if k in d}
             result=Decision(**extra,action=action,target=target if isinstance(target,str) else '',
             reason=str(d.get('reason',d.get('理由','')))[:120],source='llm',duration_minutes=duration,
                 travel_mode=mode if mode in ('walk','bicycle','car') else None)
@@ -378,18 +383,18 @@ AFFINITY_TEMPLATE = """你是{self_name}。你刚刚和{other_name}一起{what}�
 async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
                               other_name: str, what: str, detail: str,
                               before: float, timeout: float = 20.0) -> int:
-    """互动后由模型决定好感增减。失败返回 0（不变）。"""
+    """互动后由模型决定好感增减。失败返回 0（不变）。
+    max_tokens 留足余量：推理模型先输出思考过程，额度太小会截断成空回复。"""
     prompt = AFFINITY_TEMPLATE.format(self_name=self_name, other_name=other_name,
                                       what=what, detail=detail, before=before)
     try:
         text = await _run_in_thread(chat, profile, model,
                                     "你在一个模拟游戏中扮演角色的内心，只输出一个数字。",
-                                    prompt, 0.8, 10, timeout)
-        m = re.search(r"-?\d+", text)
-        if not m:
+                                    prompt, 0.8, 512, timeout)
+        value = parse_last_int(_strip_think(text), default=0)
+        if value is None:
             return 0
-        v = int(m.group(0))
-        return max(-5, min(5, v))
+        return max(-5, min(5, value))
     except Exception:                        # noqa: BLE001
         return 0
 
@@ -406,10 +411,12 @@ async def affinity_tick_llm(profile: ApiProfile, model: str, actor, other, timeo
     actor.last_user_prompt=prompt
     actor.last_raw_reply=''
     try:
-        reply=await _run_in_thread(chat,profile,model,system,prompt,0.4,8,timeout)
+        reply=await _run_in_thread(chat,profile,model,system,prompt,0.4,512,timeout)
         actor.last_raw_reply=reply
-        match=re.search(r'(?<!\d)[+-]?[01](?!\d)',reply.strip())
-        return int(match.group(0)) if match else 0
+        value=parse_last_int(_strip_think(reply),default=0)
+        if value is None:
+            return 0
+        return max(-1, min(1, value))
     except Exception:                         # noqa: BLE001
         return 0
 
@@ -483,16 +490,32 @@ async def conv_turn_llm(profile: ApiProfile, model: str, self_name: str,
 def decide_rule(p, others: list, clock_hour: int) -> Decision:
     s = p.stats
 
+    # ---- 饿了：能吃上饭就先吃饭（饥饿是掉血的主因，先止伤再治病）----
+    cook_cost = act.ACTIVITIES.get('cook', {}).get('cost', 0)
+    if s.satiety < 30:
+        if p.scene == "house":
+            if p.items.get('meal', 0) > 0 and s.satiety < 95:
+                return Decision(action='eat', reason='吃一份做好的饭菜', source='rule')
+            if s.money >= cook_cost:
+                return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
+            # 身无分文且家里没饭：做饭/下馆子都会因钱不够失败，
+            # 必须先去工作挣钱，否则会陷在「反复决定做饭→抵达后钱不够」的循环里饿死
+            if act.is_night(p.hour):
+                # 深夜事务所不营业：先睡觉节能（睡觉时生命有恢复），天亮去挣钱
+                return Decision(action="sleep", reason="深夜没钱开伙，先睡一觉撑到天亮", source="rule")
+            return Decision(action="work", reason="饿但没钱开伙，先去挣钱", source="rule")
+        # 在镇上：饭店营业且有钱 → 下馆子
+        if s.money >= 10 and 10 <= p.hour < 22:
+            return Decision(action="eat_out", reason="饿了，下馆子", source="rule")
+        # 吃不上：低血优先去诊所（24小时营业），否则回家（睡觉自动回家）
+        if s.hp < 50 and s.money >= 15:
+            return Decision(action="treat", reason="又饿又虚弱，先去诊所吊一口气", source="rule")
+        return Decision(action="sleep", reason="饭店深夜没开门，先回家再说", source="rule")
+
     if p.illness_severity >= 2 and s.money >= 15:
         return Decision(action="treat", reason="身体不舒服，去诊所治疗", source="rule")
     if s.hp < 35 and s.money >= 15:
         return Decision(action="treat", reason="我快不行了，得去医院", source="rule")
-    if s.satiety < 30:
-        # 在家→厨房做/餐厅吃；在镇上→咖啡馆
-        if p.scene == "house":
-            if p.items.get('meal',0)>0 and p.stats.satiety<95:return Decision(action='eat',reason='吃一份做好的饭菜',source='rule')
-            return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
-        return Decision(action="eat_out", reason="饿了，下馆子", source="rule")
     threshold = 30 if act.is_night(clock_hour) else 18
     if s.energy < threshold or (act.is_night(clock_hour) and s.energy < 45):
         if p.scene == "house":
@@ -590,21 +613,39 @@ TA自己只剩{borrower_cash:.0f}元，打电话向你借{need:.0f}元。
 只输出一个 0～{cap:.0f} 之间的整数。"""
 
 
+def parse_last_int(text: str, default: int | None = None) -> int | None:
+    """取文本中最后一个整数（推理模型的结论通常在末尾）；找不到返回 default。"""
+    matches = re.findall(r"-?\d+", str(text))
+    if not matches:
+        return default
+    try:
+        return int(matches[-1])
+    except ValueError:
+        return default
+
+
+def _strip_think(text: str) -> str:
+    """去掉完整的 <think>…</think> 段；未闭合（被截断）时原样保留供 parse_last_int 兜底。"""
+    return re.sub(r"<think>.*?</think>", "", str(text), flags=re.S | re.I)
+
+
 async def loan_amount_llm(profile: ApiProfile, model: str, lender_name: str,
                            borrower_name: str, need: float, borrower_cash: float,
                            aff: float, lender_cash: float, timeout: float = 25.0) -> int:
     """室友（模型）决定借给急救者多少钱。失败返回 0。"""
+    # 上限：既不超过对方缺口，也不超过债主全部现金
+    cap = max(0, min(int(need), int(lender_cash)))
     prompt = LOAN_TEMPLATE.format(lender_name=lender_name, borrower_name=borrower_name,
                                   need=need, borrower_cash=borrower_cash,
-                                  aff=aff, lender_cash=lender_cash)
+                                  aff=aff, lender_cash=lender_cash, cap=cap)
     try:
         text = await _run_in_thread(chat, profile, model,
                                     "你在一个模拟游戏中扮演角色的内心，只输出一个数字。",
-                                    prompt, 0.8, 10, timeout)
-        m = re.search(r"\d+", text)
-        if not m:
+                                    prompt, 0.8, 512, timeout)
+        value = parse_last_int(_strip_think(text), default=0)
+        if value is None:
             return 0
-        return max(0, min(int(m.group(0)), int(lender_cash)))
+        return max(0, min(value, cap))
     except Exception:                        # noqa: BLE001
         return 0
 

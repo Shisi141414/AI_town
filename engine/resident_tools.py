@@ -148,13 +148,13 @@ def search_knowledge(sim, query: str = "") -> dict:
                 '用法': 'query 填目录名或分类名看详情；也可直接填场所/岗位/课程/商品名'}
     if any(k in q for k in ('场所', '营业', '场馆', '地点')):
         return {'场所与营业时间': _venues_index(sim)}
-    if q in ('工作', '岗位', '职业', '打工', '时薪', '招聘'):
+    if any(k in q for k in ('工作', '岗位', '职业', '打工', '时薪', '招聘', '赚钱', '挣钱')):
         return {'工作岗位': _jobs_index(sim)}
-    if q in ('课程', '学习', '技能课程', '学校'):
+    if any(k in q for k in ('课程', '学习', '技能', '学校', '驾照')):
         return {'技能课程': _courses_index(sim)}
-    if q in ('商品', '购物', '价格', '买'):
+    if any(k in q for k in ('商品', '购物', '价格', '买')):
         return {'商品': _goods_index(sim)}
-    if any(k in q for k in ('生活', '急救', '住院', '医院', '规则', '数值', '死亡', '疾病')):
+    if any(k in q for k in ('生活', '急救', '住院', '医院', '规则', '数值', '死亡', '疾病', '诊所')):
         return {'生活与急救': _life_rules(sim)}
     # 具体条目：场所名/代码 → 详情；岗位/课程/商品名 → 条目
     for code, name in NAMES.items():
@@ -171,8 +171,11 @@ def search_knowledge(sim, query: str = "") -> dict:
 
 def use_computer(sim,p,d):
     if d is None or d.action!='computer' or p.computer_operation_done:return
-    if p.scene!='house' or (p.x,p.y)!=computer_seat(p):return
+    if p.scene!='house' or (p.x,p.y)!=computer_seat(p):
+        p.computer_feedback='操作没有生效：必须在电脑前完成（activity=computer 会自动走到电脑前）。'
+        return
     p.computer_operation_done=True
+    p.computer_last_op=''
     file=next((f for f in p.computer_files if f['id']==d.file_id),None)
     op=d.operation
     if op=='create':
@@ -197,8 +200,28 @@ def use_computer(sim,p,d):
     else:
         p.computer_feedback='电脑操作无效，请使用list/create/edit/read/delete/search。'
         return
+    p.computer_last_op=op
     p.computer_feedback=json.dumps(result,ensure_ascii=False)
     sim.log('activity',f'💻 {p.name}在自己的电脑上'+{'create':'创建了记录','edit':'编辑了记录','read':'查看了记录','delete':'删除了记录','list':'查看了记录目录','search':'搜索了小镇信息'}[op],[p.pid])
+
+
+def remember_computer_use(p):
+    """电脑操作结束后把关键信息写入记忆——否则查询结果只活一个决策周期，
+    角色下一步就会完全忘掉刚查到的内容，查询毫无意义。"""
+    op=getattr(p,'computer_last_op','')
+    fb=getattr(p,'computer_feedback','')
+    if not op or not fb or fb.startswith(('记录不存在','电脑操作无效','操作没有生效')):
+        return
+    if op=='create':
+        try:
+            info=json.loads(fb)
+            p.remember(f"我在电脑里新建了记录《{info.get('title','')}》，以后可以再查看", 4)
+        except (ValueError,TypeError):
+            pass
+        return
+    if op in ('search','read','list'):
+        brief=fb if len(fb)<=240 else fb[:240]+'…'
+        p.remember(f'我用电脑查到：{brief}', 5)
 
 
 def instant_action(sim,p,d):

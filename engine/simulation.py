@@ -102,6 +102,7 @@ class Simulation:
 
     def process_frame(self):
         from .shop_products import catalog as shop_catalog
+        self.refresh_bedroom_names()
         names={p.pid:p.name for p in self.players}
         return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
             "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
@@ -211,6 +212,15 @@ class Simulation:
                 if driver:p.scene,p.x,p.y=driver.scene,driver.x,driver.y
 
     # ------------------------------------------------------------ 玩家管理
+    def refresh_bedroom_names(self) -> None:
+        """把各卧室主人的名字同步给 world（区域名显示为「XX的卧室」）。"""
+        owners = [None] * len(world.BEDROOM_RECTS)
+        for p in self.players:
+            i = world.bedroom_index_at(*p.bedroom)
+            if i is not None and owners[i] is None:
+                owners[i] = p.name
+        world.BEDROOM_OWNERS[:] = owners
+
     def spawn_players(self, n: int = DEFAULT_PLAYER_COUNT) -> list[Player]:
         """生成 n 个无名玩家（身份待定）"""
         out = []
@@ -265,6 +275,7 @@ class Simulation:
         self.names.pop(pid, None)
         for other in self.players:
             other.affinity.pop(pid, None)
+        self.refresh_bedroom_names()
         self.log("system", f"👋 {p.name} 离开了小镇", [p.pid],scope="game")
         return p
 
@@ -388,6 +399,7 @@ class Simulation:
         p.gender = gender if gender in ("男", "女") else "男"
         p.identity_done = True
         self.names[p.pid] = name
+        self.refresh_bedroom_names()
         self.log("system", f"🎭 {p.emoji} {name} 确定了自己的身份"
                  + (f"（{why}）" if why else ""), [p.pid],scope="game")
         p.remember(f"我叫{name}，性别{p.gender}，住进了合租之家", 8)
@@ -522,6 +534,7 @@ class Simulation:
     async def _step_tick(self) -> None:
         if self.identity_phase:
             return
+        self.refresh_bedroom_names()
         for target_pid,proposal in list(self.sex_proposals.items()):
             if self.global_tick >= proposal['expires']:
                 self._decline_sex(target_pid,'邀请已过期')
@@ -1162,7 +1175,10 @@ class Simulation:
         self._affinity_busy = True
         try:
             while self.affinity_queue:
-                request=self.affinity_queue.pop(0)
+                # 优先消化真实互动（对话/协同）结算；周期性自主判断排在其后，
+                # 避免高频轮询把互动好感挤到长队尾甚至落空。
+                idx = next((i for i, q in enumerate(self.affinity_queue) if q[0] != 'periodic'), None)
+                request = self.affinity_queue.pop(idx if idx is not None else 0)
                 if request[0]=='periodic':
                     a,o=self.by_pid(request[1]),self.by_pid(request[2])
                     if not a or not o:continue
@@ -1221,9 +1237,15 @@ class Simulation:
             return
         if self._loan_task is None or self._loan_task.done():
             self._loan_task = loop.create_task(self._drain_loans())
+            def _report(task):
+                if not task.cancelled() and task.exception():
+                    self.log('error', f'⚠️ 借款队列任务异常退出：{task.exception()!r}')
+            self._loan_task.add_done_callback(_report)
 
     async def _drain_loans(self):
-        """异步消化急救借款：室友的模型决定借多少，逐笔入账。"""
+        """异步消化急救借款：室友的模型决定借多少，逐笔入账。
+        单个请求的任何异常都只按「借 0 元」处理，绝不让任务中途崩溃——
+        否则待收治者会永远卡在 awaiting_admission，被排除在所有决策之外。"""
         from . import hospital
         if self._loan_busy or not self.loan_queue:
             return
@@ -1231,44 +1253,49 @@ class Simulation:
         try:
             while self.loan_queue:
                 request = self.loan_queue.pop(0)
-                borrower_pid, lender_pid = request
-                p, lender = self.by_pid(borrower_pid), self.by_pid(lender_pid)
-                if not p or not lender or not getattr(p, 'awaiting_admission', False):
-                    continue
-                need = max(0.0, p.debt_goal - sum(p.loans.values()))
-                if need <= 0:
-                    continue
-                aff = lender.affinity.get(p.pid, 50.0)
-                amount = 0
-                prof = self.profile_for(lender.pid)
-                if prof:
-                    model = self.model_of.get(lender.pid) or prof.default_model
-                    try:
-                        amount = await brain.loan_amount_llm(
-                            prof, model, lender.name, p.name, need, p.stats.money,
-                            aff, lender.stats.money,
-                            timeout=min(25.0, self.settings.decision_timeout))
-                    except asyncio.CancelledError:
-                        self.loan_queue.insert(0, request)
-                        raise
-                else:
-                    # 规则模式兜底：好感越高越肯借，最多借出一半现金
-                    amount = min(int(lender.stats.money * aff / 200), int(need))
-                amount = max(0, min(amount, int(lender.stats.money), int(need)))
-                if amount > 0:
-                    hospital.pay(self, p, lender, amount)
-                    self.log("social", f"💳 {lender.name} 借给 {p.name} {amount:.0f}元急救费",
-                             [lender.pid, p.pid])
-                    lender.remember(f"{p.name}生命垂危，我借给TA{amount:.0f}元急救费", 7)
-                    if p in self.players and lender in self.players:
-                        p.affinity[lender.pid] = min(100.0, p.affinity.get(lender.pid, 50) + 5)
-                        lender.affinity[p.pid] = min(100.0, lender.affinity.get(p.pid, 50) + 3)
-                else:
-                    lender.remember(f"{p.name}向我借钱急救，我犹豫了，没有借", 6)
-                # 借够了：立即收治，剩余排队请求作废
-                if p in self.players and sum(p.loans.values()) >= p.debt_goal - 1e-9:
-                    hospital.admit(self, p, note="（借款补齐费用）")
-                    self.loan_queue = [r for r in self.loan_queue if r[0] != borrower_pid]
+                try:
+                    borrower_pid, lender_pid = request
+                    p, lender = self.by_pid(borrower_pid), self.by_pid(lender_pid)
+                    if not p or not lender or not getattr(p, 'awaiting_admission', False):
+                        continue
+                    need = max(0.0, p.debt_goal - sum(p.loans.values()))
+                    if need <= 0:
+                        continue
+                    aff = lender.affinity.get(p.pid, 50.0)
+                    amount = 0
+                    prof = self.profile_for(lender.pid)
+                    if prof:
+                        model = self.model_of.get(lender.pid) or prof.default_model
+                        try:
+                            amount = await brain.loan_amount_llm(
+                                prof, model, lender.name, p.name, need, p.stats.money,
+                                aff, lender.stats.money,
+                                timeout=min(25.0, self.settings.decision_timeout))
+                        except asyncio.CancelledError:
+                            self.loan_queue.insert(0, request)
+                            raise
+                    else:
+                        # 规则模式兜底：好感越高越肯借，最多借出一半现金
+                        amount = min(int(lender.stats.money * aff / 200), int(need))
+                    amount = max(0, min(amount, int(lender.stats.money), int(need)))
+                    if amount > 0:
+                        hospital.pay(self, p, lender, amount)
+                        self.log("social", f"💳 {lender.name} 借给 {p.name} {amount:.0f}元急救费",
+                                 [lender.pid, p.pid])
+                        lender.remember(f"{p.name}生命垂危，我借给TA{amount:.0f}元急救费", 7)
+                        if p in self.players and lender in self.players:
+                            p.affinity[lender.pid] = min(100.0, p.affinity.get(lender.pid, 50) + 5)
+                            lender.affinity[p.pid] = min(100.0, lender.affinity.get(p.pid, 50) + 3)
+                    else:
+                        lender.remember(f"{p.name}向我借钱急救，我犹豫了，没有借", 6)
+                    # 借够了：立即收治，剩余排队请求作废
+                    if p in self.players and sum(p.loans.values()) >= p.debt_goal - 1e-9:
+                        hospital.admit(self, p, note="（借款补齐费用）")
+                        self.loan_queue = [r for r in self.loan_queue if r[0] != borrower_pid]
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:                   # noqa: BLE001
+                    self.log('error', f'⚠️ 借款请求处理失败（按未借处理）：{str(exc)[:80]}')
             # 队列清空：复查所有待收治者
             for q in self.players:
                 if getattr(q, 'awaiting_admission', False):
