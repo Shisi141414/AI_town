@@ -196,6 +196,17 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
     if getattr(p,'injury_alert',''):
         alert='## 紧急情况\n'+p.injury_alert+'\n\n'
         prompt=prompt.replace('## 输出格式',alert+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+alert
+    # 濒危求助指引：身体危急且没钱自救时，明确告知可以打电话向室友求助
+    st=p.stats
+    if st.hp<40 or st.satiety<10:
+        tips=[]
+        if st.satiety<10:tips.append('马上弄到吃的（吃饭/做饭/下馆子）')
+        if st.hp<40:tips.append('治疗（诊所24小时营业，15元）')
+        if st.money<15:
+            tips.append('现金不足：可 action=phone 打电话向室友求助（请TA送饭give_meal、借钱transfer或陪同就医），室友会接电话')
+        if tips:
+            sos='## 紧急情况\n你身体危急：'+'；'.join(tips)+'。\n\n'
+            prompt=prompt.replace('## 输出格式',sos+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+sos
     return prompt
 
 
@@ -433,7 +444,7 @@ CONV_TURN_TEMPLATE = """你正在和{other_label}{kind}。
 【对话记录】（"我"是你的话，"{other_name}"是TA的话）
 {history}
 
-轮到你说话。对话就是普通的交流：回应对方、交换信息、说出想法或商量事情都行，针对TA最近这句话说，不要自说自话，也不要重复原话。提及TA时按TA的性别用「他/她」。想聊的都聊完了就自然道别，随时可以结束。
+轮到你说话。针对TA最近这句话回应，说有实质内容的话——近况、请求、约定、计划、情绪或具体的关心；不要空洞的客套寒暄，不要自说自话，也不要重复原话。有需要帮助的事（送饭、借钱、陪同）就直接开口。提及TA时按TA的性别用「他/她」。想聊的都聊完了就自然道别，随时可以结束。
 一句即可，30字以内。只输出一行 JSON：
 {{"say": "你要说的话", "act": "stay（继续聊） 或 leave（道别结束） 或 follow（TA要走时挽留/跟上）"}}"""
 

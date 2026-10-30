@@ -235,9 +235,9 @@ class MechanicsDiscoveryTests(unittest.TestCase):
         from engine.town_services import NAMES
         home=prompt_context(self.sim,self.p)
         for code,name in NAMES.items():
-            self.assertRegex(home,rf'{name} {code}（距我约\d+格）')
+            self.assertRegex(home,rf'{name} {code}（[^；]+；距我约\d+格）')
         self.place('O')
-        self.assertIn('事务所 O（距我约0格）',prompt_context(self.sim,self.p))
+        self.assertIn('事务所 O（上班挣钱；距我约0格）',prompt_context(self.sim,self.p))
 
     def test_prompt_sections_are_ordered_and_rules_not_duplicated(self):
         self.p.town_context=prompt_context(self.sim,self.p)

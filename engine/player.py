@@ -269,13 +269,14 @@ class Player:
         from .activity_rules import registry
         a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
+            self._rejection='这项活动不存在或已被关闭，请改选其他行动'
             return False
         if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
             self.remember('我吃得很饱，暂时吃不下饭', 3)
             return False
         if key == 'cook':
             meals = act.cook_meal_output(self.requested_duration)
-            have = self.items.get('ingredient', 0)
+            have = self.items.get('ingredient', 0) + sim.fridge.get('ingredient', 0)
             if have <= 0:
                 self._rejection = '缺少食材：做饭需要食材（1份食材出1份饭），商店S有售'
                 return False
@@ -287,6 +288,7 @@ class Player:
                 self.remember(f'食材只够做{meals}份饭，就先做这些', 3)
             self._cook_meals = meals
         if a.get('need') is None and a.get('scene') not in ('any',self.scene):
+            self._rejection=f"这项活动不能在{'室内' if self.scene=='house' else '室外'}进行"
             return False
         need = a.get("need", "")
         if a.get('_target_mode')=='required' and target is None:
@@ -412,6 +414,8 @@ class Player:
             code=a['_building']
             if not open_now(sim.opening_hours[code], sim.hour):
                 self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
+                hours=sim.opening_hours[code]
+                self.info_feedback=f'{a["name"]}现在没营业（营业{hours[0]:02d}:00–{hours[1]:02d}00），请改选别的活动或稍后再来'
                 self.remember(f'{a["name"]}到达时未营业',3)
                 return
         from .interaction_points import LOCAL_ACTIONS,options,active_slot
@@ -446,17 +450,21 @@ class Player:
         energy_need=max(0,-a.get('effects',{}).get('energy',0))
         if a.get('_kind') in ('course','license_course','job') and self.stats.energy+1e-8<energy_need:
             self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
+            self.info_feedback=f'抵达后精力不足（{self.stats.energy:.0f}，{a["name"]}至少需要{energy_need:.0f}），先睡觉或休息再来'
             self.remember('抵达后精力不足，需先休息再上课或工作',3)
             return
         if self.stats.money < cost:
             self.state, self.activity, self.activity_key, self._pending_key = "idle", None, "", ""
+            self.info_feedback=f"抵达后现金不足（{a['name']}需{cost:g}元，只有{self.stats.money:.0f}元）；可先去挣钱"
             self.remember(f"抵达后钱不够，无法{a['name']}", 3)
             return
         if key in ('fish','swim'):
             waters=[(self.x+dx,self.y+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))
                     if self.scene=='town' and world.tile('town',self.x+dx,self.y+dy)=='W']
             if not waters:
-                self.state='idle';self._pending_key='';return
+                self.state='idle';self._pending_key=''
+                self.info_feedback='这里挨不到水面，请到池塘边的空地再试'
+                return
             if key=='swim':
                 # 下水格独占：避让已在水中的人与其他下水点
                 taken=sim.occupied('town',self)|sim.human_cells('town',self)
@@ -490,6 +498,16 @@ class Player:
             self.items[a["gives_item"]] = self.items.get(a["gives_item"], 0) + 1
             it = act.ITEMS.get(a["gives_item"],{'name':a['name']})
             self.remember(f"我买了{it['name']}", 3)
+            if a["gives_item"]=='ingredient' and self.items['ingredient']>2:
+                move=self.items['ingredient']-2
+                room=max(0,act.FRIDGE_LIMITS['ingredient']-sim.fridge.get('ingredient',0))
+                move=min(move,room)
+                if move>0:
+                    self.items['ingredient']-=move
+                    sim.fridge['ingredient']=sim.fridge.get('ingredient',0)+move
+                    self.remember(f'{move}份食材放进了厨房冰箱', 3)
+                if self.items['ingredient']>2:
+                    self.remember(f'背包里还有{self.items["ingredient"]}份食材（冰箱已满）', 3)
         if a.get("needs_item"):
             if a['needs_item']=='any':self._consume_decor_item(key, sim)
         if key=='eat':
@@ -499,6 +517,11 @@ class Player:
                 self.items['meal']-=1
                 self.eating_quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
                 if self.meal_expiry:self.meal_expiry.pop(0)
+            elif sim.fridge.get('meals'):
+                # 冰箱有饭：自动取出（最早存入的先吃）
+                chilled=sim.fridge_take_meal()
+                self.eating_from_inventory=True
+                self.eating_quality=chilled['quality']
         sim.log("activity", f"{self.name} 开始{a['name']} {a['emoji']}（计划{self.activity_total*10}分钟）", [self.name],scope="game")
 
     def _consume_decor_item(self, key: str, sim: "Simulation"):
@@ -707,6 +730,7 @@ class Player:
                                      and not world.same_place(self, t)):
             self.state = "idle"
             self._pending_key = ""
+            self.info_feedback=f'{t.name}已经不在身边了（活动开始时走散）；可改用phone联系或先做别的'
             return
         self._pending_key = ""
         self.target_player = t
@@ -845,6 +869,7 @@ class Player:
             self.activity = None
             self.activity_key = ""
             self.state = "idle"
+            self.info_feedback='家里没现成饭了（做饭后15刻内有效）：请选cook（需食材）、去冰箱取或下馆子'
             self.remember("家里没饭了，得下馆子或自己做", 4)
             return
 
@@ -875,13 +900,28 @@ class Player:
             elapsed=max(0,self.activity_total-self.activity_left)
             # 中断时按实际进度折算产出；食材按实际产出消耗（不白扣）
             produced=min(planned,int(planned*elapsed/max(1,self.activity_total)),
-                         self.items.get('ingredient',0))
+                         self.items.get('ingredient',0)+sim.fridge.get('ingredient',0))
             if produced>0:
-                self.items['meal']=self.items.get('meal',0)+produced
-                self.items['ingredient']=self.items.get('ingredient',0)-produced
-                self.meal_qualities.extend([quality]*produced)
-                self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',36))]*produced)
-                sim.log('activity',f'🍱 {self.name}做好饭，留下{produced}份可带走的饭菜（消耗{produced}份食材）',[self.pid])
+                # 食材消耗：先背包后冰箱
+                from_bag=min(produced,self.items.get('ingredient',0))
+                if from_bag:
+                    self.items['ingredient']-=from_bag
+                rest=produced-from_bag
+                if rest:
+                    sim.fridge['ingredient']-=rest
+                # 优先随身（最多2份），多出的放冰箱（保鲜=保质期×3，容量有限）；
+                # 冰箱放不下的仍随身带走，不浪费
+                fridge_room=max(0,act.FRIDGE_LIMITS['meals']-len(sim.fridge.get('meals',[])))
+                keep=min(produced,max(2-self.items.get('meal',0),produced-fridge_room))
+                keep=max(0,keep)
+                if keep>0:
+                    self.items['meal']=self.items.get('meal',0)+keep
+                    self.meal_qualities.extend([quality]*keep)
+                    self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',36))]*keep)
+                chilled=produced-keep
+                if chilled>0:
+                    sim.fridge_add_meal(quality,chilled)
+                sim.log('activity',f'🍱 {self.name}做好{produced}份饭（随身{keep}份、冰箱{chilled}份，消耗{produced}份食材）',[self.pid])
             else:
                 sim.log('activity',f'🍳 {self.name}的做饭中途结束，没有产出饭菜',[self.pid])
         if key=='use_medicine' and self.target_player:

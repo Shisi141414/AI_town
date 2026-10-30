@@ -81,6 +81,8 @@ class Simulation:
         self.system_prompt: str = ""            # 用户自定义统一提示词
         self.decor_common = 0.0                 # 公共区装饰度
         self.meal_until = 0                     # 家里有饭的截止 tick
+        # 厨房公共冰箱：多余食材与饭菜自动存入（保鲜=保质期×3），做饭/在家吃饭自动取用
+        self.fridge: dict = {'ingredient': 0, 'meals': []}
         self.dialogue_log: list[dict] = []      # 兼容保留
         self.conversations: list[Conversation] = []   # 活跃对话
         self._dialogue_released = 0                  # 已因对话放行的世界刻数（3轮对话=1刻）
@@ -107,6 +109,7 @@ class Simulation:
         return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
             "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
             "decor_common":self.decor_common,"meal_until":self.meal_until,
+            "fridge":{"ingredient":self.fridge.get('ingredient',0),"meals":len(self.fridge.get('meals',[]))},
             "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},"shop_products":shop_catalog(self),
             "players":[p.snapshot(names).model_dump() for p in self.players],
             "vehicles":[v.model_dump() for v in self.vehicles],
@@ -657,6 +660,7 @@ class Simulation:
             self._interrupt_health_losses(before)
 
         self.random_events.tick(self)
+        self._expire_fridge()
 
         # 3. 被动消耗
         for p in self.players:
@@ -684,6 +688,28 @@ class Simulation:
         if self.loan_queue:
             self._kick_loan_queue()
 
+    def _expire_fridge(self):
+        """冰箱饭菜过期清理（保鲜时长=保质期×3，存入时已按此设定到期刻）。"""
+        meals = self.fridge.get('meals', [])
+        kept = [m for m in meals if m['expiry'] > self.global_tick]
+        if len(kept) != len(meals):
+            gone = len(meals) - len(kept)
+            self.log('activity', f'🧊 冰箱里{gone}份饭菜过期变质，扔掉了', scope='game')
+            self.fridge['meals'] = kept
+
+    def fridge_add_meal(self, quality: int, count: int = 1):
+        shelf = int(self.mechanics.get('meal_shelf_life_ticks', 36)) * 3
+        for _ in range(count):
+            self.fridge['meals'].append({'quality': int(quality),
+                                         'expiry': self.global_tick + shelf})
+
+    def fridge_take_meal(self):
+        """取出最早存入的饭菜；空则 None。"""
+        meals = self.fridge.get('meals', [])
+        if not meals:
+            return None
+        return meals.pop(0)
+
     def _injury_causes(self, p):
         """按当前状态推断 hp 下降的可能来源（用于同种伤害去重）。"""
         causes = set()
@@ -701,27 +727,43 @@ class Simulation:
             if p.stats.hp < previous-1e-8:
                 self._alert_health_loss(p,previous-p.stats.hp)
 
-    def _alert_health_loss(self,p,lost,*,force=False,cause=None):
-        """受伤结束已排定的行动，让下一刻进入正常的模型决策流程。
+    INJURY_CAUSE_TEXT = {
+        'starvation': '饥饿（饱食为0，每刻扣血；需要马上吃饭——吃随身饭菜、在家做饭、下馆子或请室友送饭）',
+        'low_mood': '心情长期低落（连续3小时低于20；需要娱乐、社交、休息来回升心情）',
+        'illness': '疾病发作（需要去诊所治疗或用药）',
+        'attack': '被攻击受伤',
+    }
 
-        同种持续伤害（疾病/饥饿/低心情）只打断一次活动：首次打断后记入
-        p._injury_break_done，此后同类伤害不再打断，角色可以安心赶路求医
+    def _alert_health_loss(self,p,lost,*,force=False,cause=None):
+        """受伤时向角色说明原因（首次），并结束已排定的行动进入决策流程。
+
+        同种持续伤害（疾病/饥饿/低心情）只提醒/打断一次：首次记入
+        p._injury_break_done，此后同类伤害不再打扰，角色可以安心赶路求医
         或吃饭。伤害结束（恢复/吃饱/心情回升）时由 clear_injury_break
         清除标记，下一轮同类伤害仍能正常唤醒。
         """
         if getattr(p,'last_health_alert_tick',-1)==self.global_tick:return
-        # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
-        active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
-        if not active:return
         causes = {cause} if cause else self._injury_causes(p)
         if cause != 'attack' and causes & set(getattr(p,'_injury_break_done',[]) or []):
-            return               # 该种伤害已打断过一次，放行后续活动
+            return               # 该种伤害已提醒过，放行后续活动
+        # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
+        active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
+        if not active and causes:
+            # 非活动状态（idle/等决策）也要首次告知原因——否则角色不知道为何掉血
+            p.last_health_alert_tick=self.global_tick
+            marks = [m for m in (getattr(p,'_injury_break_done',[]) or []) if m != 'attack']
+            p._injury_break_done = list(dict.fromkeys(marks + [c for c in causes if c != 'attack']))
+            why='；'.join(self.INJURY_CAUSE_TEXT.get(c,c) for c in sorted(causes))
+            p.injury_alert=f'身体在失去生命（已损失{lost:.2f}点，原因：{why}）。'
+            return
+        if not active:return
         if causes and cause != 'attack':
             marks = [m for m in (getattr(p,'_injury_break_done',[]) or []) if m != 'attack']
             p._injury_break_done = list(dict.fromkeys(marks + [c for c in causes if c != 'attack']))
         p.last_health_alert_tick=self.global_tick
         prior=(p.activity or {}).get('name') or p._pending_key or p.plan or '当前行动'
-        p.injury_alert=f'刚失去{lost:.2f}点生命，{prior}已中断；请先评估伤情，再决定下一步。'
+        why='；'.join(self.INJURY_CAUSE_TEXT.get(c,c) for c in sorted(causes)) if causes else '原因不明，请检查身体状态'
+        p.injury_alert=f'刚失去{lost:.2f}点生命（原因：{why}），{prior}已中断；请优先处理病因再安排下一步。'
         if p.pid in self.sex_proposals:self._decline_sex(p.pid,'受伤后中断')
         if p._conversation and p._conversation.phase!='ended':p._conversation._end('injury')
         partner=self.by_pid(p._bed_partner_pid) if p._bed_partner_pid else None
@@ -729,7 +771,7 @@ class Simulation:
             self._cancel_timed_action(partner)
             partner.remember(f'{p.name}受伤，我们的共同活动中断了',5)
         self._cancel_timed_action(p)
-        self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点，已中断{prior}并重新考虑行动',[p.pid])
+        self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点（{"、".join(sorted(causes)) if causes else "未知"}），已中断{prior}并重新考虑行动',[p.pid])
 
     def clear_injury_break(self,p,cause):
         """某种伤害结束时清除其打断标记；下次同种伤害重新开始计数。"""
@@ -1041,8 +1083,10 @@ class Simulation:
         try:
             a=prepare(self,p,d);key=d.action
         except ValueError as exc:
+            p.info_feedback=f'{d.action}无法进行：{exc}'
             p.remember(str(exc),3);self._reject_decision(p,d,depth);return
         if not a:
+            p.info_feedback=f'{d.action}不在当前可选行动中（可能已关闭或不存在），请改选目录中的行动'
             self._reject_decision(p,d,depth)
             return
         p.plan = d.reason
@@ -1050,6 +1094,7 @@ class Simulation:
         if key=="computer":p.computer_operation_done=False
 
         if a.get("cost", 0) > p.stats.money:
+            p.info_feedback=f"{a['name']}需要{a['cost']:g}元，现金只有{p.stats.money:.0f}元；可先去挣钱或选免费活动"
             p.remember(f"我想{a['name']}但钱不够", 5)
             self._reject_decision(p,d,depth)
             return
@@ -1062,6 +1107,7 @@ class Simulation:
                            if (o.name == d.target or o.pid == d.target)
                            and o is not p), None)
             if target is None and (a.get('need')=='player' or a.get('_target_mode')=='required'):
+                p.info_feedback=f"没找到目标室友“{d.target}”（名字要写对、不能是自己）；请改选单人活动"
                 self._reject_decision(p,d,depth)
                 return
 

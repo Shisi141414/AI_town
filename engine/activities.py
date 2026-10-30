@@ -46,6 +46,10 @@ ITEMS: dict[str, dict] = {
 }
 
 
+# 厨房公共冰箱容量：食材12份、饭菜4份
+FRIDGE_LIMITS = {"ingredient": 12, "meals": 4}
+
+
 def cook_meal_output(ticks: int | None) -> int:
     """做饭时长（刻）→ 产出饭菜份数：30分钟→1，45分钟→2，60分钟→3，80分钟→4。
     其他时长按区间就近归档。"""

@@ -614,7 +614,7 @@ class ApiTests(unittest.TestCase):
 
     def test_memory_pagination_and_deep_archive_survives_reset(self):
         p=server.sim.players[0]
-        for i in range(160):
+        for i in range(800):   # 10:1压缩比下需更多条目才能推进到三级
             p.remember(f"原始经历{i}", 4)
         asyncio.run(server.sim.maintain_memories())
         deep_ids={m.id for m in p.memory.page(3,limit=None)}

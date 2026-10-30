@@ -7,6 +7,12 @@ SKILLS={'computer':'计算机','science':'理学','literature':'文学','medicin
 NAMES={'C':'咖啡馆','R':'饭店','U':'学校','B':'诊所','O':'事务所','S':'商店','M':'小镇影院','G':'健身房','P':'公园','F':'田园','W':'池塘','J':'小镇花园'}
 # 小镇股市：指数 + 6 只场所股。总市值 = 200×10 + 6×100×5 = 5000。
 # 场所股价受近期营业额影响（venue_revenue 衰减累计），并带随机波动。
+# 场所功能速览（提示词用）：让角色不用到场就知道每个场所能做什么
+VENUE_FUNCTIONS={
+ 'C':'喝咖啡、看书、约会', 'R':'吃饭、当服务员/厨师', 'U':'学技能、考驾照、当教师',
+ 'B':'看病买药、医护工作', 'O':'上班挣钱', 'S':'买食材/鲜花/盆栽/药品、购物、买车',
+ 'M':'看电影', 'G':'健身', 'P':'散步', 'F':'田园劳作挣钱', 'W':'钓鱼、游泳', 'J':'赏花散步、园艺',
+}
 STOCKS={
  'index':{'name':'小镇指数','price':10.0,'shares':200,'base':10.0},
  'R':{'name':'饭店','price':5.0,'shares':100,'base':5.0},
@@ -225,7 +231,8 @@ def prompt_context(sim,p):
  def distance(code):
   tiles=world.find_tiles('town',code)
   return approach+min((abs(origin[0]-x)+abs(origin[1]-y) for x,y in tiles),default=0)
- lines.append('小镇场所（名称/代码/距离）：'+'；'.join(f'{name} {code}（距我约{distance(code)}格）' for code,name in NAMES.items()))
+ lines.append('小镇场所（名称/代码/功能/距离）：'+'；'.join(
+     f'{name} {code}（{VENUE_FUNCTIONS.get(code,"")}；距我约{distance(code)}格）' for code,name in NAMES.items()))
  if p.scene=='town':
   for code,name in NAMES.items():
    if not onsite(p,code):continue
@@ -238,6 +245,11 @@ def prompt_context(sim,p):
     from .shop_products import catalog as shop_catalog
     lines.append('商店商品：'+'、'.join(f'{row["name"]} {row["price"]:g}元' for row in shop_catalog(sim).values() if row['enabled']))
    break
+ fridge=getattr(sim,'fridge',None) or {'ingredient':0,'meals':[]}
+ fridge_meals=len(fridge.get('meals',[]))
+ if fridge.get('ingredient') or fridge_meals:
+  from .activities import FRIDGE_LIMITS
+  lines.append(f"厨房冰箱：食材{fridge.get('ingredient',0)}/{FRIDGE_LIMITS['ingredient']}份、饭菜{fridge_meals}/{FRIDGE_LIMITS['meals']}份（保鲜3倍时长；做饭消耗、在家吃饭会自动取用，买多的食材也自动存放）")
  if p.info_feedback:lines.append('上次行动反馈：'+p.info_feedback)
  if p.stats.money<40:
   lines.append('💡 现金紧张：可先前往事务所O（上班，时薪约36元）或田园F（劳作，时薪约32元），到场后选择work/farm_work挣钱')
