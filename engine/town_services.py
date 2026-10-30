@@ -27,7 +27,7 @@ DEFS={
  'job_reception':('B','诊所接待',None,'job'), 'job_nurse':('B','护理助理','medicine','job'), 'job_doctor':('B','门诊医师','medicine','job'),
  **{'study_'+k:('U','学习'+v,k,'course') for k,v in SKILLS.items()},
  'license_driving':('U','驾照课程',None,'license_course'),
- 'buy_flower':('S','鲜花',None,'goods'), 'buy_plant':('S','盆栽',None,'goods'), 'car':('S','私家汽车',None,'goods'),
+ 'buy_flower':('S','鲜花',None,'goods'), 'buy_plant':('S','盆栽',None,'goods'), 'buy_foodstuff':('S','买食材',None,'goods'), 'car':('S','私家汽车',None,'goods'),
  'buy_medicine':('B','药品',None,'goods'),
  'shop':('S','零食杂物',None,'service'), 'movie':('M','看电影',None,'service'), 'exercise':('G','健身',None,'service'), 'park':('P','散步',None,'service'),
  'fish':('W','池塘钓鱼',None,'service'),'swim':('W','池塘游泳',None,'service'),
@@ -46,7 +46,7 @@ for key,code,mins,energy,wage,level in [
 for skill,mins,energy,fee in [('computer',120,18,60),('science',150,22,55),('literature',90,10,30),('medicine',180,26,80),('economics',120,16,65),('cooking',90,15,40)]:
  DEFAULTS['U']['study_'+skill]=dict(minutes=mins,energy_cost=energy,price=fee,xp=100)
 DEFAULTS['U']['license_driving']=dict(minutes=120,energy_cost_per_hour=12,price=80)
-DEFAULTS['S']={'buy_flower':dict(price=12),'buy_plant':dict(price=20),'car':dict(price=1000),'shop':dict(minutes=20,price=6,mood_gain=6)}
+DEFAULTS['S']={'buy_flower':dict(price=12),'buy_plant':dict(price=20),'buy_foodstuff':dict(price=5),'car':dict(price=1000),'shop':dict(minutes=20,price=6,mood_gain=6)}
 DEFAULTS['B']['buy_medicine']=dict(price=25)
 DEFAULTS['M']={'movie':dict(minutes=30,price=12,mood_gain=18,energy_cost=1.5)}
 DEFAULTS['G']={'exercise':dict(minutes=30,price=0,mood_gain=12,energy_cost=15,hp_gain=3.6)}
@@ -142,10 +142,12 @@ def register(activities):
  activities['home_treat']={'name':'在家行医','emoji':'🩺','duration':3,'need':'home_patient','scene':'house','cost':0,'effects':{'energy':-1},'desc':'医学1级起，可在家治疗自己或target室友，能力取决于医学等级'}
  activities['stock']={'name':'电脑股票交易','emoji':'📈','duration':1,'need':'own_computer','scene':'house','cost':0,'effects':{'energy':-.5},'desc':'经济学1级可在自己电脑买卖小镇股票（指数与饭店/影院等场所股），operation=buy/sell，shares填正整数，symbol填股票代码；场所股受营业情况影响，可能亏损'}
  activities['buy_medicine']['gives_item']='medicine'
+ activities['buy_foodstuff']['gives_item']='ingredient'
+ activities['buy_foodstuff']['emoji']='🥬'
  activities['buy_medicine']['emoji']='💊'
  # 原施工工作仅为旧决策兼容，新的模型菜单不提供。
  activities['build']['legacy']=True
- for key in ('buy_flower','buy_plant','buy_medicine','shop','gift','give_meal','use_medicine','attack','decorate_room','decorate_common'):
+ for key in ('buy_flower','buy_plant','buy_foodstuff','buy_medicine','shop','gift','give_meal','use_medicine','attack','decorate_room','decorate_common'):
   activities[key]['fixed_duration']=True
 
 def action_spec(sim,p,key):
@@ -239,11 +241,13 @@ def prompt_context(sim,p):
  if p.info_feedback:lines.append('上次行动反馈：'+p.info_feedback)
  if p.stats.money<40:
   lines.append('💡 现金紧张：可先前往事务所O（上班，时薪约36元）或田园F（劳作，时薪约32元），到场后选择work/farm_work挣钱')
- lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
-  +';'.join(f'{k} {row["name"]} {row["price"]:.2f}元' for k,row in sim.stocks.items()))
- holdings=[f'{sim.stocks[k]["name"]}{v["shares"]}份（成本{v["cost"]:g}元）'
-           for k,v in (p.stock_portfolio or {}).items() if v.get('shares',0)>0]
- if holdings:lines.append('我的股票持仓：'+'；'.join(holdings))
+ if level(p,'economics')>=1:
+  # 股市信息只对具备炒股能力（经济学≥1级）的人展示；交易在自己的电脑前进行
+  lines.append('小镇股市（代码/名称/现价，每小时变动，场所股受营业情况影响）：'
+   +';'.join(f'{k} {row["name"]} {row["price"]:.2f}元' for k,row in sim.stocks.items()))
+  holdings=[f'{sim.stocks[k]["name"]}{v["shares"]}份（成本{v["cost"]:g}元）'
+            for k,v in (p.stock_portfolio or {}).items() if v.get('shares',0)>0]
+  if holdings:lines.append('我的股票持仓：'+'；'.join(holdings))
  return '\n'.join(lines)
 
 
@@ -379,6 +383,12 @@ def finish(sim,p,key):
   if sym=='index':p.stock_shares,p.stock_cost=port['shares'],port['cost']
   p.stock_trades.append({'tick':sim.global_tick,'side':d.operation,'symbol':sym,'shares':count,'price':price,'value':value})
   sim.log('activity',f'📈 {p.name}'+('买入' if d.operation=='buy' else '卖出')+f'{row["name"]}股票{count}份，价格{price:.2f}，总额{value:.2f}元',[p.pid])
+  # 炒股全程可见行情：每笔交易后把最新价与持仓写回电脑反馈，坐在电脑前可继续决策买卖
+  import json as _json
+  p.computer_last_op='stock'
+  p.computer_feedback=_json.dumps({'现金':round(p.stats.money,2),
+   '行情':{k:round(r['price'],2) for k,r in sim.stocks.items()},
+   '持仓':{k:v for k,v in p.stock_portfolio.items() if v.get('shares',0)>0}},ensure_ascii=False)
 
 def update_market(sim):
  """每小时（6刻）行情更新：随机波动±5%（比旧版±1.5%更刺激），

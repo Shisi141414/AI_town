@@ -825,6 +825,17 @@ class Simulation:
         p.activity_descriptions = self.activity_descriptions
         from .activity_rules import registry
         p.activity_registry = registry(self)
+        from .town_services import level
+        if level(p, 'economics') < 1:
+            # 不具备炒股能力者，菜单里也不出现炒股活动（信息与选项一致收紧）
+            p.activity_registry = {k: v for k, v in p.activity_registry.items() if k != 'stock'}
+        # 定量描述实验：默认把活动机制写成数值（为0不显示），保留防误解关键注记；
+        # 用户在网页上自定义过的描述仍然优先。
+        from .activities import quantitative_descriptions, activity_description_defaults
+        base_defaults = activity_description_defaults()
+        customized = {k: v for k, v in self.activity_descriptions.items()
+                      if base_defaults.get(k) != v}
+        p.activity_descriptions = {**quantitative_descriptions(self), **customized}
         from .shop_products import catalog as shop_catalog
         p.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(self).items() if not row['builtin']}
         proposal=self.sex_proposals.get(p.pid)

@@ -54,7 +54,7 @@ USER_TEMPLATE = """# 本次决定
 我的电脑记录：
 {computer}
 
-最近资金流动（理由只在记忆中）：
+最近资金流动：
 {transactions}
 
 ## 可选行动
@@ -176,6 +176,7 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
     template=template.replace('话费每小时50元',_fee_anchor)
     template=template.replace('话费每小时{phone_fee_per_hour:g}元',_fee_anchor)
     template=template.replace('话费每刻{phone_fee_per_tick:g}元',_fee_anchor)
+    template=template.replace('最近资金流动（理由只在记忆中）','最近资金流动')
     prompt=template.format(
         day=p.day, clock=clock, daypart=daypart(p.hour), name=p.name, gender=p.gender,
         scene_name=world.SCENE_NAMES.get(p.scene, p.scene),
@@ -188,7 +189,7 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
         decor_common=decor_common, memories=mem, menu=menu,
         computer=computer_context(p),
         town=getattr(p,"town_context",""),
-        transactions=json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False))
+        transactions=(json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False) if p.transactions else '无'))
     if '{roommates}' not in template and roommates_s!='（暂无）':
         roster='- 同住室友：'+roommates_s+'\n'
         prompt=prompt.replace('## 当前情况\n','## 当前情况\n'+roster,1) if '## 当前情况\n' in prompt else roster+prompt
@@ -402,9 +403,12 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
 async def affinity_tick_llm(profile: ApiProfile, model: str, actor, other, timeout: float = 20.0) -> int:
     """每刻给一个有限的自主好感判断机会；只提供自己的经历。"""
     system='你扮演小镇居民。根据自己的经历决定这一刻对一位室友的好感变化，只输出 -1、0 或 1。'
+    doing=actor.activity["name"] if actor.activity else (actor.plan or "休息")
+    if actor.activity and actor.activity.get('_kind')=='job':
+        doing=f'当{doing}上班'
     prompt=(f'我是{actor.name}，第{actor.day}天。'
             f'我对{other.name}的好感是{actor.affinity.get(other.pid,50):.0f}/100。'
-            f'我正在{actor.activity["name"] if actor.activity else actor.plan or "休息"}。\n'
+            f'我正在{doing}。\n'
             f'我的相关记忆：\n{actor.memory.brief(250)}\n'
             '只根据这些已知信息回答 -1、0 或 1；没有新理由时回答 0。')
     actor.last_system_prompt=system
@@ -491,13 +495,17 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     s = p.stats
 
     # ---- 饿了：能吃上饭就先吃饭（饥饿是掉血的主因，先止伤再治病）----
-    cook_cost = act.ACTIVITIES.get('cook', {}).get('cost', 0)
     if s.satiety < 30:
         if p.scene == "house":
             if p.items.get('meal', 0) > 0 and s.satiety < 95:
                 return Decision(action='eat', reason='吃一份做好的饭菜', source='rule')
-            if s.money >= cook_cost:
-                return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
+            if p.items.get('ingredient', 0) > 0:
+                return Decision(action="cook", reason="有食材，自己做点吃的", source="rule")
+            # 没食材：白天商店营业且买得起→去补货（顺带能做饭）；否则走下馆子/挣钱分支
+            if 8 <= p.hour < 21 and s.money >= 15:
+                return Decision(action="buy_foodstuff", reason="没食材了，去商店买点回来做饭", source="rule")
+            if s.money >= 10 and 10 <= p.hour < 22:
+                return Decision(action="eat_out", reason="家里没食材，下馆子", source="rule")
             # 身无分文且家里没饭：做饭/下馆子都会因钱不够失败，
             # 必须先去工作挣钱，否则会陷在「反复决定做饭→抵达后钱不够」的循环里饿死
             if act.is_night(p.hour):
@@ -596,7 +604,8 @@ async def select_memories_llm(profile, model, name, candidates, count, timeout=2
               '{"keep":[{"id":"原始id","summary":"精简后的经历"}]}\n'
               + (gender_note + "\n" if gender_note else "")
               + json.dumps(entries, ensure_ascii=False))
-    text = await _run_in_thread(chat, profile, model, "整理角色记忆，只根据原始事实选择与压缩。", prompt, 0.3, 1600, timeout)
+    text = await _run_in_thread(chat, profile, model, "整理角色记忆，只根据原始事实选择与压缩。", prompt, 0.3, 2400, timeout)
+    text = _strip_think(text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
     data = json.loads(match.group(0)) if match else {}
     if not isinstance(data, dict) or not isinstance(data.get("keep"), list):
@@ -664,14 +673,20 @@ async def summarize_dialogue_llm(profile: ApiProfile, model: str, self_name: str
                                  other_name: str, kind_cn: str,
                                  history: list[tuple[str, str]],
                                  timeout: float = 20.0, other_gender: str = "") -> str:
-    """对话结束后由模型择取关键信息作为记忆。空结果抛 ValueError。"""
+    """对话结束后由模型择取关键信息作为记忆。空结果/疑似指令复述抛 ValueError
+    （由调用方退回机械摘要，绝不把思考过程或指令复述写进记忆）。"""
     hist_s = "\n".join(f"{'我' if w == self_name else w}：{t}" for w, t in history[-16:])
     other_label = other_name + (f"（{other_gender}）" if other_gender else "")
     prompt = DIALOGUE_SUMMARY_TEMPLATE.format(other_label=other_label, kind=kind_cn, history=hist_s)
+    # 推理模型先思考再作答：额度太小会把思考截断成空 content，兜底文本
+    # 又常以指令复述开头——那就是污染记忆的来源，这里给足额度并做检测
     text = await _run_in_thread(chat, profile, model,
                                 "你在整理自己的记忆，只输出记忆内容本身。",
-                                prompt, 0.3, 200, timeout)
-    text = (text or '').strip().strip('"“”')
-    if not text:
-        raise ValueError('空摘要')
+                                prompt, 0.3, 2048, timeout)
+    text = _strip_think(text or '').strip().strip('"“”')
+    leak_markers = ('只输出', '不超过60字', '我们需要', '需要从', '挑最值得', '挑选',
+                    '记忆内容本身', '只陈述事实', 'own perspective', 'Need compress',
+                    'Chinese chars', '压缩成一条')
+    if not text or any(m in text[:80] for m in leak_markers):
+        raise ValueError('摘要为空或疑似指令复述，改用机械摘要')
     return text[:120]

@@ -76,10 +76,22 @@ class TownServiceTests(unittest.TestCase):
   self.b.illness_severity=3
   with self.assertRaises(ValueError):prepare(self.sim,self.a,Decision(action='home_treat',target=self.b.name))
  def test_cooking_skill_improves_meal_and_saved_quality(self):
-  self.a.skills['cooking']=200;self.a.stats.satiety=0;self.a.stats.energy=10;self.a.stats.mood=10
+  self.a.skills['cooking']=200;self.a.stats.satiety=0;self.a.stats.energy=60;self.a.stats.mood=10
+  self.a.items['ingredient']=4
   self.start('cook');energy_at_stove=self.a.stats.energy;self.finish()
   self.assertEqual(self.sim.meal_quality,2)
-  self.assertGreater(self.a.stats.satiety,56);self.assertGreater(self.a.stats.energy,energy_at_stove)
+  # 新契约（食材制）：做饭本身不再直接回饱食，产出2份饭菜、消耗2份食材、耗精力
+  self.assertEqual(self.a.items.get('meal'),2)
+  self.assertEqual(self.a.items.get('ingredient'),2)
+  self.assertLess(self.a.stats.energy,energy_at_stove)
+  self.sim._apply_decision(self.a,Decision(action='eat'))
+  for _ in range(200):
+   if self.a.state=='doing':break
+   self.a.tick(self.sim)
+  for _ in range(200):
+   self.a.tick(self.sim)
+   if self.a.state=='idle':break
+  self.assertGreater(self.a.stats.satiety,39)
   self.b.stats.satiety=0;self.b.stats.energy=10;self.b.stats.mood=10
   self.sim._apply_decision(self.b,Decision(action='eat'))
   for _ in range(200):

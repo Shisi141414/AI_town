@@ -40,19 +40,34 @@ MOVE_EXTRA_ENERGY = -0.25
 ITEMS: dict[str, dict] = {
     "flower": {"name": "鲜花", "emoji": "💐", "price": 12, "decor": 6},
     "plant":  {"name": "盆栽", "emoji": "🪴", "price": 20, "decor": 10},
+    "ingredient": {"name": "食材", "emoji": "🥬", "price": 5, "decor": 0},
     "meal":   {"name": "家常饭菜", "emoji": "🍱", "price": 0, "decor": 0},
     "medicine": {"name": "药品", "emoji": "💊", "price": 25, "decor": 0},
 }
+
+
+def cook_meal_output(ticks: int | None) -> int:
+    """做饭时长（刻）→ 产出饭菜份数：30分钟→1，45分钟→2，60分钟→3，80分钟→4。
+    其他时长按区间就近归档。"""
+    t = ticks if ticks else ACTIVITIES["cook"]["duration"]
+    if t <= 3:
+        return 1
+    if t <= 5:
+        return 2
+    if t <= 7:
+        return 3
+    return 4
 
 # ------------------------------------------------------------------ 活动表
 ACTIVITIES: dict[str, dict] = {
     # ============ 室内（house） ============
     "cook": {
-        "name": "做饭", "emoji": "🍳", "duration": 4, "need": "facility:K",
-        "scene": "house", "cost": 4,
-        "effects": {"satiety": 14, "mood": 3},
+        "name": "做饭", "emoji": "🍳", "duration": 5, "need": "facility:K",
+        "scene": "house", "cost": 0,
+        "effects": {"energy": -2.0, "mood": 1.0},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "在厨房做饭（便宜且能和室友一起做）",
+        "desc": "在厨房做饭：需消耗食材（商店S购买，1份食材出1份饭），"
+                "时长30/45/60/80分钟分别产出1/2/3/4份可带走的饭菜",
     },
     "eat": {
         "name": "在家吃饭", "emoji": "🍚", "duration": 3, "need": "facility:D",
@@ -179,6 +194,13 @@ ACTIVITIES: dict[str, dict] = {
         "gives_item": "plant",
         "desc": "买一盆绿植（20元）：装饰度更高",
     },
+    "buy_foodstuff": {
+        "name": "买食材", "emoji": "🥬", "duration": 1, "need": "facility:S",
+        "scene": "town", "cost": 5,
+        "effects": {"mood": 1},
+        "gives_item": "ingredient",
+        "desc": "买一份食材（做饭用，1份食材做1份饭）",
+    },
     "think": {
         "name": "思考", "emoji": "🤔", "duration": 3, "need": None,
         "scene": "any", "cost": 0,
@@ -286,7 +308,7 @@ def activity_description_defaults() -> dict[str, str]:
     """模型行动目录中的默认文字；用户可逐项覆盖，不改变行动规则。"""
     from .town_services import DEFS, NAMES
     effects = {
-        "cook":"在家中厨房；备餐，完成后得到可赠送的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
+        "cook":"在家中厨房；需消耗食材（商店购买），按时长产出1~4份可带走饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜（家里刚做过饭15刻内有效），恢复饱食",
         "watch_tv":"在家中客厅沙发；放松心情", "computer":"在自己卧室电脑前；保存、查看和修改自己的记录",
         "computer_game":"在自己卧室电脑前；娱乐、提升心情", "sleep":"在自己卧室床上；恢复精力与身体",
         "shower":"在家中浴室；放松并恢复精力", "laundry":"在家中洗衣区；洗衣、略有放松",
@@ -308,6 +330,7 @@ def activity_description_defaults() -> dict[str, str]:
         "garden_walk":"散步，放松心情", "garden_flowers":"赏花，恢复心情与精力",
         "garden_tend":"园艺，改善身体与心情", "shop":"购物，改善心情",
         "buy_flower":"买鲜花，用于装饰或送礼", "buy_plant":"买盆栽，用于装饰或送礼",
+        "buy_foodstuff":"买食材，回家做饭的原料（1份做1份饭）",
         "buy_medicine":"买药品，带给室友疗伤",
     }
     descriptions = {}
@@ -431,3 +454,123 @@ def synergy_effects(base_effects: dict, stat: str, n: int, avg_aff: float,
 # 新场所与技能活动共享原有行走和时长引擎。
 from .town_services import register
 register(ACTIVITIES)
+
+
+# ------------------------------------------------------------------ 定量描述
+# 关键防误解注记：定量描述实验中仍须保留的行为提示（历史上删掉会直接引发
+# 模型行为误解，如 wander 以为能走回家、镇上以为不能睡觉）。
+KEY_NOTES: dict[str, str] = {
+    "wander": "只在原地附近踱步，不会移动到别处（回家要选睡觉）",
+    "eat": "需背包有饭菜，或家里15刻内刚做过饭；否则请选下馆子",
+    "sleep": "夜间恢复更高；从镇上选它会自动回家睡觉",
+    "phone": "可跨地点通话；话费由拨打者按轮支付",
+    "give_meal": "对方当场吃掉（不进背包）；对方吃得很饱时会被拒",
+    "use_medicine": "对方满血无病时会被拒",
+    "visit": "抵达后才会列出当地具体项目（先用target填场所代码/名称）",
+    "computer": "search/read 结果自动存入记忆；文件不会随记忆整理消失",
+    "love": "需双方好感都≥55，否则不会成",
+    "sex": "需双方各自选择同意；对方可以拒绝",
+    "gift": "消耗背包里的鲜花/盆栽；大幅提升好感",
+    "attack": "对方掉血、双方好感暴跌",
+    "transfer": "付款或收款的一方必须是你自己",
+    "ride": "需身边的司机正在开车；乘车不需要驾照",
+    "stock": "在本机交易；场所股受营业情况影响，可能亏损",
+    "buy_car": "需已到商店；买车后仍需驾照才能驾驶",
+    "treat": "诊所24小时营业",
+}
+
+_STAT_LABELS = (("hp", "生命"), ("satiety", "饱食"), ("energy", "精力"),
+                ("mood", "心情"), ("money", "金钱"))
+
+
+def quantitative_descriptions(sim) -> dict[str, str]:
+    """把每项活动的全部机制写成一行定量描述；数值为 0 的机制不显示，
+    防误解的关键注记（KEY_NOTES）附加在定量信息之后。
+    读取 sim 当前配置（town_config / mechanics / activity_config），
+    网页面板调参后描述自动跟随。"""
+    from .town_services import DEFS, SKILLS, work_experience_rate
+    out: dict[str, str] = {}
+    for key, a in ACTIVITIES.items():
+        if a.get("legacy"):
+            continue
+        parts: list[str] = []
+        if key in DEFS:
+            code, name, skill, kind = DEFS[key]
+            v = sim.town_config.get(code, {}).get(key, {})
+            if kind == "job":
+                parts.append(f"时薪{v.get('hourly_wage', 0):g}元/小时")
+                if v.get("min_level"):
+                    parts.append(f"需{SKILLS.get(skill, skill)}{int(v['min_level'])}级")
+                parts.append(f"默认班次{v.get('minutes', 0):g}分钟（可延长）")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if sim.mechanics.get("work_mood_per_hour"):
+                    parts.append(f"心情-{sim.mechanics['work_mood_per_hour']:g}/小时")
+                if skill:
+                    xp = work_experience_rate(sim, key)
+                    if xp:
+                        parts.append(f"{SKILLS.get(skill, skill)}经验+{xp:g}/小时")
+            elif kind in ("course", "license_course"):
+                parts.append(f"时长{v.get('minutes', 0):g}分钟")
+                if v.get("price"):
+                    parts.append(f"学费{v['price']:g}元")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if sim.mechanics.get("study_mood_per_hour"):
+                    parts.append(f"心情-{sim.mechanics['study_mood_per_hour']:g}/小时")
+                xp = v.get("xp_per_hour")
+                if isinstance(xp, (int, float)) and xp:
+                    parts.append(f"经验+{xp:g}/小时")
+                if key == "license_driving":
+                    parts.append("完成即取得驾照")
+            elif kind == "goods":
+                if v.get("price"):
+                    parts.append(f"售价{v['price']:g}元")
+                if a.get("gives_item"):
+                    parts.append(f"获得{ITEMS[a['gives_item']]['name']}×1")
+            else:  # service
+                if v.get("minutes"):
+                    parts.append(f"默认{v['minutes']:g}分钟")
+                if v.get("price"):
+                    parts.append(f"费用{v['price']:g}元")
+                for field, label in (("satiety_per_hour", "饱食"), ("energy_gain_per_hour", "精力"),
+                                     ("mood_per_hour", "心情"), ("hp_per_hour", "生命")):
+                    val = v.get(field, 0)
+                    if val:
+                        parts.append(f"{label}+{val:g}/小时")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if v.get("affinity_per_hour"):
+                    parts.append(f"同伴好感+{v['affinity_per_hour']:g}/小时")
+        else:
+            cfg = sim.activity_config.get(key, {})
+            eff = cfg.get("effects", a.get("effects", {}))
+            dur = cfg.get("duration", a["duration"])
+            cost = cfg.get("cost", a.get("cost", 0))
+            if cost:
+                parts.append(f"费用{cost:g}元")
+            parts.append(f"默认{int(dur) * 10:g}分钟")
+            for stat, label in _STAT_LABELS:
+                val = eff.get(stat, 0)
+                if val:
+                    parts.append(f"{label}{'+' if val > 0 else ''}{val:g}/刻")
+            if a.get("synergy"):
+                parts.append("协同：2人×1.35/3人×1.70/4人×2.05（好感调制）")
+            if a.get("gives_item"):
+                parts.append(f"获得{ITEMS[a['gives_item']]['name']}×1")
+            need = a.get("needs_item")
+            if need:
+                label = "鲜花或盆栽" if need == "any" else ITEMS.get(need, {}).get("name", need)
+                parts.append(f"需消耗{label}")
+            for stat, bonus in (a.get("night_bonus") or {}).items():
+                if bonus:
+                    parts.append(f"夜间{stat}+{bonus:g}/刻")
+        if key == "cook":
+            shelf = int(sim.mechanics.get("meal_shelf_life_ticks", 36))
+            parts.append("时长30/45/60/80分钟→产出1/2/3/4份饭菜（每份耗1食材）")
+            parts.append(f"饭菜保质{shelf}刻；做好后15刻内家人可直接吃饭")
+        note = KEY_NOTES.get(key)
+        if note:
+            parts.append("⚠" + note)
+        out[key] = "；".join(parts) or a.get("desc", "")
+    return out

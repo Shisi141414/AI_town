@@ -129,7 +129,7 @@ class Player:
         self._final_goal: tuple[int, int] | None = None   # 跨场景的最终目的地
         self._final_scene: str | None = None
         self.model = ""
-        self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0}
+        self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0, "ingredient": 0}
         self.meal_qualities: list[int] = []
         self.meal_expiry: list[int] = []      # 每份饭菜的到期tick（与数量FIFO对应）
         self.eating_quality = 0
@@ -273,6 +273,19 @@ class Player:
         if key == 'eat' and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
             self.remember('我吃得很饱，暂时吃不下饭', 3)
             return False
+        if key == 'cook':
+            meals = act.cook_meal_output(self.requested_duration)
+            have = self.items.get('ingredient', 0)
+            if have <= 0:
+                self._rejection = '缺少食材：做饭需要食材（1份食材出1份饭），商店S有售'
+                return False
+            if have < meals:
+                # 食材不够原计划：自动降档到现有的量（1→3刻/2→5刻/3→6刻），不整单拒绝
+                ticks_for = {1: 3, 2: 5, 3: 6}
+                self.requested_duration = ticks_for.get(have, 8)
+                meals = have
+                self.remember(f'食材只够做{meals}份饭，就先做这些', 3)
+            self._cook_meals = meals
         if a.get('need') is None and a.get('scene') not in ('any',self.scene):
             return False
         need = a.get("need", "")
@@ -856,12 +869,21 @@ class Player:
             from .resident_tools import use_computer, remember_computer_use
             use_computer(sim,self,self.decision)
             remember_computer_use(self)
-        if key=='cook' and self.activity_left<=0:
+        if key=='cook':
             quality=min(5,int(self.skills.get('cooking',0)//100))
-            self.items['meal']=self.items.get('meal',0)+2
-            self.meal_qualities.extend([quality,quality])
-            self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',20))]*2)
-            sim.log('activity',f'🍱 {self.name}做好饭，留下两份可带走的饭菜',[self.pid])
+            planned=getattr(self,'_cook_meals',0) or act.cook_meal_output(self.activity_total)
+            elapsed=max(0,self.activity_total-self.activity_left)
+            # 中断时按实际进度折算产出；食材按实际产出消耗（不白扣）
+            produced=min(planned,int(planned*elapsed/max(1,self.activity_total)),
+                         self.items.get('ingredient',0))
+            if produced>0:
+                self.items['meal']=self.items.get('meal',0)+produced
+                self.items['ingredient']=self.items.get('ingredient',0)-produced
+                self.meal_qualities.extend([quality]*produced)
+                self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',36))]*produced)
+                sim.log('activity',f'🍱 {self.name}做好饭，留下{produced}份可带走的饭菜（消耗{produced}份食材）',[self.pid])
+            else:
+                sim.log('activity',f'🍳 {self.name}的做饭中途结束，没有产出饭菜',[self.pid])
         if key=='use_medicine' and self.target_player:
             target=self.target_player
             if self.items.get('medicine',0)>0 and self.scene==target.scene and max(abs(self.x-target.x),abs(self.y-target.y))<=3:

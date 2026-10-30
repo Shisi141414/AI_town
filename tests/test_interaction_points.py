@@ -42,6 +42,7 @@ class InteractionPointTests(unittest.TestCase):
                     self.assertTrue(world.walkable('house',p.x,p.y))
 
     def test_cook_meal_shower_couch_and_sun_use_exact_points(self):
+        self.p.items['ingredient']=2
         for key in ('cook','eat','shower','watch_tv','balcony'):
             with self.subTest(key=key):
                 self.sim._apply_decision(self.p,Decision(action=key))
@@ -107,6 +108,7 @@ class InteractionPointTests(unittest.TestCase):
         self.assertIsNone(b.interaction_slot)
 
     def test_save_restores_furniture_use_and_legacy_activity_reroutes_without_repaying(self):
+        self.p.items['ingredient']=2
         self.sim._apply_decision(self.p,Decision(action='cook'))
         self.arrive(self.p);self.p.tick(self.sim)
         with tempfile.TemporaryDirectory() as temp:
