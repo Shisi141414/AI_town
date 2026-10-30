@@ -194,6 +194,19 @@ class SaveStore:
         for p in sim.players:
             if p._pending_key=='game':
                 p._pending_key='';p.interaction_slot=None;p.path=[];p.state='idle'
+        # love 活动 key 改名 dating（避免内容过滤误伤）：迁移旧档的活动/邀请状态
+        for p in sim.players:
+            if p.activity_key=='love':p.activity_key='dating'
+            if p._pending_key=='love':p._pending_key='dating'
+            if getattr(p,'interaction_slot',None) and p.interaction_slot.get('key')=='love':
+                p.interaction_slot['key']='dating'
+        for prop in sim.sex_proposals.values():
+            if prop.get('kind')=='love':prop['kind']='dating'
+        for mapping in (sim.activity_config,sim.activity_overrides,sim.activity_descriptions):
+            if 'love' in mapping:
+                mapping['dating']=mapping.pop('love')
+        sim.disabled_activities=['dating' if k=='love' else k for k in sim.disabled_activities]
+        sim.custom_activities={'dating' if k=='love' else k:v for k,v in sim.custom_activities.items()}
         for p in sim.players:
             if not p.driver_license and p.travel_mode=='car':
                 sim.drop_passengers(p);sim.release_car(p);p.travel_mode='walk'
@@ -218,6 +231,7 @@ class SaveStore:
         sim.event_id=max((e.id for e in sim.events),default=0)
         sim.vehicles=[Vehicle.model_validate(v) for v in data['vehicles']]
         for raw in data['conversations']:
+            if raw.get('kind')=='love':raw['kind']='dating'
             c=Conversation.__new__(Conversation);c.__dict__.update(unpack(raw,players));c.sim=sim
             sim.conversations.append(c)
             for p in (c.a,c.b):p._conversation=c

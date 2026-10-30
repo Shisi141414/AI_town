@@ -893,8 +893,8 @@ class Simulation:
         p.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(self).items() if not row['builtin']}
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
-        if sender and proposal.get('kind')=='love':
-            p.sex_invitation=(f'{sender.name}邀请你约会；若愿意，选择action=love、target={sender.name}；'
+        if sender and proposal.get('kind')=='dating':
+            p.sex_invitation=(f'{sender.name}邀请你约会；若愿意，选择action=dating、target={sender.name}；'
                               f'也可以选择其他行动婉拒。')
         else:
             p.sex_invitation=(f'{sender.name}邀请你亲密互动；若愿意，选择action=intimate、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
@@ -1007,7 +1007,7 @@ class Simulation:
                 self.log("system", f"🛏 {p.name} 决定继续住院", [p.name], scope="game")
             p.state = "idle"
             return
-        if key not in ('sex','love') and p.pid in self.sex_proposals:
+        if key not in ('sex','dating') and p.pid in self.sex_proposals:
             self._decline_sex(p.pid,('我选择了别的安排'+(f'（{d.reason}）' if getattr(d,'reason','') else '')),by_target=True)
         # 收到关系邀请者若提出反向关系请求（互表），在 _relation_decision 内直接确立；
         # 其余非接受行动（含 relation_end）视为婉拒
@@ -1020,7 +1020,7 @@ class Simulation:
         if key in ('propose_love','propose_friend','relation_accept','relation_end'):
             self._relation_decision(p,d,key)
             return
-        if key in ('sex','love'):
+        if key in ('sex','dating'):
             self._consent_decision(p,d,key)
             return
         if key == 'inspect':
@@ -1216,7 +1216,7 @@ class Simulation:
     def _decline_sex(self,target_pid,reason,by_target=False):
         proposal=self.sex_proposals.pop(target_pid,None)
         if not proposal:return
-        kind_cn='约会' if proposal.get('kind')=='love' else '亲密'
+        kind_cn='约会' if proposal.get('kind')=='dating' else '亲密'
         sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
         if sender and sender.state=='waiting_consent':
             sender.state='idle';sender.plan=f'{kind_cn}邀请结束'
@@ -1228,18 +1228,18 @@ class Simulation:
             self.log('social',f'{sender.name}向{target.name}发出的{kind_cn}邀请未继续：{reason}',[sender.pid,target.pid])
 
     def _consent_decision(self,p,d,key):
-        """需双方同意的共同活动（sex=亲密互动 / love=约会）：
+        """需双方同意的共同活动（sex=亲密互动 / dating=约会）：
         发起方提出邀请 → 对方用自己的行动回应（同 key+同 target 即同意，
         其他行动视为婉拒）。同意后两人同时开始、同时占用（对话期间都不能做别的）。"""
-        kind_cn='约会' if key=='love' else '亲密'
+        kind_cn='约会' if key=='dating' else '亲密'
         target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
         if not target or p.scene!=target.scene or p.vehicle_driver or target.vehicle_driver:
             p.state='idle';p.info_feedback='请指定同场景、未乘车的室友';return
         # 约会发起门槛：恋爱关系或双方好感达标（亲密无好感门槛，凭双方自愿）
-        if key=='love':
+        if key=='dating':
             from . import relations as rel_mod
             from . import activities as act_mod
-            threshold=act_mod.ACTIVITIES['love'].get('consent_threshold',55)
+            threshold=act_mod.ACTIVITIES['dating'].get('consent_threshold',55)
             if not rel_mod.between(self,p.pid,target.pid) and not (
                     p.affinity.get(target.pid,0)>=threshold and target.affinity.get(p.pid,0)>=threshold):
                 p.state='idle'
@@ -1267,8 +1267,8 @@ class Simulation:
                     sender.state='idle';p.state='idle';p.info_feedback='床位暂不可用';return
             else:
                 sender._start_local(key,self);p._start_local(key,self)
-                if key=='love':self.start_conversation(sender,p,'love')
-            self.log('social',f'{sender.name}与{p.name}互相同意'+('约会' if key=='love' else '亲密相处'),[sender.pid,p.pid])
+                if key=='dating':self.start_conversation(sender,p,'dating')
+            self.log('social',f'{sender.name}与{p.name}互相同意'+('约会' if key=='dating' else '亲密相处'),[sender.pid,p.pid])
             return
         if p.pid in self.sex_proposals:self._decline_sex(p.pid,'选择了别的安排')
         if target.state not in ('idle','waiting_model') or target._conversation or p._conversation:
@@ -1316,8 +1316,8 @@ class Simulation:
                 self.log('social', f'💬 {initiator.name} 想再找 {target.name} 聊，两人刚聊过先各自行动',
                          [initiator.pid, target.pid])
                 return
-        # love 需要双方好感达标（在 player 层校验过，这里再保险一次）
-        if kind == "love":
+        # 约会需要恋爱关系或双方好感达标（发起层已校验，这里再保险一次）
+        if kind == "dating":
             from . import relations as rel_mod
             a_ok = initiator.affinity.get(target.pid, 0) >= 55
             b_ok = target.affinity.get(initiator.pid, 0) >= 55
@@ -1330,14 +1330,14 @@ class Simulation:
         initiator._conversation = conv
         target._conversation = conv
         self.conversations.append(conv)
-        kind_cn = {"chat": "对话", "love": "约会", "phone": "打电话"}[kind]
+        kind_cn = {"chat": "对话", "dating": "约会", "phone": "打电话"}[kind]
         self.log("social", f"💬 {initiator.name} 找 {target.name} {kind_cn}",
                  [initiator.pid, target.pid])
 
     def on_conversation_end(self, conv: Conversation):
         """对话结束：好感结算（LLM）+ 基础增量"""
         a, b = conv.a, conv.b
-        key = "love" if conv.kind == "love" else "phone" if conv.kind == "phone" else "chat"
+        key = "dating" if conv.kind == "dating" else "phone" if conv.kind == "phone" else "chat"
         # LLM 决定的浮动增减
         self.request_affinity(a, b, key,conv.elapsed*10)
         self.request_affinity(b, a, key,conv.elapsed*10)

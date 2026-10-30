@@ -129,7 +129,7 @@ class ExecutionTests(unittest.TestCase):
     def test_invalid_model_action_does_not_silently_become_rule_action(self):
         self.profile()
         with patch.object(self.sim,'_apply_rule') as rule:
-            self.sim._apply_decision(self.p,Decision(action='love',target='不存在',source='llm'))
+            self.sim._apply_decision(self.p,Decision(action='dating',target='不存在',source='llm'))
         rule.assert_not_called()
         # love 现为邀请制：target 无效时拒绝并说明理由（与 intimate 同款），等待下次决策
         self.assertEqual(self.p.state,'idle')

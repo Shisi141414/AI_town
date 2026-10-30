@@ -57,7 +57,7 @@ class RejectionTests(unittest.TestCase):
     def test_love_rejected_by_affinity(self):
         self.a.affinity[self.b.pid] = 30.0
         self.b.affinity[self.a.pid] = 40.0
-        self.sim._apply_decision(self.a, Decision(action='love', target=self.b.name, source='llm'))
+        self.sim._apply_decision(self.a, Decision(action='dating', target=self.b.name, source='llm'))
         self.assertIn('好感未互达', self.a.info_feedback)   # 未建立关系且好感不足
         self.assertIn('约会', self.a.memory.brief(0, k=10, query='被拒绝'))
         # 发起即被拦：对方没有被邀请，也就不会收到“没有成行”的记忆

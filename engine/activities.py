@@ -230,7 +230,7 @@ ACTIVITIES: dict[str, dict] = {
         "effects": {},
         "desc": "给室友打电话，可跨地点对话（交流信息、商量事情，无数值变化），拨打者按通话轮数支付话费",
     },
-    "love": {
+    "dating": {
         "name": "约会", "emoji": "💗", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
         "effects": {"mood": 6},
@@ -327,7 +327,7 @@ def activity_description_defaults() -> dict[str, str]:
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近来回踱步放松；不会移动到别处（回家需直接选sleep或visit）",
         "chat":"与室友在同一地点（同一设施区域）；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
-        "love":"与室友在同一地点（同一设施区域）或床上提出约会，对方也选 love 回应才成行；已是恋爱关系时不受好感门槛限制", "sex":"与室友在同一地点（同一设施区域）或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
+        "dating":"与室友在同一地点（同一设施区域）或床上提出约会，对方也选 dating 回应才成行；已是恋爱关系时不受好感门槛限制；约会本身不建立关系", "sex":"与室友在同一地点（同一设施区域）或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
         "gift":"与室友在同一地点（同一设施区域）；赠送物品、增进感情", "attack":"与室友在同一地点（同一设施区域）；伤害对方、恶化关系",
         "give_meal":"与室友在同一地点；把饭菜送给对方当场吃", "use_medicine":"与室友在同一地点；消耗药品治疗伤病",
         "self_relief":"在卫生间独处释放生理紧张（仅男性；释放后消耗倍率恢复基线）",
@@ -481,7 +481,7 @@ KEY_NOTES: dict[str, str] = {
     "use_medicine": "对方满血无病时会被拒",
     "visit": "抵达后才会列出当地具体项目（先用target填场所代码/名称）",
     "computer": "search/read 结果自动存入记忆；文件不会随记忆整理消失",
-    "love": "向室友提出约会，对方也选 love 回应才成行（需双方好感互达55或已是恋爱关系）；约会期间两人共同进行、不能做别的",
+    "dating": "向室友提出约会，对方也选 dating 回应才成行（需双方好感互达55或已是恋爱关系）；约会期间两人共同进行、不能做别的；约会不建立恋爱关系",
     "sex": "需双方各自选择同意；对方可以拒绝",
     "gift": "消耗背包里的鲜花/盆栽；大幅提升好感",
     "attack": "对方掉血、双方好感暴跌",
@@ -572,7 +572,7 @@ def quantitative_descriptions(sim) -> dict[str, str]:
                 val = eff.get(stat, 0)
                 if val:
                     parts.append(f"{label}{'+' if val > 0 else ''}{val:g}/刻")
-            joint = over.get("joint_affinity_per_tick", (8 / 6 if key == "love" else 0))
+            joint = over.get("joint_affinity_per_tick", (8 / 6 if key == "dating" else 0))
             if joint:
                 parts.append(f"共同好感+{joint:g}/刻")
             self_aff = over.get("self_affinity_per_tick", 0)

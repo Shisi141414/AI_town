@@ -65,7 +65,7 @@ USER_TEMPLATE = """# 本次决定
 - 探索：action=visit 的 target 填场所代码或名称；抵达后用 action=inspect 的 target 填当地项目 key，可询问该项目的时薪、最低时间、学费等明确规则。查询占用一次决策。小镇没有其他参与者。
 - 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
 - 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 填关键词（如 岗位、时薪、急救、课程、商品，或具体名称如 咖啡馆、厨师），留空只看目录。search/read 的查询结果会自动存入你的记忆，不必反复查询。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
-- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给同一地点的室友，TA当场吃掉；action=use_medicine 可在同一地点为室友消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love（约会）：向心仪室友提出约会邀请，对方以 action=love、target=你 回应即同意，之后两人共同约会（期间双方都不能做别的）；需双方好感互达55或已建立恋爱关系。propose_love 向室友提出建立恋爱关系、propose_friend 提出结为挚友（需在同一地点，用 target 指定对方），对方在12小时内选择 relation_accept 即建立；relation_end 可单方面结束一段关系（结束后双方对彼此的好感会重新结算）。intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。love/intimate 可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
+- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给同一地点的室友，TA当场吃掉；action=use_medicine 可在同一地点为室友消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。dating（约会）：向心仪室友提出约会邀请，对方以 action=dating、target=你 回应即同意，之后两人共同约会（期间双方都不能做别的）；需双方好感互达55或已建立恋爱关系。注意：约会不等于恋爱——恋爱关系只能先 propose_love 表白、并被对方 relation_accept 接受才建立，约会本身不会建立关系。propose_love 向室友提出建立恋爱关系、propose_friend 提出结为挚友（需在同一地点，用 target 指定对方），对方在12小时内选择 relation_accept 即建立；relation_end 可单方面结束一段关系（结束后双方对彼此的好感会重新结算）。intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。dating/intimate 可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
 - 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell、shares 和 symbol 交易小镇股票（symbol 填代码：index 小镇指数、R 饭店、M 影院、C 咖啡馆、G 健身房、S 商店、B 诊所；场所股价格受近期营业情况影响），可能亏损。
 - 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照（学校U驾照课程），乘车不需要；小镇门口常备一辆共享汽车，考取驾照后即可直接驾驶，不必自己买车。ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
 - 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。在镇上选 sleep 会自动回家睡觉。wander 闲逛只是原地踱步，不会带你回家。
@@ -116,7 +116,11 @@ def nearby_description(nearby: list) -> str:
     def activity(o):
         if getattr(o,'hospitalized',False):return '住院'
         if getattr(o,'awaiting_admission',False):return '等待救治'
-        if o.state=='doing' and o.activity:return '正在'+o.activity['name']
+        if o.state=='doing' and o.activity:
+            t=o.target_player
+            if t is not None and o.activity_key in ('dating','sex'):
+                return f'正在和{t.name}'+o.activity['name']
+            return '正在'+o.activity['name']
         if o.state=='moving':
             key=getattr(o,'_pending_key','')
             return '前往'+act.ACTIVITIES[key]['name'] if key in act.ACTIVITIES else '正在出行'
@@ -292,7 +296,7 @@ def parse_decision(text: str) -> Decision | None:
 def _norm_action(raw: str) -> str:
     raw = raw.strip().lower()
     raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony","聊天":"chat","对话":"chat",
-           "约会":"love","恋爱":"love","表白":"propose_love","求爱":"propose_love","求婚":"propose_love",
+           "约会":"dating","恋爱":"dating","表白":"propose_love","求爱":"propose_love","求婚":"propose_love",
            "结为挚友":"propose_friend","成为挚友":"propose_friend","交挚友":"propose_friend",
            "接受关系":"relation_accept","接受邀请":"relation_accept","答应表白":"relation_accept",
            "结束关系":"relation_end","分手":"relation_end","绝交":"relation_end"}.get(raw,raw)
@@ -428,6 +432,9 @@ async def affinity_tick_llm(profile: ApiProfile, model: str, actor, other, timeo
     doing=actor.activity["name"] if actor.activity else (actor.plan or "休息")
     if actor.activity and actor.activity.get('_kind')=='job':
         doing=f'当{doing}上班'
+    _t=actor.target_player
+    if actor.activity and _t is not None and actor.activity_key in ('dating','sex'):
+        doing=f'和{_t.name}{doing}'   # 共同活动要说清和谁一起（如"和小舟约会"）
     prompt=(f'我是{actor.name}，第{actor.day}天。'
             f'我对{other.name}的好感是{actor.affinity.get(other.pid,50):.0f}/100。'
             f'我正在{doing}。\n'
@@ -459,7 +466,7 @@ CONV_TURN_TEMPLATE = """你正在和{other_label}{kind}。
 一句即可，30字以内。只输出一行 JSON：
 {{"say": "你要说的话", "act": "stay（继续聊） 或 leave（道别结束） 或 follow（TA要走时挽留/跟上）"}}"""
 
-CONV_KIND_CN = {"chat": "面对面对话", "love": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
+CONV_KIND_CN = {"chat": "面对面对话", "dating": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
 
 # 规则模式对话库（无 API 时兜底）
 RULE_OPENERS = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
@@ -592,8 +599,8 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     # 社交窗口
     if others and random.random() < 0.25:
         best = max(others, key=lambda o: p.affinity.get(o.pid, 30))
-        if p.affinity.get(best.pid, 30) >= act.ACTIVITIES["love"]["consent_threshold"]:
-            return Decision(action="love", target=best.name,
+        if p.affinity.get(best.pid, 30) >= act.ACTIVITIES["dating"]["consent_threshold"]:
+            return Decision(action="dating", target=best.name,
                             reason=f"我很喜欢{best.name}", source="rule")
         return Decision(action="chat", target=best.name,
                         reason="找人说说话", source="rule")

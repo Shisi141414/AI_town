@@ -37,12 +37,12 @@ class Conversation:
     def __init__(self, a: "Player", b: "Player", kind: str, sim: "Simulation"):
         self.a = a                    # 发起者
         self.b = b                    # 应答者
-        self.kind = kind              # chat / love / follow
+        self.kind = kind              # chat / dating / follow
         self.sim = sim
         self.history: list[tuple[str, str]] = []   # (说话人名, 台词)
         # 对话与电话不占活动时长：10轮以内不消耗时间，见 _step_tick 冻结逻辑
         self.duration_limit = (a.activity_total if a.activity_custom_duration else None) \
-            if kind == 'love' else None
+            if kind == 'dating' else None
         self.elapsed = 0
         self.turn_count = 0
         self.phase = "opening"        # opening / a_turn / b_turn / leaving / ended
@@ -63,7 +63,7 @@ class Conversation:
     async def advance(self) -> None:
         saved=self.__dict__.copy()
         activity_left=self.a.activity_left
-        key='love' if self.kind=='love' else 'phone' if self.kind=='phone' else 'chat'
+        key='dating' if self.kind=='dating' else 'phone' if self.kind=='phone' else 'chat'
         from .activities import ACTIVITIES
         contract=self.a.activity or ACTIVITIES[key]
         try:
@@ -95,7 +95,7 @@ class Conversation:
                         if key=='phone' and stat=='money' and rate<=0:continue
                         setattr(speaker.stats,stat,getattr(speaker.stats,stat)+rate)
                     speaker.stats.clamp()
-                    gain=contract.get('_joint_affinity_per_tick',8/6 if key=='love' else 0)
+                    gain=contract.get('_joint_affinity_per_tick',8/6 if key=='dating' else 0)
                     if gain:speaker.affinity[other.pid]=max(0,min(100,speaker.affinity.get(other.pid,50)+gain))
                 for owner,other,field in ((self.a,self.b,'_self_affinity_per_tick'),(self.b,self.a,'_target_affinity_per_tick')):
                     gain=contract.get(field,0)
@@ -251,7 +251,7 @@ class Conversation:
 
     def _log_line(self, speaker: "Player", say: str, closing: bool = False):
         if say:
-            kind_cn = {"chat": "对话", "love": "约会", "follow": "边走边聊", "phone": "通话"}[self.kind]
+            kind_cn = {"chat": "对话", "dating": "约会", "follow": "边走边聊", "phone": "通话"}[self.kind]
             self.sim.log("dialogue", f"{speaker.name}：{say}（与{kind_cn}）",
                          [self.a.pid, self.b.pid])
 
@@ -272,7 +272,7 @@ class Conversation:
             if p._conversation is self:
                 p._conversation = None
                 # 聊完就地恢复空闲（或继续之前的活动）
-                if p.state == "doing" and p.activity_key in ("chat", "love", "phone"):
+                if p.state == "doing" and p.activity_key in ("chat", "dating", "phone"):
                     p.activity = None
                     p.activity_key = ""
                     p.activity_left = 0
@@ -283,7 +283,7 @@ class Conversation:
         # 摘要写入记忆：优先让双方各自的模型从对话中择取关键信息
         n_lines = len(self.history)
         if n_lines:
-            kind_cn = {"chat": "对话", "love": "约会", "follow": "交谈", "phone": "通话"}[self.kind]
+            kind_cn = {"chat": "对话", "dating": "约会", "follow": "交谈", "phone": "通话"}[self.kind]
             self._remember_dialogue(self.a, self.b, kind_cn, n_lines)
             self._remember_dialogue(self.b, self.a, kind_cn, n_lines)
         self.sim.on_conversation_end(self)

@@ -75,7 +75,7 @@ class RelationTests(unittest.TestCase):
         rel.establish(self.sim, self.a, self.b, '恋爱')
         self.a.affinity[self.b.pid] = 10
         self.b.affinity[self.a.pid] = 10
-        ok = self.a.begin_activity('love', self.sim, target=self.b)
+        ok = self.a.begin_activity('dating', self.sim, target=self.b)
         if not ok:
             self.assertNotIn('55', self.a._rejection)   # 不能再因好感门槛被拒
         else:
@@ -84,7 +84,7 @@ class RelationTests(unittest.TestCase):
     def test_date_rejected_without_relation_or_affinity(self):
         self.a.affinity[self.b.pid] = 10
         self.b.affinity[self.a.pid] = 10
-        ok = self.a.begin_activity('love', self.sim, target=self.b)
+        ok = self.a.begin_activity('dating', self.sim, target=self.b)
         self.assertFalse(ok)
         self.assertIn('propose_love', self.a._rejection)
 
@@ -139,7 +139,7 @@ class RelationTests(unittest.TestCase):
         from engine.brain import _norm_action
         self.assertEqual(_norm_action('表白'), 'propose_love')
         self.assertEqual(_norm_action('分手'), 'relation_end')
-        self.assertEqual(_norm_action('约会'), 'love')
+        self.assertEqual(_norm_action('约会'), 'dating')
         self.assertEqual(_norm_action('结为挚友'), 'propose_friend')
 
     def test_save_roundtrip_keeps_relations(self):
@@ -175,18 +175,18 @@ class DateConsentTests(unittest.TestCase):
         self.b.affinity[self.a.pid] = 60
 
     def _love(self, sender, target):
-        self.sim._apply_decision(sender, Decision(action='love', target=target.name,
+        self.sim._apply_decision(sender, Decision(action='dating', target=target.name,
                                                   source='llm', reason='想约会'))
 
     def test_proposal_then_accept_both_locked_into_date(self):
         self._love(self.a, self.b)
         self.assertEqual(self.a.state, 'waiting_consent')
-        self.assertEqual(self.sim.sex_proposals[self.b.pid]['kind'], 'love')
+        self.assertEqual(self.sim.sex_proposals[self.b.pid]['kind'], 'dating')
         self._love(self.b, self.a)                       # 对方以 love 回应 = 同意
         self.assertEqual(self.a.state, 'doing')
         self.assertEqual(self.b.state, 'doing')
-        self.assertEqual(self.a.activity_key, 'love')
-        self.assertEqual(self.b.activity_key, 'love')
+        self.assertEqual(self.a.activity_key, 'dating')
+        self.assertEqual(self.b.activity_key, 'dating')
         self.assertIsNotNone(self.a._conversation)       # 对话锁定：期间两人都不决策
         self.assertIsNotNone(self.b._conversation)
 

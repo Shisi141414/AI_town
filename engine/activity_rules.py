@@ -138,7 +138,7 @@ def _base(sim, key, activity):
     values=sim.activity_config.get(key,{})
     effects={stat:values.get('effects',activity.get('effects',{})).get(stat,0) for stat in STATS}
     if key=='phone':effects['money']=-sim.mechanics['phone_fee_per_tick']
-    joint = 8/6 if key=='love' else 0
+    joint = 8/6 if key=='dating' else 0
     return {'name':activity['name'],'emoji':activity['emoji'],
             'description':sim.activity_descriptions.get(key,activity.get('desc',key)),
             'scene':activity.get('scene','any'),'location':_location(key,activity),
@@ -206,7 +206,7 @@ def validate_catalog(sim, values):
                 raise ValueError(f'{key} 地点无效')
         target_mode=row.get('target_mode',target_mode_of(ACTIVITIES[key]) if builtin else 'none')
         if target_mode not in ('none','optional','required'):raise ValueError(f'{key} 对象设置无效')
-        if key in ('phone','love','sex') and target_mode!='required':raise ValueError(f'{key} 必须选择一位室友')
+        if key in ('phone','dating','sex') and target_mode!='required':raise ValueError(f'{key} 必须选择一位室友')
         if type(row['duration']) is not int or not 1<=row['duration']<=144:raise ValueError(f'{key} 时长应为1～144刻')
         for field in ('cost','joint_affinity_per_tick','self_affinity_per_tick','target_affinity_per_tick'):
             v=row.get(field,0)

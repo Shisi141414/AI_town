@@ -311,7 +311,7 @@ class Player:
 
         if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):return route(sim,self,key)
 
-        if key=='love' and self.decision and self.decision.location=='bed':
+        if key=='dating' and self.decision and self.decision.location=='bed':
             # 防御路径：正常邀请流程在 simulation._consent_decision；直接调用时保留门槛
             from . import relations as rel_mod
             if target is None or (self.affinity.get(target.pid,0)<55
@@ -348,7 +348,7 @@ class Player:
             if key=='give_meal' and target.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
                 self._rejection=f'{target.name}吃得很饱（饱食95以上），现在不需要饭菜'
                 return False
-            if key == "love":
+            if key == "dating":
                 from . import relations as rel_mod
                 rel = rel_mod.between(sim, self.pid, target.pid)
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
@@ -700,7 +700,7 @@ class Player:
 
         if self.state == "doing":
             # 对话类活动不结算数值效果（效果在对话结束后统一给）
-            if self.activity_key in ("chat", "love", "phone") and self._conversation is not None:
+            if self.activity_key in ("chat", "dating", "phone") and self._conversation is not None:
                 return
             self._step_activity(sim)
 
@@ -753,7 +753,7 @@ class Player:
         self._start_local(key, sim)
         if key == "attack":
             self._resolve_attack(sim)
-        if key in ("chat", "love"):
+        if key in ("chat", "dating"):
             sim.start_conversation(self, t, key)
         if key == "gift":
             self._resolve_gift(sim, t)
@@ -956,7 +956,7 @@ class Player:
                 physio.release_male(self, sim, how='互动')
             else:
                 physio.satisfy_female(self, sim, how='亲密')
-        if key == 'love' and self.gender == '女':
+        if key == 'dating' and self.gender == '女':
             physio.satisfy_female(self, sim, how='约会')
         if key=='use_medicine' and self.target_player:
             target=self.target_player
@@ -973,7 +973,7 @@ class Player:
         if key == "destroy" and world.tile(self.scene, self.x, self.y) in act.facility_chars("destroy"):
             world.grid(self.scene)[self.y][self.x] = "X"
         # 社交/协同互动的好感结算：LLM 决定增减
-        if key in ("chat", "love"):
+        if key in ("chat", "dating"):
             # 对话结束时 Conversation 已写记忆/好感，这里不重复处理
             pass
         elif key == 'sex' and self.target_player:

@@ -68,7 +68,7 @@ def release(sim,p):
         p.x,p.y=sim.free_position('house',p.x,p.y,p)
 
 
-def route_bed_pair(sim,a,b,key='love'):
+def route_bed_pair(sim,a,b,key='dating'):
     if b._conversation or b.state not in ('idle','waiting_model') or b.vehicle_driver:return False
     points,cells=bed_points(a)
     occupied=sim.occupied('house',a)-({(b.x,b.y)} if b.scene=='house' else set())
@@ -91,9 +91,9 @@ def arrive_bed(sim,p):
     a=sim.by_pid(p._bed_initiator_pid);b=other if a is p else p
     key=p._pending_key
     from . import relations as rel_mod
-    if not a or (key=='love' and not rel_mod.between(sim,a.pid,b.pid)
+    if not a or (key=='dating' and not rel_mod.between(sim,a.pid,b.pid)
                  and (a.affinity.get(b.pid,0)<55 or b.affinity.get(a.pid,0)<55)):
         for q in (p,other):q.state='idle';q._pending_key='';release(sim,q)
         return
     a._start_local(key,sim);b._start_local(key,sim)
-    if key=='love':sim.start_conversation(a,b,'love')
+    if key=='dating':sim.start_conversation(a,b,'dating')
