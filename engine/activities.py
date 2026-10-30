@@ -547,10 +547,14 @@ def quantitative_descriptions(sim) -> dict[str, str]:
                 if v.get("affinity_per_hour"):
                     parts.append(f"同伴好感+{v['affinity_per_hour']:g}/小时")
         else:
+            # 三层合并（与执行层 apply()/_base() 一致）：ACTIVITIES 原始值
+            # → 活动参数面板 activity_config → 活动编辑器 activity_overrides
             cfg = sim.activity_config.get(key, {})
-            eff = cfg.get("effects", a.get("effects", {}))
-            dur = cfg.get("duration", a["duration"])
-            cost = cfg.get("cost", a.get("cost", 0))
+            over = sim.activity_overrides.get(key, {})
+            eff = dict(cfg.get("effects", a.get("effects", {})))
+            eff.update(over.get("effects", {}))
+            dur = over.get("duration", cfg.get("duration", a["duration"]))
+            cost = over.get("cost", cfg.get("cost", a.get("cost", 0)))
             if cost:
                 parts.append(f"费用{cost:g}元")
             parts.append(f"默认{int(dur) * 10:g}分钟")
@@ -558,6 +562,15 @@ def quantitative_descriptions(sim) -> dict[str, str]:
                 val = eff.get(stat, 0)
                 if val:
                     parts.append(f"{label}{'+' if val > 0 else ''}{val:g}/刻")
+            joint = over.get("joint_affinity_per_tick", (8 / 6 if key == "love" else 0))
+            if joint:
+                parts.append(f"共同好感+{joint:g}/刻")
+            self_aff = over.get("self_affinity_per_tick", 0)
+            target_aff = over.get("target_affinity_per_tick", 0)
+            if self_aff:
+                parts.append(f"自己对对象好感+{self_aff:g}/刻")
+            if target_aff:
+                parts.append(f"对象对自己好感+{target_aff:g}/刻")
             if a.get("synergy"):
                 parts.append("协同：2人×1.35/3人×1.70/4人×2.05（好感调制）")
             if a.get("gives_item"):
