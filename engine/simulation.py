@@ -1094,7 +1094,7 @@ class Simulation:
         if key=="computer":p.computer_operation_done=False
 
         if a.get("cost", 0) > p.stats.money:
-            p.info_feedback=f"{a['name']}需要{a['cost']:g}元，现金只有{p.stats.money:.0f}元；可先去挣钱或选免费活动"
+            p.info_feedback=f"{a['name']}需要{a['cost']:g}元，现金只有{p.stats.money:.1f}元；可先去挣钱或选免费活动"
             p.remember(f"我想{a['name']}但钱不够", 5)
             self._reject_decision(p,d,depth)
             return

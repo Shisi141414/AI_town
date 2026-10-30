@@ -165,6 +165,11 @@ class SaveStore:
             clean=dict(value)
             for field in ('duration','cost'):
                 if field in row:clean[field]=row[field]
+            # 版本迁移：食材制（2026-10-30）起做饭成本由食材承担，
+            # 旧档默认的 cook 现金费用（4元=旧"饭钱"）语义废弃，归零；
+            # 用户改成其他值的保留
+            if key=='cook' and clean.get('cost')==4:
+                clean['cost']=0
             eff=row.get('effects')
             if isinstance(eff,dict):
                 # 字段级清洗：只保留新默认 effects 中仍存在的键（旧档废弃键丢弃）

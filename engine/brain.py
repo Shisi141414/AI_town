@@ -38,7 +38,7 @@ USER_TEMPLATE = """# 本次决定
 - 基本信息：姓名{name}；性别{gender}
 - 地点：{scene_name}·{location}；公共区域装饰度：{decor_common:.0f}
 - 身体：生命{hp:.0f}/100，饱食{satiety:.0f}/100，精力{energy:.0f}/100，心情{mood:.0f}/100；{illness}
-- 金钱：{money:.0f}元；物品：{items}
+- 金钱：{money:.1f}元；物品：{items}
 - 同住室友：{roommates}
 - 附近室友：{nearby}；我对室友的好感：{affinity}
 - 亲密邀请：{sex_invitation}

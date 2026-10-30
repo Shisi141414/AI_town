@@ -455,7 +455,7 @@ class Player:
             return
         if self.stats.money < cost:
             self.state, self.activity, self.activity_key, self._pending_key = "idle", None, "", ""
-            self.info_feedback=f"抵达后现金不足（{a['name']}需{cost:g}元，只有{self.stats.money:.0f}元）；可先去挣钱"
+            self.info_feedback=f"抵达后现金不足（{a['name']}需{cost:g}元，只有{self.stats.money:.1f}元）；可先去挣钱"
             self.remember(f"抵达后钱不够，无法{a['name']}", 3)
             return
         if key in ('fish','swim'):
