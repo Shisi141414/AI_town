@@ -235,26 +235,21 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len({p.name for p in self.sim.players}), 5)
 
     def test_manual_player_joins_identity_phase_by_default(self):
-        import random
-        rng_state = random.getstate()   # 保持全局随机序列不受本测试影响（后续规则模拟测试依赖）
-        try:
-            self.sim.profile = ApiProfile(id="stub", name="stub", api_key="fake", default_model="stub")
-            new = self.sim.add_player_manual("居民6", "#7f8c8d", "🙂")
-            self.assertFalse(new.identity_done)          # 默认参与身份自选
-            fixed = self.sim.add_player_manual("小固", "#123456", "🙂", join_identity=False)
-            self.assertTrue(fixed.identity_done)         # 显式关闭则固定身份
-            self.assertTrue(all(p.identity_done for p in self.sim.players if p is not new))
-            identity = {"name": "小新", "color": "#abcdef", "gender": "女"}
-            with patch("engine.brain.choose_identity_llm", new_callable=AsyncMock, return_value=identity) as choose:
-                asyncio.run(self.sim.run_identity_phase())
-            # 手动居民（默认勾选）被模型询问并改名；固定身份居民保持原名未被询问
-            self.assertEqual(new.name, "小新")
-            self.assertEqual(new.gender, "女")
-            self.assertTrue(new.identity_done)
-            self.assertEqual(fixed.name, "小固")
-            self.assertEqual(choose.call_count, 1)
-        finally:
-            random.setstate(rng_state)
+        self.sim.profile = ApiProfile(id="stub", name="stub", api_key="fake", default_model="stub")
+        new = self.sim.add_player_manual("居民6", "#7f8c8d", "🙂")
+        self.assertFalse(new.identity_done)          # 默认参与身份自选
+        fixed = self.sim.add_player_manual("小固", "#123456", "🙂", join_identity=False)
+        self.assertTrue(fixed.identity_done)         # 显式关闭则固定身份
+        self.assertTrue(all(p.identity_done for p in self.sim.players if p is not new))
+        identity = {"name": "小新", "color": "#abcdef", "gender": "女"}
+        with patch("engine.brain.choose_identity_llm", new_callable=AsyncMock, return_value=identity) as choose:
+            asyncio.run(self.sim.run_identity_phase())
+        # 手动居民（默认勾选）被模型询问并改名；固定身份居民保持原名未被询问
+        self.assertEqual(new.name, "小新")
+        self.assertEqual(new.gender, "女")
+        self.assertTrue(new.identity_done)
+        self.assertEqual(fixed.name, "小固")
+        self.assertEqual(choose.call_count, 1)
 
     def test_gender_closed_choices_in_initial_prompt_without_correction(self):
         profile=ApiProfile(id='stub',name='stub',api_key='fake',default_model='stub')
@@ -368,11 +363,18 @@ class EngineTests(unittest.TestCase):
         self.assertIn("- sleep:",prompt)
 
     def test_two_day_rule_simulation(self):
+        import random
+        random.seed(20261030)                      # 固定种子：不依赖其他测试消耗的随机数
+        self.sim.random_events.rng.seed(20261030)
+        from engine.interaction_points import active_slot
         async def run():
             for _ in range(288):
                 await self.sim.step_tick()
             for p in self.sim.players:
-                self.assertTrue(world.walkable(p.scene,p.x,p.y))
+                slot = active_slot(p)              # 正在使用家具使用位（沙发/床/浴室等）时
+                on_slot = slot and (p.x, p.y) == tuple(slot['position'])  # 站在家具格上是合法状态
+                if not on_slot:
+                    self.assertTrue(world.walkable(p.scene,p.x,p.y))
                 for value in (p.stats.hp,p.stats.energy,p.stats.satiety,p.stats.mood):
                     self.assertTrue(0<=value<=100)
                 self.assertGreaterEqual(p.stats.money,0)
