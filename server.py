@@ -244,6 +244,7 @@ async def _control(c: ControlCmd):
         fresh=sim_mod.Simulation(memory_dir=store.folder(sid)/'memories')
         fresh.save_id=sid
         fresh.replay_dir=CONFIG_PATH.parent/'data'/'replays'
+        _carry_over_mechanics(old, fresh)   # 机制不随重置回默认
         try:
             world.reset_maps()
             fresh.spawn_players(sim_mod.DEFAULT_PLAYER_COUNT)
@@ -267,6 +268,20 @@ async def _control(c: ControlCmd):
     return {"ok": True, "running": sim.running, "speed": sim.speed,
             "day": sim.day, "clock": sim.clock,
             "identity_phase": sim.identity_phase}
+
+
+def _carry_over_mechanics(old, fresh) -> None:
+    """重置只换世界，不换机制：机制面板的全部配置继承旧世界。
+
+    机制类状态不进 config.json、也不应随居民/记忆清空——重置前若在
+    面板调过参，重置后必须原样保留。"""
+    import copy as _copy
+    for key in ('mechanics', 'town_config', 'opening_hours', 'activity_config',
+                'activity_descriptions', 'activity_overrides', 'disabled_activities',
+                'custom_activities', 'user_prompt_template', 'shop_car'):
+        value = getattr(old, key, None)
+        if value is not None:
+            setattr(fresh, key, _copy.deepcopy(value))
 
 
 async def _start_with_identity(target):

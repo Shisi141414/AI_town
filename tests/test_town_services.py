@@ -214,10 +214,11 @@ class BuildingApiTests(unittest.TestCase):
   server.sim.running=False;values['coffee']['minutes']=13
   self.assertEqual(self.client.put('/api/town/buildings/C',json={'parameters':values}).status_code,400)
   self.assertEqual(server.sim.town_config['C']['coffee']['minutes'],30)
- def test_car_price_and_config_saved_and_reset_isolated(self):
+ def test_car_price_and_config_survive_reset(self):
+  # 重置只换世界不换机制（2026-10-31 语义变更）：面板改过的配置继承到新世界
   values=self.client.get('/api/town/buildings').json()['S']['parameters'];values['car']['price']=50
   self.assertEqual(self.client.put('/api/town/buildings/S',json={'parameters':values}).status_code,200)
   self.assertEqual(server.save_store().current()['state']['town_config']['S']['car']['price'],50)
   server.sim.buy_car(server.sim.players[0]);self.assertEqual(server.sim.players[0].stats.money,50)
   self.client.post('/api/control',json={'cmd':'reset'})
-  self.assertEqual(server.sim.town_config['S']['car']['price'],1000)
+  self.assertEqual(server.sim.town_config['S']['car']['price'],50)
