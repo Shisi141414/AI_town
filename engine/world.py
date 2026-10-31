@@ -210,9 +210,12 @@ def zone_of(scene: str, x: int, y: int) -> str:
         return "路上"
     if scene == "house" and ch == "h":
         i = bedroom_index_at(x, y)
-        owner = BEDROOM_OWNERS[i] if i is not None else None
-        if owner:
-            return f"{owner}的卧室"
+        if i is not None:
+            owner = BEDROOM_OWNERS[i]
+            # 规范名「XX的卧室（10X）」：编号随房间固定，防止模型自编房间号
+            if owner:
+                return f"{owner}的卧室（{101 + i}）"
+            return f"空卧室（{101 + i}）"
     return f["name"]
 
 

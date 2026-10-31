@@ -652,3 +652,18 @@ class ApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BedroomNameTests(unittest.TestCase):
+    def test_bedroom_canonical_name_with_number(self):
+        """卧室规范名「XX的卧室（10X）」：编号随房间，防模型自编门牌号。"""
+        sim = Simulation()
+        sim.spawn_players(3)
+        asyncio.run(sim.run_identity_phase())
+        sim.refresh_bedroom_names()
+        names = set()
+        for p in sim.players:
+            name = world.zone_of('house', *p.bedroom)
+            self.assertRegex(name, rf'^{p.name}的卧室（10[1-{len(world.BEDROOM_RECTS)}]）$')
+            names.add(name)
+        self.assertEqual(len(names), 3)   # 各自的卧室名互不相同

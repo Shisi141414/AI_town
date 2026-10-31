@@ -231,7 +231,7 @@ class Simulation:
 
     # ------------------------------------------------------------ 玩家管理
     def refresh_bedroom_names(self) -> None:
-        """把各卧室主人的名字同步给 world（区域名显示为「XX的卧室」）。"""
+        """把各卧室主人的名字同步给 world（区域名显示为「XX的卧室（10X）」）。"""
         owners = [None] * len(world.BEDROOM_RECTS)
         for p in self.players:
             i = world.bedroom_index_at(*p.bedroom)
