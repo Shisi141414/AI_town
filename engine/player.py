@@ -288,6 +288,9 @@ class Player:
         if not a:
             self._rejection='这项活动不存在或已被关闭，请改选其他行动'
             return False
+        if key == 'self_relief' and not sim.settings.cycle_enabled:
+            self._rejection='生理周期机制已关闭'
+            return False
         if a.get('male_only') and self.gender != '男':
             self._rejection='这项活动只有男性居民可以进行'
             return False

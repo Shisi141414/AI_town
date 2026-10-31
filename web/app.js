@@ -496,6 +496,7 @@ async function loadBinds() {
     };
   });
   $("setDialogue").checked = d.settings.dialogue_generation;
+  $("setCycle").checked = d.settings.cycle_enabled !== false;
   $("setTemp").value = d.settings.temperature;
   $("setTimeout").value = d.settings.decision_timeout;
 }
@@ -511,11 +512,18 @@ $("btnSaveBinds").onclick = async () => {
   toast("绑定已保存"); refreshState();
 };
 $("btnSaveSettings").onclick = async () => {
+  const cycleEnabled = $("setCycle").checked;
   await jput(`${API}/config`, {
     dialogue_generation: $("setDialogue").checked,
+    cycle_enabled: cycleEnabled,
     temperature: +$("setTemp").value,
     decision_timeout: +$("setTimeout").value,
   });
+  const confirmed = await jget(`${API}/config`);
+  if (confirmed.settings?.cycle_enabled !== cycleEnabled) {
+    toast("服务尚未加载新版本，请重启后重新保存设置", false);
+    return;
+  }
   toast("设置已保存");
 };
 

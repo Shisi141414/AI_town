@@ -178,6 +178,10 @@
       <label class="switch"><input type="checkbox" id="setDialogue"><span class="slider"></span></label>
       <span style="font-size:13px">聊天时生成对白（关闭则用内置文案）</span>
     </div>
+    <div class="form-row" style="display:flex;align-items:center;gap:10px">
+      <label class="switch"><input type="checkbox" id="setCycle" aria-label="启用生理周期"><span class="slider"></span></label>
+      <span style="font-size:13px">生理周期（关闭后停止周期消耗、经期影响及对应活动）</span>
+    </div>
     <div class="form-row" style="margin-top:12px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
     <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="300" value="90"></div>
     <button class="btn primary" id="btnSaveSettings" style="width:100%">保存设置</button>

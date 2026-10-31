@@ -28,6 +28,12 @@ def _now(p, sim) -> int:
     return sim.global_tick if sim is not None else p.world_tick
 
 
+def enabled(p, sim) -> bool:
+    """无 sim 的规则决策也读取最近同步到居民的开关。"""
+    return (sim.settings.cycle_enabled if sim is not None
+            else getattr(p, 'cycle_enabled', True))
+
+
 def ensure(p, sim) -> None:
     """推进周期锚点：跨周期自动翻页（未释放也自然进入下一周期）。"""
     elapsed = _now(p, sim) - p.cycle_anchor
@@ -46,17 +52,17 @@ def day_in_cycle(p, sim) -> int:
 
 def male_tension(p, sim) -> float:
     """男性紧张度 0~1（女性恒0）。"""
-    if p.gender != '男':
+    if not enabled(p, sim) or p.gender != '男':
         return 0.0
     return min(1.0, elapsed_ticks(p, sim) / CYCLE_TICKS)
 
 
 def in_period(p, sim) -> bool:
-    return p.gender == '女' and elapsed_ticks(p, sim) < 144
+    return enabled(p, sim) and p.gender == '女' and elapsed_ticks(p, sim) < 144
 
 
 def in_luteal(p, sim) -> bool:
-    return p.gender == '女' and elapsed_ticks(p, sim) >= LUTEAL_START
+    return enabled(p, sim) and p.gender == '女' and elapsed_ticks(p, sim) >= LUTEAL_START
 
 
 def luteal_satisfied(p, sim) -> bool:
@@ -67,6 +73,8 @@ def luteal_satisfied(p, sim) -> bool:
 def multipliers(p, sim) -> dict[str, float]:
     """当前消耗倍率（精力/饱食/心情），基线1.0。"""
     result = {'satiety': 1.0, 'energy': 1.0, 'mood': 1.0}
+    if not enabled(p, sim):
+        return result
     if p.gender == '男':
         mult = 1.0 + MALE_DRAIN_SPAN * male_tension(p, sim)
         return {k: mult for k in result}
@@ -77,6 +85,8 @@ def multipliers(p, sim) -> dict[str, float]:
 
 def release_male(p, sim, how: str = '自行解决') -> None:
     """男性释放：重置周期，消耗恢复基线。"""
+    if not enabled(p, sim):
+        return
     p.cycle_anchor = _now(p, sim)
     p.remember('我释放了积压的身体紧张，整个人轻松了下来，生理消耗恢复正常', 6)
     sim.log('activity', f'🌙 {p.name}独处释放后恢复了状态，开始新的生理周期', [p.pid])
@@ -84,12 +94,16 @@ def release_male(p, sim, how: str = '自行解决') -> None:
 
 def satisfy_female(p, sim, how: str = '亲密') -> None:
     """女性渴望满足：本周期内心情消耗恢复基线。"""
+    if not enabled(p, sim):
+        return
     p.cycle_satisfied_anchor = p.cycle_anchor
     p.remember(f'{"和心爱的人相处" if how == "恋爱" else "亲密互动"}让我的渴望得到了满足，心情轻松了许多', 6)
 
 
 def tick_female_period(p, sim) -> None:
     """生理期结算：入期记忆一次 + 随机少量掉血。"""
+    if not enabled(p, sim):
+        return
     if not in_period(p, sim):
         return
     if getattr(p, 'cycle_noticed', -1) != p.cycle_anchor:
@@ -103,6 +117,8 @@ def tick_female_period(p, sim) -> None:
 
 def description(p, sim) -> str:
     """给模型的简明周期状态说明。"""
+    if not enabled(p, sim):
+        return ''
     d = day_in_cycle(p, sim)
     if p.gender == '男':
         t = male_tension(p, sim)

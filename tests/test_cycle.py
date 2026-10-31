@@ -135,6 +135,26 @@ class CycleTests(unittest.TestCase):
         self.assertIn('×1.5', ctx_f)
         self.assertNotIn('{d}', ctx_f)
 
+    def test_settings_switch_disables_cycle_everywhere(self):
+        from engine.town_services import prompt_context
+        m, f = self.male, self.female
+        self._tick(physio.LUTEAL_START + 2)
+        self.sim.settings.cycle_enabled = False
+        m.cycle_enabled = False
+        self.assertEqual(physio.male_tension(m, self.sim), 0)
+        self.assertEqual(physio.male_tension(m, None), 0)
+        self.assertEqual(physio.multipliers(m, self.sim)['energy'], 1)
+        self.assertEqual(physio.multipliers(f, self.sim)['mood'], 1)
+        self.assertEqual(physio.description(f, self.sim), '')
+        self.assertNotIn('生理周期（5天一轮）', prompt_context(self.sim, f))
+        self.assertEqual(f.snapshot(sim=self.sim).cycle_status, '')
+        before = (f.stats.hp, len(f.memory.items))
+        with patch.object(physio.random, 'random', return_value=0):
+            physio.tick_female_period(f, self.sim)
+        self.assertEqual((f.stats.hp, len(f.memory.items)), before)
+        self.assertFalse(m.begin_activity('self_relief', self.sim))
+        self.assertIn('已关闭', m._rejection)
+
     def test_rule_engine_suggests_relief_for_tense_male(self):
         from engine import brain
         m = self.male

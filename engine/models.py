@@ -157,6 +157,7 @@ class ApiProfile(BaseModel):
 class Settings(BaseModel):
     ticks_per_second: float = Field(default=1.0, ge=0.1, le=10, allow_inf_nan=False)
     dialogue_generation: bool = True  # 聊天/恋爱时是否额外调用 LLM 生成对白
+    cycle_enabled: bool = True  # 是否启用生理周期的状态与消耗机制
     decision_timeout: float = Field(default=90.0, ge=5, le=300, allow_inf_nan=False)
     temperature: float = Field(default=0.8, ge=0, le=2, allow_inf_nan=False)
 

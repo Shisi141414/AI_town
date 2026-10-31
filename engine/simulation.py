@@ -902,7 +902,8 @@ class Simulation:
         if level(p, 'economics') < 1:
             # 不具备炒股能力者，菜单里也不出现炒股活动（信息与选项一致收紧）
             p.activity_registry = {k: v for k, v in p.activity_registry.items() if k != 'stock'}
-        if p.gender != '男':
+        p.cycle_enabled = self.settings.cycle_enabled
+        if p.gender != '男' or not self.settings.cycle_enabled:
             # 生理周期机制：自行解决仅对男性开放
             p.activity_registry = {k: v for k, v in p.activity_registry.items() if k != 'self_relief'}
         # 定量描述实验：默认把活动机制写成数值（为0不显示），保留防误解关键注记；
@@ -978,6 +979,7 @@ class Simulation:
         available=registry(self)
         if depth == 0:
             self._observe_nearby(p)
+        p.cycle_enabled = self.settings.cycle_enabled   # 与 _decide_one 对称：规则模式也同步周期开关
         p.injury_alert=''
         if p.vehicle_driver:
             driver = self.by_pid(p.vehicle_driver)
