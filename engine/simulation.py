@@ -1023,6 +1023,9 @@ class Simulation:
 
     def _apply_decision(self, p: Player, d: Decision, depth: int = 0) -> None:
         p.requested_duration = None
+        # 兜底归一化：LLM 文本输出在 parse_decision 已归一，但直接构造
+        # Decision 的入口（测试/干预）可能带中文别名——统一走 _norm_action
+        d = d.model_copy(update={'action': brain._norm_action(d.action) or d.action})
         key = d.action
         if key in self.disabled_activities:
             self._reject_decision(p,d,depth)

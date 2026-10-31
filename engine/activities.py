@@ -425,6 +425,17 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
         sections["小镇日常"].append(
             "- visit: 前往小镇场所（target 填代码/名称）｜缺钱可去事务所O（上班）、田园F（劳作）挣钱；"
             "商店S购物、饭店R吃饭、诊所B看病。到场后才会列出当地具体项目")
+    # 关系类特殊行动不在活动注册表里，但模型主要靠这份菜单选行动——
+    # 不列出就永远想不到可以表白/结交；固定挂到社交互动分组末尾。
+    sections["社交互动"].extend([
+        "- propose_love: 表白（target=室友）｜提出建立恋爱关系；需在同一地点，"
+        "对方在12小时内选择 relation_accept 才成立",
+        "- propose_friend: 结为挚友（target=室友）｜提出成为挚友；需在同一地点，"
+        "对方 relation_accept 后成立",
+        "- relation_accept: 接受关系邀请｜收到室友的表白/挚友提议时选择",
+        "- relation_end: 结束一段关系｜单方面提出即生效（恋爱/挚友），"
+        "结束后双方好感会重新结算",
+    ])
     return "\n\n".join(f"{title}：\n"+"\n".join(rows) for title,rows in sections.items() if rows)
 
 
