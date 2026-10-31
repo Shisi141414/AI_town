@@ -12,12 +12,13 @@ import server
 class RejectedMechanicsDumpTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(server.app)
-        # 取当前机制作为基底（只动会被拒的字段）
-        base = self.client.get('/api/mechanics').json()
-        self.rules = base['rules']
-        self.hours = base['hours']
-        self.activities = base['activities']
-        self.template = base.get('prompt_template') or ''
+        # 直接读引擎状态作基底——不经 GET（其提示词预览要读居民记忆，
+        # 全量套件下记忆库可能已被其他测试关闭）
+        import copy
+        self.rules = copy.deepcopy(server.sim.mechanics)
+        self.hours = copy.deepcopy(server.sim.opening_hours)
+        self.activities = copy.deepcopy(server.sim.activity_config)
+        self.template = server.sim.user_prompt_template or ''
 
     def _put(self, template=None, rules=None):
         return self.client.put('/api/mechanics', json={
