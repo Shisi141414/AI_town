@@ -81,6 +81,8 @@ class Simulation:
         self.system_prompt: str = ""            # 用户自定义统一提示词
         self.decor_common = 0.0                 # 公共区装饰度
         self.meal_until = 0                     # 家里有饭的截止 tick
+        # 厨房公共冰箱：多余食材与饭菜自动存入（保鲜=保质期×3），做饭/在家吃饭自动取用
+        self.fridge: dict = {'ingredient': 0, 'meals': []}
         self.dialogue_log: list[dict] = []      # 兼容保留
         self.conversations: list[Conversation] = []   # 活跃对话
         self._dialogue_released = 0                  # 已因对话放行的世界刻数（3轮对话=1刻）
@@ -88,6 +90,8 @@ class Simulation:
         self.affinity_queue: list[tuple] = []   # (a_pid, o_pid, activity_key)
         self.loan_queue: list[tuple] = []       # (borrower_pid, lender_pid) 急救借款
         self.sex_proposals: dict[str, dict] = {}
+        self.relations: dict[str, dict] = {}           # 关系表：排序pid对 → {type,a,b,since,key}
+        self.relation_proposals: dict[str, dict] = {}  # 被邀请pid → {from,type,expires}
         self._affinity_busy = False
         self._loan_busy = False
         self._loop_task: asyncio.Task | None = None
@@ -107,8 +111,9 @@ class Simulation:
         return {"type":"tick","day":self.day,"clock":self.clock,"tick":self.global_tick,
             "running":self.running,"speed":self.speed,"identity_phase":self.identity_phase,
             "decor_common":self.decor_common,"meal_until":self.meal_until,
+            "fridge":{"ingredient":self.fridge.get('ingredient',0),"meals":len(self.fridge.get('meals',[]))},
             "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},"shop_products":shop_catalog(self),
-            "players":[p.snapshot(names).model_dump() for p in self.players],
+            "players":[p.snapshot(names,self).model_dump() for p in self.players],
             "vehicles":[v.model_dump() for v in self.vehicles],
             "maps":{scene:["".join(row) for row in world.grid(scene)] for scene in ("house","town")},
             "execution":[{"pid":p.pid,"path":p.path,"pending":p._pending_key,
@@ -226,7 +231,7 @@ class Simulation:
 
     # ------------------------------------------------------------ 玩家管理
     def refresh_bedroom_names(self) -> None:
-        """把各卧室主人的名字同步给 world（区域名显示为「XX的卧室」）。"""
+        """把各卧室主人的名字同步给 world（区域名显示为「XX的卧室（10X）」）。"""
         owners = [None] * len(world.BEDROOM_RECTS)
         for p in self.players:
             i = world.bedroom_index_at(*p.bedroom)
@@ -394,8 +399,21 @@ class Simulation:
         names = {o.pid: o.name for o in self.players}
         cars = "；".join(f"{'共用车' if not v.owner_id else names.get(v.owner_id,'已离开室友')+'的私家车'}停在({v.x},{v.y})，"
                         + (f"由{names.get(v.driver_id,'室友')}使用" if v.driver_id else "空闲") for v in self.vehicles)
+        # 出行引导：让「学驾照→开共用车→买私车」这条路对模型可见
+        tips = []
+        shared_free = any(not v.owner_id and not v.driver_id for v in self.vehicles)
+        own_car = any(v.owner_id == p.pid for v in self.vehicles)
+        license_fee = self.town_config.get('U', {}).get('license_driving', {}).get('price', 80)
+        car_price = self.town_config.get('S', {}).get('car', {}).get('price', 1000)
+        if not p.driver_license:
+            tips.append(f"我还没有驾照：到学校U上驾照课程（{license_fee:g}元），取得后即可驾驶共享汽车（无需自己买车）")
+        elif not own_car and shared_free:
+            tips.append("我有驾照，附近空闲的共用车可直接用 travel_mode=car 驾驶")
+        if not own_car and p.stats.money >= car_price + 200:
+            tips.append(f"现金充足（{p.stats.money:.0f}元）：可到商店S购买私家汽车（{car_price:g}元，action=buy_car）")
         return (f"当前位置({p.x},{p.y})。"
-                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。")
+                + (f"正在搭乘{names.get(p.vehicle_driver, '室友')}的车。" if p.vehicle_driver else "") + f"{cars}。"
+                + "".join(f"💡{t}。" for t in tips))
 
     def drop_passengers(self, driver):
         for pid in list(driver.passengers):
@@ -551,6 +569,9 @@ class Simulation:
         for target_pid,proposal in list(self.sex_proposals.items()):
             if self.global_tick >= proposal['expires']:
                 self._decline_sex(target_pid,'邀请已过期')
+        for target_pid,proposal in list(self.relation_proposals.items()):
+            if self.global_tick >= proposal['expires']:
+                self._decline_relation(target_pid,'邀请已过期')
         await self.maintain_memories()
 
         # 1. 决策（idle 且不在对话中的玩家；住院/待收治者走住院专属决策）
@@ -644,6 +665,7 @@ class Simulation:
             self._interrupt_health_losses(before)
 
         self.random_events.tick(self)
+        self._expire_fridge()
 
         # 3. 被动消耗
         for p in self.players:
@@ -671,6 +693,28 @@ class Simulation:
         if self.loan_queue:
             self._kick_loan_queue()
 
+    def _expire_fridge(self):
+        """冰箱饭菜过期清理（保鲜时长=保质期×3，存入时已按此设定到期刻）。"""
+        meals = self.fridge.get('meals', [])
+        kept = [m for m in meals if m['expiry'] > self.global_tick]
+        if len(kept) != len(meals):
+            gone = len(meals) - len(kept)
+            self.log('activity', f'🧊 冰箱里{gone}份饭菜过期变质，扔掉了', scope='game')
+            self.fridge['meals'] = kept
+
+    def fridge_add_meal(self, quality: int, count: int = 1):
+        shelf = int(self.mechanics.get('meal_shelf_life_ticks', 36)) * 3
+        for _ in range(count):
+            self.fridge['meals'].append({'quality': int(quality),
+                                         'expiry': self.global_tick + shelf})
+
+    def fridge_take_meal(self):
+        """取出最早存入的饭菜；空则 None。"""
+        meals = self.fridge.get('meals', [])
+        if not meals:
+            return None
+        return meals.pop(0)
+
     def _injury_causes(self, p):
         """按当前状态推断 hp 下降的可能来源（用于同种伤害去重）。"""
         causes = set()
@@ -680,6 +724,8 @@ class Simulation:
             causes.add('starvation')
         if p.low_mood_ticks >= self.mechanics['low_mood_delay_ticks']:
             causes.add('low_mood')
+        if p.gender == '女' and getattr(p, '_period_hp_at', -1) == self.global_tick:
+            causes.add('period')            # 本刻生理期失血：可归因、不构成紧急情况
         return causes
 
     def _interrupt_health_losses(self,before):
@@ -688,27 +734,57 @@ class Simulation:
             if p.stats.hp < previous-1e-8:
                 self._alert_health_loss(p,previous-p.stats.hp)
 
-    def _alert_health_loss(self,p,lost,*,force=False,cause=None):
-        """受伤结束已排定的行动，让下一刻进入正常的模型决策流程。
+    INJURY_CAUSE_TEXT = {
+        'starvation': '饥饿（饱食为0，每刻扣血；需要马上吃饭——吃随身饭菜、在家做饭、下馆子或请室友送饭）',
+        'low_mood': '心情长期低落（连续3小时低于20；需要娱乐、社交、休息来回升心情）',
+        'illness': '疾病发作（需要去诊所治疗或用药）',
+        'attack': '被攻击受伤',
+        'period': '生理期腹痛（正常生理现象，少量失血，几天内自行结束；注意休息，无需治疗）',
+    }
 
-        同种持续伤害（疾病/饥饿/低心情）只打断一次活动：首次打断后记入
-        p._injury_break_done，此后同类伤害不再打断，角色可以安心赶路求医
+    def _alert_health_loss(self,p,lost,*,force=False,cause=None):
+        """受伤时向角色说明原因（首次），并结束已排定的行动进入决策流程。
+
+        同种持续伤害（疾病/饥饿/低心情）只提醒/打断一次：首次记入
+        p._injury_break_done，此后同类伤害不再打扰，角色可以安心赶路求医
         或吃饭。伤害结束（恢复/吃饱/心情回升）时由 clear_injury_break
         清除标记，下一轮同类伤害仍能正常唤醒。
         """
         if getattr(p,'last_health_alert_tick',-1)==self.global_tick:return
-        # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
-        active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
-        if not active:return
         causes = {cause} if cause else self._injury_causes(p)
         if cause != 'attack' and causes & set(getattr(p,'_injury_break_done',[]) or []):
-            return               # 该种伤害已打断过一次，放行后续活动
+            return               # 该种伤害已提醒过，放行后续活动
+        if causes == {'period'} or cause == 'period':
+            # 生理期少量失血是正常现象：首次说明原因即可，
+            # 不打断活动、不丢失进度（与饥饿/疾病等需处置的伤害不同）
+            marks = [m for m in (getattr(p, '_injury_break_done', []) or []) if m != 'attack']
+            if 'period' not in marks:
+                marks.append('period')
+                p.injury_alert = (f'生理期腹痛，失去{lost:.2f}点生命（正常现象，会自行结束；'
+                                  f'注意休息，无需治疗，活动不受影响）')
+                p.remember('生理期腹痛掉了一点血，是正常现象，不用慌', 4)
+            p._injury_break_done = marks
+            p.last_health_alert_tick = self.global_tick
+            self.log('random', f'⚠️ {p.name}生理期腹痛失去{lost:.2f}点生命（正常现象，未打断活动）', [p.pid])
+            return
+        # 持续疾病/饥饿不反复打断赶往诊所或餐厅的路，否则角色永远无法求助。
+        active=p.state=='doing' or (force and p.state in ('moving','waiting_activity','waiting_consent','riding'))
+        if not active and causes:
+            # 非活动状态（idle/等决策）也要首次告知原因——否则角色不知道为何掉血
+            p.last_health_alert_tick=self.global_tick
+            marks = [m for m in (getattr(p,'_injury_break_done',[]) or []) if m != 'attack']
+            p._injury_break_done = list(dict.fromkeys(marks + [c for c in causes if c != 'attack']))
+            why='；'.join(self.INJURY_CAUSE_TEXT.get(c,c) for c in sorted(causes))
+            p.injury_alert=f'身体在失去生命（已损失{lost:.2f}点，原因：{why}）。'
+            return
+        if not active:return
         if causes and cause != 'attack':
             marks = [m for m in (getattr(p,'_injury_break_done',[]) or []) if m != 'attack']
             p._injury_break_done = list(dict.fromkeys(marks + [c for c in causes if c != 'attack']))
         p.last_health_alert_tick=self.global_tick
         prior=(p.activity or {}).get('name') or p._pending_key or p.plan or '当前行动'
-        p.injury_alert=f'刚失去{lost:.2f}点生命，{prior}已中断；请先评估伤情，再决定下一步。'
+        why='；'.join(self.INJURY_CAUSE_TEXT.get(c,c) for c in sorted(causes)) if causes else '原因不明，请检查身体状态'
+        p.injury_alert=f'刚失去{lost:.2f}点生命（原因：{why}），{prior}已中断（处理好后再次选择它可从中断处继续）；请优先处理病因再安排下一步。'
         if p.pid in self.sex_proposals:self._decline_sex(p.pid,'受伤后中断')
         if p._conversation and p._conversation.phase!='ended':p._conversation._end('injury')
         partner=self.by_pid(p._bed_partner_pid) if p._bed_partner_pid else None
@@ -716,7 +792,7 @@ class Simulation:
             self._cancel_timed_action(partner)
             partner.remember(f'{p.name}受伤，我们的共同活动中断了',5)
         self._cancel_timed_action(p)
-        self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点，已中断{prior}并重新考虑行动',[p.pid])
+        self.log('random',f'⚠️ {p.name}生命减少了{lost:.2f}点（{"、".join(sorted(causes)) if causes else "未知"}），已中断{prior}并重新考虑行动',[p.pid])
 
     def clear_injury_break(self,p,cause):
         """某种伤害结束时清除其打断标记；下次同种伤害重新开始计数。"""
@@ -727,6 +803,13 @@ class Simulation:
     def _cancel_timed_action(self,p):
         from .interaction_points import release
         from .town_services import finish
+        # 单人活动中断时挂起剩余进度：再次选择同一活动可从中断处继续
+        if (p.state == 'doing' and p.activity and p.activity.get('need') != 'player'
+                and p.activity_left > 0):
+            p._suspended_activity = {
+                'key': p.activity_key, 'left': p.activity_left, 'total': p.activity_total,
+                'cook_meals': getattr(p, '_cook_meals', None),
+            }
         if p.activity and p.activity.get('_kind') in ('job','course','license_course'):
             finish(self,p,p.activity_key)
         if p.vehicle_driver:self.leave_vehicle(p)
@@ -786,12 +869,15 @@ class Simulation:
                 self._apply_rule(p)
 
     def _observe_nearby(self, observer: Player) -> list[Player]:
+        # 与社交发起判定（begin_activity 的 player 类）完全一致：
+        # 同一地点（同设施区）或切比雪夫距离≤6，提示词不再显示"够不着"的人
         nearby = [other for other in self.players if other is not observer
                   and other.scene == observer.scene
-                  and abs(other.x-observer.x)+abs(other.y-observer.y) <= 8]
+                  and (world.same_place(observer, other)
+                       or max(abs(other.x-observer.x), abs(other.y-observer.y)) <= 6)]
         if nearby:
             observed = brain.nearby_description(nearby)
-            observer.remember(f"第{self.day}天 {self.clock}，我观察到附近室友：{observed}", 4)
+            observer.remember(f"第{self.day}天 {self.clock}，我身边同一地点的室友：{observed}", 4)
         return nearby
 
     async def _decide_one(self, p: Player) -> None:
@@ -812,11 +898,33 @@ class Simulation:
         p.activity_descriptions = self.activity_descriptions
         from .activity_rules import registry
         p.activity_registry = registry(self)
+        from .town_services import level
+        if level(p, 'economics') < 1:
+            # 不具备炒股能力者，菜单里也不出现炒股活动（信息与选项一致收紧）
+            p.activity_registry = {k: v for k, v in p.activity_registry.items() if k != 'stock'}
+        p.cycle_enabled = self.settings.cycle_enabled
+        if p.gender != '男' or not self.settings.cycle_enabled:
+            # 生理周期机制：自行解决仅对男性开放
+            p.activity_registry = {k: v for k, v in p.activity_registry.items() if k != 'self_relief'}
+        # 定量描述实验：默认把活动机制写成数值（为0不显示），保留防误解关键注记；
+        # 用户在网页上自定义过的描述仍然优先。
+        from .activities import quantitative_descriptions, activity_description_defaults
+        base_defaults = activity_description_defaults()
+        customized = {k: v for k, v in self.activity_descriptions.items()
+                      if base_defaults.get(k) != v}
+        p.activity_descriptions = {**quantitative_descriptions(self), **customized}
         from .shop_products import catalog as shop_catalog
         p.shop_product_names={'item_'+key[4:]:row['name'] for key,row in shop_catalog(self).items() if not row['builtin']}
         proposal=self.sex_proposals.get(p.pid)
         sender=self.by_pid(proposal['from']) if proposal else None
-        p.sex_invitation=(f'{sender.name}邀请你亲密互动；若愿意，选择action=intimate、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
+        if sender and proposal.get('kind')=='dating':
+            p.sex_invitation=(f'{sender.name}邀请你约会；若愿意，选择action=dating、target={sender.name}；'
+                              f'也可以选择其他行动婉拒。')
+        else:
+            p.sex_invitation=(f'{sender.name}邀请你亲密互动；若愿意，选择action=intimate、target={sender.name}；也可以选择其他行动拒绝。' if sender else '无')
+        from . import relations as rel_mod
+        p.relations_desc = rel_mod.describe(p, self)
+        p.relation_invitation = rel_mod.invitation_text(self, p)
         p.known_names = {o.pid: o.name for o in self.players}
         p.known_roommates = [(o.name, o.gender) for o in others]
         from .activity_rules import catalog as activity_catalog
@@ -871,6 +979,7 @@ class Simulation:
         available=registry(self)
         if depth == 0:
             self._observe_nearby(p)
+        p.cycle_enabled = self.settings.cycle_enabled   # 与 _decide_one 对称：规则模式也同步周期开关
         p.injury_alert=''
         if p.vehicle_driver:
             driver = self.by_pid(p.vehicle_driver)
@@ -923,14 +1032,21 @@ class Simulation:
                 self.log("system", f"🛏 {p.name} 决定继续住院", [p.name], scope="game")
             p.state = "idle"
             return
-        if key != 'sex' and p.pid in self.sex_proposals:
+        if key not in ('sex','dating') and p.pid in self.sex_proposals:
             self._decline_sex(p.pid,('我选择了别的安排'+(f'（{d.reason}）' if getattr(d,'reason','') else '')),by_target=True)
+        # 收到关系邀请者若提出反向关系请求（互表），在 _relation_decision 内直接确立；
+        # 其余非接受行动（含 relation_end）视为婉拒
+        if key not in ('relation_accept','propose_love','propose_friend') and p.pid in self.relation_proposals:
+            self._decline_relation(p.pid,'对方选择了其他安排',by_target=True)
         if key in ('sex','phone'):
             from .activity_rules import available_here
             if not available_here(self,p,key):
                 p.info_feedback='当前不在这项活动允许的地点';p.remember(p.info_feedback,3);p.state='idle';return
-        if key == 'sex':
-            self._sex_decision(p,d)
+        if key in ('propose_love','propose_friend','relation_accept','relation_end'):
+            self._relation_decision(p,d,key)
+            return
+        if key in ('sex','dating'):
+            self._consent_decision(p,d,key)
             return
         if key == 'inspect':
             from .town_services import inspect
@@ -1017,8 +1133,10 @@ class Simulation:
         try:
             a=prepare(self,p,d);key=d.action
         except ValueError as exc:
+            p.info_feedback=f'{d.action}无法进行：{exc}'
             p.remember(str(exc),3);self._reject_decision(p,d,depth);return
         if not a:
+            p.info_feedback=f'{d.action}不在当前可选行动中（可能已关闭或不存在），请改选目录中的行动'
             self._reject_decision(p,d,depth)
             return
         p.plan = d.reason
@@ -1026,6 +1144,7 @@ class Simulation:
         if key=="computer":p.computer_operation_done=False
 
         if a.get("cost", 0) > p.stats.money:
+            p.info_feedback=f"{a['name']}需要{a['cost']:g}元，现金只有{p.stats.money:.1f}元；可先去挣钱或选免费活动"
             p.remember(f"我想{a['name']}但钱不够", 5)
             self._reject_decision(p,d,depth)
             return
@@ -1038,6 +1157,7 @@ class Simulation:
                            if (o.name == d.target or o.pid == d.target)
                            and o is not p), None)
             if target is None and (a.get('need')=='player' or a.get('_target_mode')=='required'):
+                p.info_feedback=f"没找到目标室友“{d.target}”（名字要写对、不能是自己）；请改选单人活动"
                 self._reject_decision(p,d,depth)
                 return
 
@@ -1055,25 +1175,105 @@ class Simulation:
                      + (f"（对象:{d.target}）" if d.target else "")
                      + f" —— {d.reason}", [p.pid])
 
+    def _decline_relation(self,target_pid,reason,by_target=False):
+        proposal=self.relation_proposals.pop(target_pid,None)
+        if not proposal:return
+        sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
+        if sender and target:
+            sender.remember(f'我向{target.name}提出建立{proposal["type"]}关系，被婉拒：{reason}',6)
+            if by_target:
+                target.remember(f'我婉拒了{sender.name}建立{proposal["type"]}关系的提议：{reason}',5)
+            sender.info_feedback=f'{target.name}婉拒了你的{proposal["type"]}关系提议'
+            self.log('social',f'{sender.name}向{target.name}提出建立{proposal["type"]}关系，未获回应',[sender.pid,target.pid])
+
+    def _relation_decision(self,p,d,key):
+        """propose_love / propose_friend / relation_accept / relation_end"""
+        from . import relations as rel_mod
+        if key=='relation_accept':
+            proposal=self.relation_proposals.pop(p.pid,None)
+            if not proposal:
+                p.state='idle';p.info_feedback='当前没有等待你回应的关系邀请';return
+            sender=self.by_pid(proposal['from'])
+            if sender is None:
+                p.state='idle';p.info_feedback='邀请方已不在';return
+            rel=rel_mod.establish(self,sender,p,proposal['type'])
+            p.state='idle';sender.state='idle';p.info_feedback=f'你和{sender.name}确立了{rel["type"]}关系'
+            return
+        if key=='relation_end':
+            target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None) if d.target else None
+            rel=rel_mod.end(self,p,target)
+            if not rel:
+                p.state='idle'
+                p.info_feedback='你现在没有可结束的关系' if target is None else f'你和{target.name}之间没有关系'
+            else:
+                p.state='idle'
+            return
+        # propose_love / propose_friend
+        rtype='恋爱' if key=='propose_love' else '挚友'
+        target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
+        if not target:
+            p.state='idle';p.info_feedback='请通过 target 指定你想邀请的室友';return
+        # 对方恰好也向我提出过 → 两情相悦，直接确立
+        pending=self.relation_proposals.get(p.pid)
+        if pending and pending['from']==target.pid:
+            self.relation_proposals.pop(p.pid,None)
+            rel=rel_mod.establish(self,target,p,pending['type'])
+            p.state='idle';target.state='idle'
+            p.info_feedback=f'你与{target.name}互相表白成功，确立了{rel["type"]}关系'
+            return
+        if self.relation_proposals.get(target.pid,{}).get('from')==p.pid:
+            p.state='idle';p.info_feedback=f'你已向{target.name}提出过建立关系，仍在等待对方回应';return
+        existing=rel_mod.between(self,p.pid,target.pid)
+        if existing:
+            p.state='idle'
+            p.info_feedback=f'你和{target.name}已经是{existing["type"]}关系'
+            p.remember(f'我想和{target.name}确立{rtype}关系，但我们已经是{existing["type"]}关系了',4)
+            return
+        if p.scene!=target.scene:
+            p.state='idle';p.info_feedback=f'你们不在同一地点，无法当面提出（先与{target.name}会合）';return
+        if target.state not in ('idle','waiting_model') or target._conversation or p._conversation:
+            p.state='idle';p.info_feedback='对方现在没有空回应邀请';return
+        self.relation_proposals[target.pid]={'from':p.pid,'type':rtype,'expires':self.global_tick+rel_mod.PROPOSAL_TTL}
+        p.remember(f'我向{target.name}提出建立{rtype}关系，等待对方回应',7)
+        p.state='idle';p.info_feedback=f'已向{target.name}提出建立{rtype}关系，等待对方决定'
+        self.log('social',f'💌 {p.name} 向 {target.name} 提出建立{rtype}关系，等待对方决定',[p.pid,target.pid])
+
     def _decline_sex(self,target_pid,reason,by_target=False):
         proposal=self.sex_proposals.pop(target_pid,None)
         if not proposal:return
+        kind_cn='约会' if proposal.get('kind')=='dating' else '亲密'
         sender=self.by_pid(proposal['from']);target=self.by_pid(target_pid)
         if sender and sender.state=='waiting_consent':
-            sender.state='idle';sender.plan='亲密邀请结束'
+            sender.state='idle';sender.plan=f'{kind_cn}邀请结束'
         if sender and target:
-            sender.remember(f'我向{target.name}发出亲密邀请被拒绝：{reason}',7)
+            sender.remember(f'我向{target.name}发出{kind_cn}邀请被婉拒：{reason}',7)
             if by_target:
-                target.remember(f'我拒绝了{sender.name}的亲密邀请：{reason}',5)
-            sender.info_feedback=f'亲密邀请被{target.name}拒绝：{reason}'
-            self.log('social',f'{sender.name}向{target.name}发出的亲密邀请未继续：{reason}',[sender.pid,target.pid])
+                target.remember(f'我婉拒了{sender.name}的{kind_cn}邀请：{reason}',5)
+            sender.info_feedback=f'{kind_cn}邀请被{target.name}婉拒：{reason}'
+            self.log('social',f'{sender.name}向{target.name}发出的{kind_cn}邀请未继续：{reason}',[sender.pid,target.pid])
 
-    def _sex_decision(self,p,d):
+    def _consent_decision(self,p,d,key):
+        """需双方同意的共同活动（sex=亲密互动 / dating=约会）：
+        发起方提出邀请 → 对方用自己的行动回应（同 key+同 target 即同意，
+        其他行动视为婉拒）。同意后两人同时开始、同时占用（对话期间都不能做别的）。"""
+        kind_cn='约会' if key=='dating' else '亲密'
         target=next((o for o in self.players if o is not p and d.target in (o.pid,o.name)),None)
         if not target or p.scene!=target.scene or p.vehicle_driver or target.vehicle_driver:
             p.state='idle';p.info_feedback='请指定同场景、未乘车的室友';return
+        # 约会发起门槛：恋爱关系或双方好感达标（亲密无好感门槛，凭双方自愿）
+        if key=='dating':
+            from . import relations as rel_mod
+            from . import activities as act_mod
+            threshold=act_mod.ACTIVITIES['dating'].get('consent_threshold',55)
+            if not rel_mod.between(self,p.pid,target.pid) and not (
+                    p.affinity.get(target.pid,0)>=threshold and target.affinity.get(p.pid,0)>=threshold):
+                p.state='idle'
+                p.info_feedback=(f'我们还不是恋爱关系，且好感未互达{threshold}，约会没有成'
+                                 f'（好感足够可先 propose_love 建立关系）')
+                p.remember(p.info_feedback,4)
+                return
         proposal=self.sex_proposals.get(p.pid)
-        if proposal and proposal['from']==target.pid:
+        if proposal and proposal['from']==target.pid and proposal.get('kind',key)==key:
             sender=target
             if sender.state!='waiting_consent' or self.global_tick>=proposal['expires']:
                 self._decline_sex(p.pid,'邀请已过期');p.state='idle';return
@@ -1088,13 +1288,14 @@ class Simulation:
             if location=='bed':
                 from .interaction_points import route_bed_pair
                 p.state='idle'
-                if not route_bed_pair(self,sender,p,'sex'):
+                if not route_bed_pair(self,sender,p,key):
                     sender.state='idle';p.state='idle';p.info_feedback='床位暂不可用';return
             else:
-                sender._start_local('sex',self);p._start_local('sex',self)
-            self.log('social',f'{sender.name}与{p.name}互相同意亲密相处',[sender.pid,p.pid])
+                sender._start_local(key,self);p._start_local(key,self)
+                if key=='dating':self.start_conversation(sender,p,'dating')
+            self.log('social',f'{sender.name}与{p.name}互相同意'+('约会' if key=='dating' else '亲密相处'),[sender.pid,p.pid])
             return
-        if p.pid in self.sex_proposals:self._decline_sex(p.pid,'选择了另一位室友')
+        if p.pid in self.sex_proposals:self._decline_sex(p.pid,'选择了别的安排')
         if target.state not in ('idle','waiting_model') or target._conversation or p._conversation:
             p.state='idle';p.info_feedback='对方现在没有空回应邀请';return
         location=d.location or 'here'
@@ -1102,9 +1303,9 @@ class Simulation:
             p.state='idle';p.info_feedback='床上活动需要双方先回家';return
         if location=='here' and max(abs(p.x-target.x),abs(p.y-target.y))>2:
             p.state='idle';p.info_feedback='当前位置需要双方先靠近';return
-        self.sex_proposals[target.pid]={'from':p.pid,'location':location,'duration':(d.duration_minutes+9)//10 if d.duration_minutes else 3,'expires':self.global_tick+12}
-        p.state='waiting_consent';p.decision=d;p.plan=f'等待{target.name}回应亲密邀请'
-        self.log('social',f'{p.name}邀请{target.name}亲密相处，等待对方自己决定',[p.pid,target.pid])
+        self.sex_proposals[target.pid]={'from':p.pid,'kind':key,'location':location,'duration':(d.duration_minutes+9)//10 if d.duration_minutes else 3,'expires':self.global_tick+12}
+        p.state='waiting_consent';p.decision=d;p.plan=f'等待{target.name}回应{kind_cn}邀请'
+        self.log('social',f'{p.name}邀请{target.name}{kind_cn}，等待对方自己决定',[p.pid,target.pid])
 
     # ------------------------------------------------------------ 对话
     DIALOGUE_COOLDOWN_TICKS = 6      # 同一对居民两场对话的最小间隔（刻）
@@ -1140,11 +1341,12 @@ class Simulation:
                 self.log('social', f'💬 {initiator.name} 想再找 {target.name} 聊，两人刚聊过先各自行动',
                          [initiator.pid, target.pid])
                 return
-        # love 需要双方好感达标（在 player 层校验过，这里再保险一次）
-        if kind == "love":
+        # 约会需要恋爱关系或双方好感达标（发起层已校验，这里再保险一次）
+        if kind == "dating":
+            from . import relations as rel_mod
             a_ok = initiator.affinity.get(target.pid, 0) >= 55
             b_ok = target.affinity.get(initiator.pid, 0) >= 55
-            if not (a_ok and b_ok):
+            if not (a_ok and b_ok) and not rel_mod.between(self, initiator.pid, target.pid):
                 return
         if kind != 'phone':
             self._step_off_gate(initiator)
@@ -1153,14 +1355,14 @@ class Simulation:
         initiator._conversation = conv
         target._conversation = conv
         self.conversations.append(conv)
-        kind_cn = {"chat": "对话", "love": "约会", "phone": "打电话"}[kind]
+        kind_cn = {"chat": "对话", "dating": "约会", "phone": "打电话"}[kind]
         self.log("social", f"💬 {initiator.name} 找 {target.name} {kind_cn}",
                  [initiator.pid, target.pid])
 
     def on_conversation_end(self, conv: Conversation):
         """对话结束：好感结算（LLM）+ 基础增量"""
         a, b = conv.a, conv.b
-        key = "love" if conv.kind == "love" else "phone" if conv.kind == "phone" else "chat"
+        key = "dating" if conv.kind == "dating" else "phone" if conv.kind == "phone" else "chat"
         # LLM 决定的浮动增减
         self.request_affinity(a, b, key,conv.elapsed*10)
         self.request_affinity(b, a, key,conv.elapsed*10)

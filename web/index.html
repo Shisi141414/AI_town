@@ -11,6 +11,16 @@
 <body>
 <header>
   <h1>AI 小镇 <small id="modeTag">规则引擎模式</small></h1>
+  <div id="replayControls" class="header-replay" hidden aria-label="存档回放控制器">
+    <div class="header-replay-progress"><span id="replayPosition" aria-live="off"></span><input id="replaySeek" type="range" min="0" max="0" value="0" aria-label="回放进度"></div>
+    <div class="header-replay-actions">
+      <button class="btn" id="btnPlayReplay">▶ 播放</button>
+      <button class="btn" id="btnReplaySpeed" type="button" title="点击切换回放速度">1× 倍速</button>
+      <button class="btn" id="btnStepReplay">下一帧</button>
+      <button class="btn" id="btnExitReplay">返回实时</button>
+      <button class="btn primary" id="btnContinueReplay" disabled>从此帧继续</button>
+    </div>
+  </div>
   <div id="clockbox">第1天 08:00</div>
   <button class="btn primary" id="btnStart">▶ 开始</button>
   <button class="btn" id="btnPause" disabled>⏸ 暂停</button>
@@ -63,17 +73,6 @@
       <button class="btn" id="btnListReplays">刷新记录</button>
       <div id="replayEntries" class="archive-list" aria-label="历史过程记录列表"></div>
     </details>
-    <div id="replayControls" hidden>
-      <p id="replayPosition" class="hint"></p>
-      <input id="replaySeek" type="range" min="0" max="0" value="0" style="width:100%" aria-label="回放进度">
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-        <button class="btn" id="btnPlayReplay">▶ 播放</button>
-        <button class="btn" id="btnStepReplay">下一帧</button>
-        <button class="btn" id="btnExitReplay">返回实时</button>
-        <button class="btn primary" id="btnContinueReplay" disabled>从此帧继续</button>
-      </div>
-      <p class="hint">回放中可查看地图、居民和事件；实时控制已锁定。打开回放前会暂停当前世界。</p>
-    </div>
   </div>
 
   <div class="panel active" id="panel-players">
@@ -104,6 +103,8 @@
     <canvas id="relCanvas" width="340" height="340"></canvas>
     <div class="hint" style="margin-top:6px">连线颜色：红=敌意(<30) 灰=一般 蓝=友好(≥60) 绿=挚友(≥80)；粗细代表好感强度。方向 A→B 用靠 A 端更粗表示。</div>
     <div id="relList" style="margin-top:10px;font-size:12.5px"></div>
+    <div class="section-title" id="activeRelationsTitle">当前关系</div>
+    <div id="activeRelations" class="active-relations" aria-label="当前正式关系"></div>
   </div>
 
   <div class="panel" id="panel-logs">
@@ -176,6 +177,10 @@
     <div class="form-row" style="display:flex;align-items:center;gap:10px">
       <label class="switch"><input type="checkbox" id="setDialogue"><span class="slider"></span></label>
       <span style="font-size:13px">聊天时生成对白（关闭则用内置文案）</span>
+    </div>
+    <div class="form-row" style="display:flex;align-items:center;gap:10px">
+      <label class="switch"><input type="checkbox" id="setCycle" aria-label="启用生理周期"><span class="slider"></span></label>
+      <span style="font-size:13px">生理周期（关闭后停止周期消耗、经期影响及对应活动）</span>
     </div>
     <div class="form-row" style="margin-top:12px"><label>决策温度 (0~2)</label><input id="setTemp" type="number" step="0.1" min="0" max="2" value="0.8"></div>
     <div class="form-row"><label>决策超时（秒）</label><input id="setTimeout" type="number" step="1" min="5" max="300" value="90"></div>
@@ -255,7 +260,7 @@
     <div id="mechanicsRules" class="mechanics-rules"></div>
     <details><summary>各场所营业时间</summary><div id="mechanicsHours" class="building-fields"></div></details>
     <details><summary>所有活动（室内、场所、独立）</summary>
-      <p class="hint">每刻效果均列出生命、饱食、精力、心情、金钱；无影响为 0。类别和地点均可多选，活动对象与双方好感变化也可设置。</p>
+      <p class="hint">每刻效果均列出生命、饱食、精力、心情、金钱；无影响为 0。先选择室内、室外或任意，再选择具体地点；“或/且”控制地点与独立条件的关系。</p>
       <div class="building-fields"><label>新活动代码<input id="newActivityCode" placeholder="例如 read_diary" maxlength="40"></label><label>名称<input id="newActivityName" placeholder="例如 写日记" maxlength="40"></label><button class="btn" id="addMechanicsActivity" type="button">新建活动</button></div>
       <div id="mechanicsActivities"></div>
     </details>
@@ -273,8 +278,8 @@
 <div id="toast"></div>
 
 <script src="/static/pixel-scene.js"></script>
-<script src="/static/app.js?v=20261030-batch-saves"></script>
+<script src="/static/app.js?v=20261031-relationship-list"></script>
 <script src="/static/town-buildings.js?v=20261029-shop-rules"></script>
-<script src="/static/mechanics.js?v=20261029-multi-places"></script>
+<script src="/static/mechanics.js?v=20261031-place-editor"></script>
 </body>
 </html>

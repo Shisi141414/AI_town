@@ -2,6 +2,7 @@
 
 模型先选择完整数量的候选，再随机抽取其中 80%；其余 20% 从全部待整理记忆中抽取并去重。
 原文只在提升成功的事务中删除；三级内容没有淘汰逻辑。
+每级晋升压缩比约 10:1（batch 40→4、20→2），深层档案增速受控。
 """
 from __future__ import annotations
 
@@ -122,7 +123,8 @@ class MemoryStream:
                     batch = source[:min(40 if tier == 1 else 20, len(source)-(8 if tier == 1 else 4))]
                     if len(batch) < 2:
                         break
-                    count = min(10 if tier == 1 else 5, len(batch))
+                    # 晋升压缩比约 10:1：batch 40→4 条（L1）、20→2 条（L2）
+                    count = max(1, len(batch)//10)
                     active_count = max(1, round(count*0.8))
                     valid = {m.id: m for m in batch}
                     choices, mode = [], '重要度兜底'

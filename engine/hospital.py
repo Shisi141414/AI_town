@@ -57,20 +57,16 @@ def hospital_tiles(sim):
 
 
 def start_emergency(sim, p) -> None:
-    """生命过低触发紧急送医：付现金、不够则发起借款。"""
+    """生命过低触发紧急送医：现金够直接收治；不够则借款凑钱，
+    凑不齐做收费的基本处置（借款全额退还，绝不留在病人口袋）。"""
     cost = sim.mechanics['hospital_cost']
     cash = p.stats.money
     p.awaiting_admission = True
     if cash >= cost:
-        _tx(sim, p, p, _clinic(sim), cost, "支付急救费")
-        p.stats.money = max(0.0, p.stats.money - cost)
-        admit(sim, p)
+        admit(sim, p)          # 收费统一在 admit 内完成
         return
     need = cost - cash
-    if cash > 0:
-        _tx(sim, p, p, _clinic(sim), cash, "支付急救费（全部现金）")
-        p.stats.money = 0.0
-    p.debt_goal = need
+    p.debt_goal = need         # 借款缺口；现金保留在身上，凑齐后由诊所统一收取
     p.loans = {}
     lenders = [o for o in sim.players
                if o is not p and not getattr(o, 'hospitalized', False)]
@@ -103,20 +99,42 @@ def pay(sim, p, lender, amount: float) -> None:
 
 
 def refuse(sim, p, need: float) -> None:
-    """借款不足：不收治住院，但按「先救人后收费」做最低限度的急救处置——
-    否则被拒者会带着饥饿与重伤在原地硬扛，几乎必然死亡。"""
+    """借款不足：不收治住院。按「先救人后收费」做最低处置——
+    借款全额退还债主（分文不留地退回，防止病人反而最有钱），
+    处置收取基本费用 min(现金,100)，再保底生命/饱食/心情。"""
     p.refused_hospital = True
+    refunded = 0.0
+    for lender_pid, amount in list(p.loans.items()):
+        lender = sim.by_pid(lender_pid)
+        if lender is not None and amount > 0:
+            lender.stats.money = round(lender.stats.money + amount, 2)
+            _tx(sim, p, p, lender, amount, f"退还急救借款（{p.name}未被收治）")
+            lender.remember(f"诊所没收治{p.name}，我把借出的{amount:.0f}元拿回来了", 5)
+            refunded += amount
+    p.stats.money = round(max(0.0, p.stats.money - refunded), 2)
+    borrowed = sum(p.loans.values())
+    p.loans = {}
+    fee = min(p.stats.money, sim.mechanics.get('basic_treatment_fee', 100.0))
+    if fee > 0:
+        p.stats.money = round(p.stats.money - fee, 2)
+        _tx(sim, p, p, _clinic(sim), fee, "基本处置费（未收治）")
     p.stats.hp = max(p.stats.hp, 25.0)
     p.stats.satiety = max(p.stats.satiety, 30.0)
     p.stats.mood = max(p.stats.mood, 20.0)
     p.stats.clamp()
-    p.remember(f"凑不齐{need:.0f}元急救费，诊所只做了基本处置让我先活下来", 9)
-    sim.log("system", f"💸 {p.name} 凑不齐{sim.mechanics['hospital_cost']:.0f}元急救费，诊所只做基本处置（生命25/饱食30保底）",
+    p.remember(f"凑不齐{need:.0f}元急救费，诊所收了{fee:.0f}元做了基本处置让我先活下来，借的钱都退给了室友", 9)
+    sim.log("system", f"💸 {p.name} 凑不齐{sim.mechanics['hospital_cost']:.0f}元急救费，只做基本处置"
+                      f"（处置费{fee:.0f}元，借款已退还{refunded:.0f}元；生命25/饱食30保底）",
             [p.name], scope="game")
 
 
 def admit(sim, p, note: str = "") -> None:
-    """收治住院：传送诊所、暂停行动、立即急救处置。"""
+    """收治住院：在此统一收取急救费（现金+借款），传送诊所、暂停行动、急救处置。"""
+    cost = sim.mechanics['hospital_cost']
+    pay = min(p.stats.money, cost)
+    if pay > 0:
+        p.stats.money = round(p.stats.money - pay, 2)
+        _tx(sim, p, p, _clinic(sim), pay, "支付急救费" + (note or ""))
     tiles = hospital_tiles(sim)
     if tiles:
         bx, by = random.choice(tiles)
@@ -140,40 +158,35 @@ def admit(sim, p, note: str = "") -> None:
     p.remember(f"我被送进诊所急救{note}，已缴费收治住院", 9)
     sim.log("system", f"🏥 {p.name} 缴清{sim.mechanics['hospital_cost']:.0f}元急救费，收治住院（房费每半天{sim.mechanics['hospital_fee_halfday']:.0f}元）",
             [p.name], scope="game")
-    # 收治即做急救处置（与半天结算同量：生命+20 心情+15 饱食/精力满）
-    halfday_tick(sim, p, first=True)
+    # 收治急救处置（与房费解耦：借款恰好只够急救费时也能住下，
+    # 房费等72刻后的首次结算再收，付不起那时再出院）
+    p.stats.hp = max(p.stats.hp, 30.0)
+    p.stats.mood = min(100.0, p.stats.mood + sim.mechanics['hospital_mood_gain'])
+    p.stats.satiety = 100.0
+    p.stats.energy = 100.0
+    p.stats.clamp()
+    p.remember(f"诊所做了收治急救处置，付了急救费，生命持续恢复中", 3)
+    p.ask_stay = True
 
 
-def halfday_tick(sim, p, first: bool = False) -> None:
-    """住院半天结算（收治首个即时结算）：付100元 → 生命+20、心情+15、
-    饱食/精力满；付不起房费 → 自动出院。"""
+def halfday_tick(sim, p) -> None:
+    """住院半天结算：付房费 → 心情+15、饱食/精力满；付不起 → 自动出院。
+    （收治时的急救处置已在 admit 内与房费解耦。）"""
     fee = sim.mechanics['hospital_fee_halfday']
     if p.stats.money < fee:
-        if first:
-            # 刚收治就付不起半天房费：退回房费部分，只做基本处置（生命30保底）
-            p.remember(f"我付清了急救费但付不起{fee:.0f}元房费，诊所只做了基本处置", 4)
-            sim.log("system", f"💵 {p.name} 付不起住院房费，仅做基本急救处置",
-                    [p.name], scope="game")
-            p.stats.hp = max(p.stats.hp, 30.0)
-            p.stats.clamp()
-            hospital_core_discharge(sim, p, reason="基本处置后离院")
-            return
         p.remember(f"我付不起{fee:.0f}元房费，只能出院了", 4)
         sim.log("system", f"💵 {p.name} 付不起住院房费，已自动出院",
                 [p.name], scope="game")
         discharge(sim, p)
         return
     p.stats.money -= fee
-    _tx(sim, p, p, _clinic(sim), fee, f"住院房费（{ '收治急救' if first else '半天' }）")
-    if first:
-        p.stats.hp = max(p.stats.hp, 30.0)     # 收治急救保底脱离危险线
+    _tx(sim, p, p, _clinic(sim), fee, "住院房费（半天）")
     p.stats.mood = min(100.0, p.stats.mood + sim.mechanics['hospital_mood_gain'])
     p.stats.satiety = 100.0
     p.stats.energy = 100.0
     p.stats.clamp()
-    label = "收治急救处置" if first else "住院半天"
-    p.remember(f"{label}，付了{fee:.0f}元房费，生命持续恢复中", 3)
-    sim.log("system", f"🛏 {p.name} {label}：房费{fee:.0f}元，心情+{sim.mechanics['hospital_mood_gain']:.0f}，生命按自然恢复{sim.mechanics['hospital_heal_multiplier']:.0f}倍每刻恢复（住院期间饱食/精力保持满值）",
+    p.remember(f"住院半天，付了{fee:.0f}元房费，生命持续恢复中", 3)
+    sim.log("system", f"🛏 {p.name} 住院半天：房费{fee:.0f}元，心情+{sim.mechanics['hospital_mood_gain']:.0f}，生命按自然恢复{sim.mechanics['hospital_heal_multiplier']:.0f}倍每刻恢复（住院期间饱食/精力保持满值）",
             [p.name], scope="game")
     p.ask_stay = True                   # 结算后请模型决定是否续住
 

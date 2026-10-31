@@ -15,6 +15,9 @@ class AlertFoodMedicineTests(unittest.TestCase):
         self.sim.spawn_players(2)
         self.a,self.b=self.sim.players
         for p in self.sim.players:p.identity_done=True
+        # 周期锚点随机相位会改变消耗倍率，数值断言需重置回基线
+        for _p in self.sim.players:
+            _p.cycle_anchor = 0
 
     def tearDown(self):
         self.sim.finish_recording()
@@ -127,6 +130,8 @@ class AlertFoodMedicineTests(unittest.TestCase):
     def test_cooked_meal_is_eaten_upon_giving(self):
         # 2026-10-29 起：送饭菜当场吃掉，不进对方背包（防饥饿互送死循环）
         self.a.skills['cooking']=200
+        self.a.items['ingredient']=4
+        self.a._cook_meals=2
         self.a._start_local('cook',self.sim)
         self.arrive(self.a)
         self.finish(self.a)

@@ -51,7 +51,7 @@ def recording_segments(sim):
 
 def capture(sim,reason='状态帧'):
     players=[pack({k:v for k,v in vars(p).items() if k not in ('memory','_conversation')}) for p in sim.players]
-    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','activity_overrides','disabled_activities','custom_activities','shop_car','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
+    attrs=('day','tick','global_tick','speed','decor_common','meal_until','dialogue_log','affinity_queue','sex_proposals','_llm_error_count','model_of','binding_of','names','town_config','mechanics','opening_hours','activity_config','activity_descriptions','fridge','relations','relation_proposals','activity_overrides','disabled_activities','custom_activities','shop_car','user_prompt_template','meal_quality','market_price','market_last_tick','stocks','venue_revenue')
     data={'version':1,'id':sim.save_id,'name':(sim.save_id or datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))[:19].replace('_',' '),'updated':datetime.now().isoformat(),
         'reason':reason,'state':pack({k:getattr(sim,k) for k in attrs}),'players':players,
         'events':[e.model_dump() for e in sim.events],
@@ -165,6 +165,11 @@ class SaveStore:
             clean=dict(value)
             for field in ('duration','cost'):
                 if field in row:clean[field]=row[field]
+            # 版本迁移：食材制（2026-10-30）起做饭成本由食材承担，
+            # 旧档默认的 cook 现金费用（4元=旧"饭钱"）语义废弃，归零；
+            # 用户改成其他值的保留
+            if key=='cook' and clean.get('cost')==4:
+                clean['cost']=0
             eff=row.get('effects')
             if isinstance(eff,dict):
                 # 字段级清洗：只保留新默认 effects 中仍存在的键（旧档废弃键丢弃）
@@ -178,12 +183,30 @@ class SaveStore:
         sim.disabled_activities=list(getattr(sim,'disabled_activities',[]))
         sim.custom_activities=getattr(sim,'custom_activities',{})
         sim.shop_car=getattr(sim,'shop_car',{'name':'私家汽车','emoji':'🚗','enabled':True})
+        if not isinstance(getattr(sim,'relations',None),dict):sim.relations={}
+        if not isinstance(getattr(sim,'relation_proposals',None),dict):sim.relation_proposals={}
+        sim.fridge=getattr(sim,'fridge',None) or {'ingredient':0,'meals':[]}
+        if not isinstance(sim.fridge.get('meals'),list):sim.fridge['meals']=[]
+        sim.fridge.setdefault('ingredient',0)
         # 旧存档的电话费曾混在活动效果中，现统一由基础机制结算。
         if 'phone' in sim.activity_config:
             sim.activity_config['phone']['effects'].pop('money',None)
         for p in sim.players:
             if p._pending_key=='game':
                 p._pending_key='';p.interaction_slot=None;p.path=[];p.state='idle'
+        # love 活动 key 改名 dating（避免内容过滤误伤）：迁移旧档的活动/邀请状态
+        for p in sim.players:
+            if p.activity_key=='love':p.activity_key='dating'
+            if p._pending_key=='love':p._pending_key='dating'
+            if getattr(p,'interaction_slot',None) and p.interaction_slot.get('key')=='love':
+                p.interaction_slot['key']='dating'
+        for prop in sim.sex_proposals.values():
+            if prop.get('kind')=='love':prop['kind']='dating'
+        for mapping in (sim.activity_config,sim.activity_overrides,sim.activity_descriptions):
+            if 'love' in mapping:
+                mapping['dating']=mapping.pop('love')
+        sim.disabled_activities=['dating' if k=='love' else k for k in sim.disabled_activities]
+        sim.custom_activities={'dating' if k=='love' else k:v for k,v in sim.custom_activities.items()}
         for p in sim.players:
             if not p.driver_license and p.travel_mode=='car':
                 sim.drop_passengers(p);sim.release_car(p);p.travel_mode='walk'
@@ -208,6 +231,7 @@ class SaveStore:
         sim.event_id=max((e.id for e in sim.events),default=0)
         sim.vehicles=[Vehicle.model_validate(v) for v in data['vehicles']]
         for raw in data['conversations']:
+            if raw.get('kind')=='love':raw['kind']='dating'
             c=Conversation.__new__(Conversation);c.__dict__.update(unpack(raw,players));c.sim=sim
             sim.conversations.append(c)
             for p in (c.a,c.b):p._conversation=c

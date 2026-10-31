@@ -114,10 +114,16 @@ class StockMarketTests(unittest.TestCase):
         self.assertNotIn('可特别进行', ctx2)
 
     def test_portfolio_shown_in_prompt(self):
+        # 新契约：股市与持仓信息只对具备炒股能力（经济学≥1级）的人显示
         self.p.stock_portfolio['R'] = {'shares': 8, 'cost': 40.0}
+        ctx = prompt_context(self.sim, self.p)
+        self.assertNotIn('我的股票持仓', ctx)
+        self.assertNotIn('小镇股市', ctx)
+        self.p.skills['economics'] = 100
         ctx = prompt_context(self.sim, self.p)
         self.assertIn('我的股票持仓', ctx)
         self.assertIn('饭店8份', ctx)
+        self.assertIn('小镇股市', ctx)
 
     def test_revenue_hook_in_begin_activity(self):
         # 咖啡馆消费 8 元 → venue_revenue['C'] 记 8（走完整决策→到场→开始路径）

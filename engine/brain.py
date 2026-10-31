@@ -29,7 +29,9 @@ DEFAULT_SYSTEM_PROMPT = """你是一个和几位室友合租的普通年轻人�
 你的身体状态、记忆和人际关系会实时变化，请根据它们做出当下最合理的决定。
 没有标准答案，像活人一样权衡：饿了要吃饭、累了要休息、缺钱要工作、
 也可以娱乐、社交、恋爱，甚至发脾气搞破坏——一切由你。
-和室友处好关系有实际好处：一起吃饭/工作都有加成，关系差则会互相拖累。"""
+和室友处好关系有实际好处：一起吃饭/工作都有加成，关系差则会互相拖累。
+你所知的世界以提示词与记忆为准：只谈论和回应真实发生的事，
+不要虚构没有发生过的事件，也不要替别人编造经历。"""
 
 USER_TEMPLATE = """# 本次决定
 你是合租在小镇的成年居民。现在是第{day}天 {clock}（{daypart}）。根据自己的状态、记忆和眼前能获取的信息，选择下一步行动。
@@ -38,9 +40,9 @@ USER_TEMPLATE = """# 本次决定
 - 基本信息：姓名{name}；性别{gender}
 - 地点：{scene_name}·{location}；公共区域装饰度：{decor_common:.0f}
 - 身体：生命{hp:.0f}/100，饱食{satiety:.0f}/100，精力{energy:.0f}/100，心情{mood:.0f}/100；{illness}
-- 金钱：{money:.0f}元；物品：{items}
+- 金钱：{money:.1f}元；物品：{items}
 - 同住室友：{roommates}
-- 附近室友：{nearby}；我对室友的好感：{affinity}
+- 身边室友（同一地点或几步之内，可直接对话/互动）：{nearby}；我对室友的好感：{affinity}
 - 亲密邀请：{sex_invitation}
 - 出行与车辆：{transport}
 
@@ -54,7 +56,7 @@ USER_TEMPLATE = """# 本次决定
 我的电脑记录：
 {computer}
 
-最近资金流动（理由只在记忆中）：
+最近资金流动：
 {transactions}
 
 ## 可选行动
@@ -65,9 +67,9 @@ USER_TEMPLATE = """# 本次决定
 - 探索：action=visit 的 target 填场所代码或名称；抵达后用 action=inspect 的 target 填当地项目 key，可询问该项目的时薪、最低时间、学费等明确规则。查询占用一次决策。小镇没有其他参与者。
 - 时长：duration_minutes 可填 10～1440，按 10 分钟取整；到达后开始计时，期间通常不用再决策。课程学费开始时一次交清，工作按实际时间领薪。
 - 电脑与记忆：特别建议用自己的电脑记录怕忘的经历、约定、发现和计划。电脑文件不会自动随提示词提供；需要到自己的电脑前用 action=computer、operation=list 查看目录，再用 read 和 file_id 查看正文。也可用 create/edit/delete 管理文件；create 填 title、content，edit/delete 填 file_id，list/read 可用 offset。还可用 operation=search 搜索小镇公开信息：query 填关键词（如 岗位、时薪、急救、课程、商品，或具体名称如 咖啡馆、厨师），留空只看目录。search/read 的查询结果会自动存入你的记忆，不必反复查询。记录不会随记忆整理消失。活动结束后的下一次决定可附 memory_note，写下想保留的经历或发现。
-- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给附近室友，TA之后可自己选择吃；action=use_medicine 可在室友身边消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。love 是表白/约会，需双方好感达标；intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。二者可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
+- 社交：action=emoji 用 target 和 emoji（❤️/😊/😂/😢/😭/😠/😡/👍/👋/😮/🥰/💔）。action=phone 用 target 给室友打电话，可以跨地点对话（机制与对话相同，无数值变化）；话费按通话轮数由拨打者支付（约{phone_fee_per_tick:g}元/10轮）。action=give_meal 可把背包里的饭菜交给同一地点的室友，TA当场吃掉；action=use_medicine 可在同一地点为室友消耗药品疗伤。transfer 用 target、amount 转钱，money_from 可指定付款人，付款或收款的一方必须是你，理由由你自己决定。dating（约会）：向心仪室友提出约会邀请，对方以 action=dating、target=你 回应即同意，之后两人共同约会（期间双方都不能做别的）；需双方好感互达55或已建立恋爱关系。注意：约会不等于恋爱——恋爱关系只能先 propose_love 表白、并被对方 relation_accept 接受才建立，约会本身不会建立关系。propose_love 向室友提出建立恋爱关系、propose_friend 提出结为挚友（需在同一地点，用 target 指定对方），对方在12小时内选择 relation_accept 即建立；relation_end 可单方面结束一段关系（结束后双方对彼此的好感会重新结算）。intimate（互动）是恋爱关系足够深时的自然选择，需要双方各自选择同意，target 填对方。dating/intimate 可用 location=bed（床上相邻位置）或 here（当前位置；互动需双方靠近）。对方可以拒绝。
 - 技能与交易：home_treat 需医学技能，target 可填在家的室友；stock 需经济学技能，在自己电脑前用 operation=buy/sell、shares 和 symbol 交易小镇股票（symbol 填代码：index 小镇指数、R 饭店、M 影院、C 咖啡馆、G 健身房、S 商店、B 诊所；场所股价格受近期营业情况影响），可能亏损。
-- 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照，乘车不需要；ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
+- 出行：travel_mode 可填 walk/bicycle/car。步行和骑行消耗饱食、精力；汽车在道路上更快，不消耗饱食，但会消耗油费。驾驶要有驾照（学校U驾照课程），乘车不需要；小镇门口常备一辆共享汽车，考取驾照后即可直接驾驶，不必自己买车。ride 用 target 指定身边司机，stay_in_car 继续搭乘，leave_car 下车。buy_car 要到商店。
 - 家具：做饭、吃饭、电脑活动、睡觉、洗澡、看电视和晒太阳会前往相应使用位；被占用时等待。在镇上选 sleep 会自动回家睡觉。wander 闲逛只是原地踱步，不会带你回家。
 
 ## 输出格式
@@ -116,7 +118,11 @@ def nearby_description(nearby: list) -> str:
     def activity(o):
         if getattr(o,'hospitalized',False):return '住院'
         if getattr(o,'awaiting_admission',False):return '等待救治'
-        if o.state=='doing' and o.activity:return '正在'+o.activity['name']
+        if o.state=='doing' and o.activity:
+            t=o.target_player
+            if t is not None and o.activity_key in ('dating','sex'):
+                return f'正在和{t.name}'+o.activity['name']
+            return '正在'+o.activity['name']
         if o.state=='moving':
             key=getattr(o,'_pending_key','')
             return '前往'+act.ACTIVITIES[key]['name'] if key in act.ACTIVITIES else '正在出行'
@@ -143,7 +149,7 @@ def nearby_description(nearby: list) -> str:
 
 
 def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) -> str:
-    aff = "、".join(f"{getattr(p, 'known_names', {}).get(name, name)}{v:.0f}" for name, v in
+    aff = "、".join(f"{getattr(p, 'known_names', {}).get(name, name)}{v:.0f}/100" for name, v in
                     sorted(p.affinity.items(), key=lambda kv: -kv[1])[:6]) or "（还不认识谁）"
     nearby_s = nearby_description(nearby)
     roommates_s = '、'.join(f'{name}（{gender}）' for name,gender in getattr(p,'known_roommates',[])) or '（暂无）'
@@ -176,6 +182,7 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
     template=template.replace('话费每小时50元',_fee_anchor)
     template=template.replace('话费每小时{phone_fee_per_hour:g}元',_fee_anchor)
     template=template.replace('话费每刻{phone_fee_per_tick:g}元',_fee_anchor)
+    template=template.replace('最近资金流动（理由只在记忆中）','最近资金流动')
     prompt=template.format(
         day=p.day, clock=clock, daypart=daypart(p.hour), name=p.name, gender=p.gender,
         scene_name=world.SCENE_NAMES.get(p.scene, p.scene),
@@ -188,13 +195,30 @@ def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) ->
         decor_common=decor_common, memories=mem, menu=menu,
         computer=computer_context(p),
         town=getattr(p,"town_context",""),
-        transactions=json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False))
+        transactions=(json.dumps([{k:v for k,v in t.items() if k != "reason"} for t in p.transactions[-8:]],ensure_ascii=False) if p.transactions else '无'))
+    _rel=getattr(p,'relations_desc','')
+    _inv=getattr(p,'relation_invitation','')
+    if _rel or _inv!='无':
+        rel_lines='- 我的关系：{}\n- 关系邀请：{}\n'.format(_rel or '暂无', _inv)
+        prompt=prompt.replace('- 亲密邀请：',rel_lines+'- 亲密邀请：',1) if '- 亲密邀请：' in prompt else (
+               prompt.replace('## 当前情况\n','## 当前情况\n'+rel_lines,1) if '## 当前情况\n' in prompt else rel_lines+prompt)
     if '{roommates}' not in template and roommates_s!='（暂无）':
         roster='- 同住室友：'+roommates_s+'\n'
         prompt=prompt.replace('## 当前情况\n','## 当前情况\n'+roster,1) if '## 当前情况\n' in prompt else roster+prompt
     if getattr(p,'injury_alert',''):
         alert='## 紧急情况\n'+p.injury_alert+'\n\n'
         prompt=prompt.replace('## 输出格式',alert+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+alert
+    # 濒危求助指引：身体危急且没钱自救时，明确告知可以打电话向室友求助
+    st=p.stats
+    if st.hp<40 or st.satiety<10:
+        tips=[]
+        if st.satiety<10:tips.append('马上弄到吃的（吃饭/做饭/下馆子）')
+        if st.hp<40:tips.append('治疗（诊所24小时营业，15元）')
+        if st.money<15:
+            tips.append('现金不足：可 action=phone 打电话向室友求助（请TA送饭give_meal、借钱transfer或陪同就医），室友会接电话')
+        if tips:
+            sos='## 紧急情况\n你身体危急：'+'；'.join(tips)+'。\n\n'
+            prompt=prompt.replace('## 输出格式',sos+'## 输出格式',1) if '## 输出格式' in prompt else prompt+'\n\n'+sos
     return prompt
 
 
@@ -273,13 +297,18 @@ def parse_decision(text: str) -> Decision | None:
 
 def _norm_action(raw: str) -> str:
     raw = raw.strip().lower()
-    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony","聊天":"chat","对话":"chat"}.get(raw,raw)
+    raw = {"睡眠":"sleep","睡觉":"sleep","玩游戏":"computer_game","打游戏":"computer_game","game":"computer_game","上班":"work","休息":"think","晒太阳":"balcony","聊天":"chat","对话":"chat",
+           "约会":"dating","恋爱":"dating","表白":"propose_love","求爱":"propose_love","求婚":"propose_love",
+           "结为挚友":"propose_friend","成为挚友":"propose_friend","交挚友":"propose_friend",
+           "接受关系":"relation_accept","接受邀请":"relation_accept","答应表白":"relation_accept",
+           "结束关系":"relation_end","分手":"relation_end","绝交":"relation_end"}.get(raw,raw)
     # 伪装行动（模型看到的 key/名称是中性词）映射回真实行动
     for real, disg in act.MODEL_DISGUISES.items():
         if raw in (disg["key"], disg["name"], *disg.get("aliases", ())):
             return real
     if raw in ("buy_car", "ride", "stay_in_car", "leave_car", "emoji", "transfer", "inspect", "visit",
-               "hospital_stay", "hospital_leave"):
+               "hospital_stay", "hospital_leave", "propose_love", "propose_friend",
+               "relation_accept", "relation_end"):
         return raw
     if raw in act.ACTIVITIES:
         return raw
@@ -336,7 +365,7 @@ async def decide_llm(profile: ApiProfile, model: str, p, nearby: list[str],
         d=parse_decision(text)
         if d:
             registry=getattr(p,'activity_registry',act.ACTIVITIES)
-            special={'buy_car','ride','stay_in_car','leave_car','emoji','transfer','inspect','visit','hospital_stay','hospital_leave'}
+            special={'buy_car','ride','stay_in_car','leave_car','emoji','transfer','inspect','visit','hospital_stay','hospital_leave','propose_love','propose_friend','relation_accept','relation_end'}
             if d.action not in registry and d.action not in special:
                 feedback='\n该活动不在当前可选行动目录，请改选目录中的行动。'
                 last_err=LLMError('模型选择了不可用的行动')
@@ -402,9 +431,15 @@ async def affinity_change_llm(profile: ApiProfile, model: str, self_name: str,
 async def affinity_tick_llm(profile: ApiProfile, model: str, actor, other, timeout: float = 20.0) -> int:
     """每刻给一个有限的自主好感判断机会；只提供自己的经历。"""
     system='你扮演小镇居民。根据自己的经历决定这一刻对一位室友的好感变化，只输出 -1、0 或 1。'
+    doing=actor.activity["name"] if actor.activity else (actor.plan or "休息")
+    if actor.activity and actor.activity.get('_kind')=='job':
+        doing=f'当{doing}上班'
+    _t=actor.target_player
+    if actor.activity and _t is not None and actor.activity_key in ('dating','sex'):
+        doing=f'和{_t.name}{doing}'   # 共同活动要说清和谁一起（如"和小舟约会"）
     prompt=(f'我是{actor.name}，第{actor.day}天。'
             f'我对{other.name}的好感是{actor.affinity.get(other.pid,50):.0f}/100。'
-            f'我正在{actor.activity["name"] if actor.activity else actor.plan or "休息"}。\n'
+            f'我正在{doing}。\n'
             f'我的相关记忆：\n{actor.memory.brief(250)}\n'
             '只根据这些已知信息回答 -1、0 或 1；没有新理由时回答 0。')
     actor.last_system_prompt=system
@@ -429,11 +464,12 @@ CONV_TURN_TEMPLATE = """你正在和{other_label}{kind}。
 【对话记录】（"我"是你的话，"{other_name}"是TA的话）
 {history}
 
-轮到你说话。对话就是普通的交流：回应对方、交换信息、说出想法或商量事情都行，针对TA最近这句话说，不要自说自话，也不要重复原话。提及TA时按TA的性别用「他/她」。想聊的都聊完了就自然道别，随时可以结束。
+轮到你说话。针对TA最近这句话回应，说有实质内容的话——近况、请求、约定、计划、情绪或具体的关心；不要空洞的客套寒暄，不要自说自话，也不要重复原话。有需要帮助的事（送饭、借钱、陪同）就直接开口。提及TA时按TA的性别用「他/她」。想聊的都聊完了就自然道别，随时可以结束。
+只谈论真实发生过、记忆里确有或眼前可见的事；不要编造没有发生过的事件（虚构的旅行、往事、见闻），也不要替对方或室友安插没发生的经历。提到房间时用真实名称，如「小舟的卧室（101）」，不要自编门牌号。
 一句即可，30字以内。只输出一行 JSON：
 {{"say": "你要说的话", "act": "stay（继续聊） 或 leave（道别结束） 或 follow（TA要走时挽留/跟上）"}}"""
 
-CONV_KIND_CN = {"chat": "面对面对话", "love": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
+CONV_KIND_CN = {"chat": "面对面对话", "dating": "面对面约会", "follow": "边走边聊", "phone": "打电话"}
 
 # 规则模式对话库（无 API 时兜底）
 RULE_OPENERS = ["今天过得怎么样？", "晚饭吃什么好呢", "周末有什么打算吗",
@@ -491,13 +527,17 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     s = p.stats
 
     # ---- 饿了：能吃上饭就先吃饭（饥饿是掉血的主因，先止伤再治病）----
-    cook_cost = act.ACTIVITIES.get('cook', {}).get('cost', 0)
     if s.satiety < 30:
         if p.scene == "house":
             if p.items.get('meal', 0) > 0 and s.satiety < 95:
                 return Decision(action='eat', reason='吃一份做好的饭菜', source='rule')
-            if s.money >= cook_cost:
-                return Decision(action="cook", reason="饿了，自己做点吃的", source="rule")
+            if p.items.get('ingredient', 0) > 0:
+                return Decision(action="cook", reason="有食材，自己做点吃的", source="rule")
+            # 没食材：白天商店营业且买得起→去补货（顺带能做饭）；否则走下馆子/挣钱分支
+            if 8 <= p.hour < 21 and s.money >= 15:
+                return Decision(action="buy_foodstuff", reason="没食材了，去商店买点回来做饭", source="rule")
+            if s.money >= 10 and 10 <= p.hour < 22:
+                return Decision(action="eat_out", reason="家里没食材，下馆子", source="rule")
             # 身无分文且家里没饭：做饭/下馆子都会因钱不够失败，
             # 必须先去工作挣钱，否则会陷在「反复决定做饭→抵达后钱不够」的循环里饿死
             if act.is_night(p.hour):
@@ -527,6 +567,11 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
         return Decision(action="computer_game", reason="回家玩电脑游戏", source="rule")
     if s.money < 20:
         return Decision(action="work", reason="手头紧，去赚点钱", source="rule")
+    # 生理周期：男性紧张度高且精力充足 → 卫生间释放
+    if p.gender == '男' and p.scene == 'house' and s.energy >= 70:
+        from . import cycle as physio
+        if physio.male_tension(p, None) > 0.75:
+            return Decision(action="self_relief", reason="身体紧张得难受，去卫生间释放一下", source="rule")
     if s.mood < 25:
         roll = random.random()
         if roll < 0.15 and others:
@@ -557,8 +602,8 @@ def decide_rule(p, others: list, clock_hour: int) -> Decision:
     # 社交窗口
     if others and random.random() < 0.25:
         best = max(others, key=lambda o: p.affinity.get(o.pid, 30))
-        if p.affinity.get(best.pid, 30) >= act.ACTIVITIES["love"]["consent_threshold"]:
-            return Decision(action="love", target=best.name,
+        if p.affinity.get(best.pid, 30) >= act.ACTIVITIES["dating"]["consent_threshold"]:
+            return Decision(action="dating", target=best.name,
                             reason=f"我很喜欢{best.name}", source="rule")
         return Decision(action="chat", target=best.name,
                         reason="找人说说话", source="rule")
@@ -596,7 +641,8 @@ async def select_memories_llm(profile, model, name, candidates, count, timeout=2
               '{"keep":[{"id":"原始id","summary":"精简后的经历"}]}\n'
               + (gender_note + "\n" if gender_note else "")
               + json.dumps(entries, ensure_ascii=False))
-    text = await _run_in_thread(chat, profile, model, "整理角色记忆，只根据原始事实选择与压缩。", prompt, 0.3, 1600, timeout)
+    text = await _run_in_thread(chat, profile, model, "整理角色记忆，只根据原始事实选择与压缩。", prompt, 0.3, 2400, timeout)
+    text = _strip_think(text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
     data = json.loads(match.group(0)) if match else {}
     if not isinstance(data, dict) or not isinstance(data.get("keep"), list):
@@ -664,14 +710,20 @@ async def summarize_dialogue_llm(profile: ApiProfile, model: str, self_name: str
                                  other_name: str, kind_cn: str,
                                  history: list[tuple[str, str]],
                                  timeout: float = 20.0, other_gender: str = "") -> str:
-    """对话结束后由模型择取关键信息作为记忆。空结果抛 ValueError。"""
+    """对话结束后由模型择取关键信息作为记忆。空结果/疑似指令复述抛 ValueError
+    （由调用方退回机械摘要，绝不把思考过程或指令复述写进记忆）。"""
     hist_s = "\n".join(f"{'我' if w == self_name else w}：{t}" for w, t in history[-16:])
     other_label = other_name + (f"（{other_gender}）" if other_gender else "")
     prompt = DIALOGUE_SUMMARY_TEMPLATE.format(other_label=other_label, kind=kind_cn, history=hist_s)
+    # 推理模型先思考再作答：额度太小会把思考截断成空 content，兜底文本
+    # 又常以指令复述开头——那就是污染记忆的来源，这里给足额度并做检测
     text = await _run_in_thread(chat, profile, model,
                                 "你在整理自己的记忆，只输出记忆内容本身。",
-                                prompt, 0.3, 200, timeout)
-    text = (text or '').strip().strip('"“”')
-    if not text:
-        raise ValueError('空摘要')
+                                prompt, 0.3, 2048, timeout)
+    text = _strip_think(text or '').strip().strip('"“”')
+    leak_markers = ('只输出', '不超过60字', '我们需要', '需要从', '挑最值得', '挑选',
+                    '记忆内容本身', '只陈述事实', 'own perspective', 'Need compress',
+                    'Chinese chars', '压缩成一条')
+    if not text or any(m in text[:80] for m in leak_markers):
+        raise ValueError('摘要为空或疑似指令复述，改用机械摘要')
     return text[:120]

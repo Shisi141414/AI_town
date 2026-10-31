@@ -40,19 +40,38 @@ MOVE_EXTRA_ENERGY = -0.25
 ITEMS: dict[str, dict] = {
     "flower": {"name": "鲜花", "emoji": "💐", "price": 12, "decor": 6},
     "plant":  {"name": "盆栽", "emoji": "🪴", "price": 20, "decor": 10},
+    "ingredient": {"name": "食材", "emoji": "🥬", "price": 5, "decor": 0},
     "meal":   {"name": "家常饭菜", "emoji": "🍱", "price": 0, "decor": 0},
     "medicine": {"name": "药品", "emoji": "💊", "price": 25, "decor": 0},
 }
+
+
+# 厨房公共冰箱容量：食材12份、饭菜4份
+FRIDGE_LIMITS = {"ingredient": 12, "meals": 4}
+
+
+def cook_meal_output(ticks: int | None) -> int:
+    """做饭时长（刻）→ 产出饭菜份数：30分钟→1，45分钟→2，60分钟→3，80分钟→4。
+    其他时长按区间就近归档。"""
+    t = ticks if ticks else ACTIVITIES["cook"]["duration"]
+    if t <= 3:
+        return 1
+    if t <= 5:
+        return 2
+    if t <= 7:
+        return 3
+    return 4
 
 # ------------------------------------------------------------------ 活动表
 ACTIVITIES: dict[str, dict] = {
     # ============ 室内（house） ============
     "cook": {
-        "name": "做饭", "emoji": "🍳", "duration": 4, "need": "facility:K",
-        "scene": "house", "cost": 4,
-        "effects": {"satiety": 14, "mood": 3},
+        "name": "做饭", "emoji": "🍳", "duration": 5, "need": "facility:K",
+        "scene": "house", "cost": 0,
+        "effects": {"energy": -2.0, "mood": 1.0},
         "synergy": True, "synergy_stat": "mood",
-        "desc": "在厨房做饭（便宜且能和室友一起做）",
+        "desc": "在厨房做饭：需消耗食材（商店S购买，1份食材出1份饭），"
+                "时长30/45/60/80分钟分别产出1/2/3/4份可带走的饭菜",
     },
     "eat": {
         "name": "在家吃饭", "emoji": "🍚", "duration": 3, "need": "facility:D",
@@ -179,6 +198,13 @@ ACTIVITIES: dict[str, dict] = {
         "gives_item": "plant",
         "desc": "买一盆绿植（20元）：装饰度更高",
     },
+    "buy_foodstuff": {
+        "name": "买食材", "emoji": "🥬", "duration": 1, "need": "facility:S",
+        "scene": "town", "cost": 5,
+        "effects": {"mood": 1},
+        "gives_item": "ingredient",
+        "desc": "买一份食材（做饭用，1份食材做1份饭）",
+    },
     "think": {
         "name": "思考", "emoji": "🤔", "duration": 3, "need": None,
         "scene": "any", "cost": 0,
@@ -196,7 +222,7 @@ ACTIVITIES: dict[str, dict] = {
         "name": "对话", "emoji": "💬", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
         "effects": {},
-        "desc": "与身边的人对话：交流信息、分享想法、商量事情或增进了解；不产生心情好感变化，每轮微耗精力，3轮约占1刻时间",
+        "desc": "与同一地点的人对话：交流信息、分享想法、商量事情或增进了解；不产生心情好感变化，每轮微耗精力，3轮约占1刻时间",
     },
     "phone": {
         "name": "打电话", "emoji": "📞", "duration": 3, "need": "player",
@@ -204,12 +230,12 @@ ACTIVITIES: dict[str, dict] = {
         "effects": {},
         "desc": "给室友打电话，可跨地点对话（交流信息、商量事情，无数值变化），拨打者按通话轮数支付话费",
     },
-    "love": {
-        "name": "恋爱", "emoji": "💗", "duration": 3, "need": "player",
+    "dating": {
+        "name": "约会", "emoji": "💗", "duration": 3, "need": "player",
         "scene": "any", "cost": 0,
         "effects": {"mood": 6},
         "consent_threshold": 55,
-        "desc": "向好感足够的人表白/约会",
+        "desc": "和心仪的室友约会（好感互达55或已是恋爱关系）",
     },
     "sex": {
         "name": "做爱", "emoji": "💕", "duration": 3, "need": "player",
@@ -228,10 +254,17 @@ ACTIVITIES: dict[str, dict] = {
         "scene":"any", "cost":0, "needs_item":"meal", "effects":{"mood":1},
         "desc":"把做好的饭菜送给附近室友，对方当场吃掉",
     },
+    "self_relief": {
+        "name": "自行解决", "emoji": "🌙", "duration": 3, "need": "facility:b",
+        "scene": "house", "cost": 0, "male_only": True,
+        "effects": {"energy": -20, "mood": 2},
+        "fixed_duration": True,
+        "desc": "在卫生间独处释放生理紧张（30分钟，共损耗60精力）；释放后精力/饱食/心情消耗恢复基线，开始新的生理周期",
+    },
     "use_medicine": {
         "name":"给室友用药", "emoji":"💊", "duration":1, "need":"player",
         "scene":"any", "cost":0, "needs_item":"medicine", "effects":{"energy":-0.5},
-        "desc":"在室友身边用药品疗伤或缓解疾病",
+        "desc":"与室友在同一地点（同一设施区域）用药品疗伤或缓解疾病",
     },
     "attack": {
         "name": "攻击", "emoji": "⚔️", "duration": 1, "need": "player",
@@ -286,17 +319,18 @@ def activity_description_defaults() -> dict[str, str]:
     """模型行动目录中的默认文字；用户可逐项覆盖，不改变行动规则。"""
     from .town_services import DEFS, NAMES
     effects = {
-        "cook":"在家中厨房；备餐，完成后得到可赠送的饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜，恢复饱食",
+        "cook":"在家中厨房；需消耗食材（商店购买），按时长产出1~4份可带走饭菜", "eat":"在家中餐厅；吃随身饭菜或家中饭菜（家里刚做过饭15刻内有效），恢复饱食",
         "watch_tv":"在家中客厅沙发；放松心情", "computer":"在自己卧室电脑前；保存、查看和修改自己的记录",
         "computer_game":"在自己卧室电脑前；娱乐、提升心情", "sleep":"在自己卧室床上；恢复精力与身体",
         "shower":"在家中浴室；放松并恢复精力", "laundry":"在家中洗衣区；洗衣、略有放松",
         "balcony":"在家中阳台；晒太阳、放松", "decorate_room":"在自己卧室；消耗装饰品改善房间",
         "decorate_common":"在家中公共区域；消耗装饰品改善公共环境",
         "think":"在当前位置；整理思绪、放松", "wander":"在当前位置附近来回踱步放松；不会移动到别处（回家需直接选sleep或visit）",
-        "chat":"在室友身边；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
-        "love":"在室友身边或床上；约会、增进感情", "sex":"在室友身边或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
-        "gift":"在室友身边；赠送物品、增进感情", "attack":"在室友身边；伤害对方、恶化关系",
-        "give_meal":"在室友身边；把饭菜送给对方当场吃", "use_medicine":"在室友身边；消耗药品治疗伤病",
+        "chat":"与室友在同一地点（同一设施区域）；交流信息、分享近况、商量事情（每轮微耗精力，3轮约1刻）", "phone":"在任意地点；跨地点对话，交流信息（无数值变化，按轮收话费）",
+        "dating":"与室友在同一地点（同一设施区域）或床上提出约会，对方也选 dating 回应才成行；已是恋爱关系时不受好感门槛限制；约会本身不建立关系", "sex":"与室友在同一地点（同一设施区域）或床上；亲密相处（恋爱关系足够深时的自然选择，需双方同意）",
+        "gift":"与室友在同一地点（同一设施区域）；赠送物品、增进感情", "attack":"与室友在同一地点（同一设施区域）；伤害对方、恶化关系",
+        "give_meal":"与室友在同一地点；把饭菜送给对方当场吃", "use_medicine":"与室友在同一地点；消耗药品治疗伤病",
+        "self_relief":"在卫生间独处释放生理紧张（仅男性；释放后消耗倍率恢复基线）",
         "destroy":"在公共设施附近；破坏设施、发泄情绪",
         "home_treat":"在家中；用医学技能照护自己或室友", "stock":"在自己卧室电脑前；交易股票，可能盈亏",
     }
@@ -308,6 +342,7 @@ def activity_description_defaults() -> dict[str, str]:
         "garden_walk":"散步，放松心情", "garden_flowers":"赏花，恢复心情与精力",
         "garden_tend":"园艺，改善身体与心情", "shop":"购物，改善心情",
         "buy_flower":"买鲜花，用于装饰或送礼", "buy_plant":"买盆栽，用于装饰或送礼",
+        "buy_foodstuff":"买食材，回家做饭的原料（1份做1份饭）",
         "buy_medicine":"买药品，带给室友疗伤",
     }
     descriptions = {}
@@ -359,7 +394,7 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
             if a.get('_venue') and a['_venue']!=venue_code:continue
             if scene != "any" and a.get("scene") not in ("any", scene) and not home_bound:continue
         req = []
-        if a.get('_target_mode')=='required' or a.get("need") == "player":
+        if a.get('_target_mode')=='required' or a.get("need") == "player" or a.get('_place_join')=='and' and a.get('_position_options')==['near_player']:
             req.append("target=室友")
         elif a.get('_target_mode')=='optional':req.append('target=室友（可选）')
         if a.get("needs_item"):
@@ -373,10 +408,13 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
             detail = "回自己卧室床上睡觉（夜间恢复更高）；从镇上选它会自动回家"
         place_hint=''
         if places:
-            labels={'here':'当前位置','near_player':'室友身边','own_computer':'自己的电脑','own_bedroom':'自己的卧室','house_common':'公共区','house_patient':'病人旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣区','house:h':'卧室'}
+            labels={'here':'当前位置','near_player':'同一地点','own_computer':'自己的电脑','own_bedroom':'自己的卧室','house_common':'公共区','house_patient':'病人旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣区','house:h':'卧室'}
             from .town_services import NAMES
             visible=[labels.get(loc,NAMES.get(loc[5:],loc) if loc.startswith('town:') else loc) for current,locations in places.items() if current in (scene,'any') for loc in locations]
             if visible:place_hint='｜可在'+ '、'.join(dict.fromkeys(visible))
+            if a.get('_place_join')=='and' and a.get('_position_options'):
+                conditions=['目标角色旁' if value=='near_player' else '原地' for value in a['_position_options']]
+                place_hint+=' 且 '+ '或'.join(conditions)
         disg = MODEL_DISGUISES.get(k)
         menu_key = disg['key'] if disg else k
         menu_name = disg['name'] if disg else a['name']
@@ -431,3 +469,139 @@ def synergy_effects(base_effects: dict, stat: str, n: int, avg_aff: float,
 # 新场所与技能活动共享原有行走和时长引擎。
 from .town_services import register
 register(ACTIVITIES)
+
+
+# ------------------------------------------------------------------ 定量描述
+# 关键防误解注记：定量描述实验中仍须保留的行为提示（历史上删掉会直接引发
+# 模型行为误解，如 wander 以为能走回家、镇上以为不能睡觉）。
+KEY_NOTES: dict[str, str] = {
+    "wander": "只在原地附近踱步，不会移动到别处（回家要选睡觉）",
+    "eat": "需背包有饭菜，或家里15刻内刚做过饭；否则请选下馆子；饱食达上限（默认95）时不能吃",
+    "eat_out": "饭店用餐与家中用餐同一饱食上限（默认95），吃得很饱时会被拒；多人同吃有心情/好感加成",
+    "sleep": "夜间恢复更高；从镇上选它会自动回家睡觉",
+    "phone": "可跨地点通话；话费由拨打者按轮支付",
+    "give_meal": "对方当场吃掉（不进背包）；对方吃得很饱时会被拒",
+    "use_medicine": "对方满血无病时会被拒",
+    "visit": "抵达后才会列出当地具体项目（先用target填场所代码/名称）",
+    "computer": "search/read 结果自动存入记忆；文件不会随记忆整理消失",
+    "dating": "向室友提出约会，对方也选 dating 回应才成行（需双方好感互达55或已是恋爱关系）；约会期间两人共同进行、不能做别的；约会不建立恋爱关系",
+    "sex": "需双方各自选择同意；对方可以拒绝",
+    "gift": "消耗背包里的鲜花/盆栽；大幅提升好感",
+    "attack": "对方掉血、双方好感暴跌",
+    "transfer": "付款或收款的一方必须是你自己",
+    "ride": "需身边的司机正在开车；乘车不需要驾照",
+    "stock": "在本机交易；场所股受营业情况影响，可能亏损",
+    "buy_car": "需已到商店；买车后仍需驾照才能驾驶",
+    "treat": "诊所24小时营业",
+    "self_relief": "仅男性；释放后生理周期消耗倍率归1并开始新周期（互动同样有效）",
+}
+
+_STAT_LABELS = (("hp", "生命"), ("satiety", "饱食"), ("energy", "精力"),
+                ("mood", "心情"), ("money", "金钱"))
+
+
+def quantitative_descriptions(sim) -> dict[str, str]:
+    """把每项活动的全部机制写成一行定量描述；数值为 0 的机制不显示，
+    防误解的关键注记（KEY_NOTES）附加在定量信息之后。
+    读取 sim 当前配置（town_config / mechanics / activity_config），
+    网页面板调参后描述自动跟随。"""
+    from .town_services import DEFS, SKILLS, work_experience_rate
+    out: dict[str, str] = {}
+    for key, a in ACTIVITIES.items():
+        if a.get("legacy"):
+            continue
+        parts: list[str] = []
+        if key in DEFS:
+            code, name, skill, kind = DEFS[key]
+            v = sim.town_config.get(code, {}).get(key, {})
+            if kind == "job":
+                parts.append(f"时薪{v.get('hourly_wage', 0):g}元/小时")
+                if v.get("min_level"):
+                    parts.append(f"需{SKILLS.get(skill, skill)}{int(v['min_level'])}级")
+                parts.append(f"默认班次{v.get('minutes', 0):g}分钟（可延长）")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if sim.mechanics.get("work_mood_per_hour"):
+                    parts.append(f"心情-{sim.mechanics['work_mood_per_hour']:g}/小时")
+                if skill:
+                    xp = work_experience_rate(sim, key)
+                    if xp:
+                        parts.append(f"{SKILLS.get(skill, skill)}经验+{xp:g}/小时")
+            elif kind in ("course", "license_course"):
+                parts.append(f"时长{v.get('minutes', 0):g}分钟")
+                if v.get("price"):
+                    parts.append(f"学费{v['price']:g}元")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if sim.mechanics.get("study_mood_per_hour"):
+                    parts.append(f"心情-{sim.mechanics['study_mood_per_hour']:g}/小时")
+                xp = v.get("xp_per_hour")
+                if isinstance(xp, (int, float)) and xp:
+                    parts.append(f"经验+{xp:g}/小时")
+                if key == "license_driving":
+                    parts.append("完成即取得驾照")
+            elif kind == "goods":
+                if v.get("price"):
+                    parts.append(f"售价{v['price']:g}元")
+                if a.get("gives_item"):
+                    parts.append(f"获得{ITEMS[a['gives_item']]['name']}×1")
+            else:  # service
+                if v.get("minutes"):
+                    parts.append(f"默认{v['minutes']:g}分钟")
+                if v.get("price"):
+                    parts.append(f"费用{v['price']:g}元")
+                for field, label in (("satiety_per_hour", "饱食"), ("energy_gain_per_hour", "精力"),
+                                     ("mood_per_hour", "心情"), ("hp_per_hour", "生命")):
+                    val = v.get(field, 0)
+                    if val:
+                        parts.append(f"{label}+{val:g}/小时")
+                if v.get("energy_cost_per_hour"):
+                    parts.append(f"精力-{v['energy_cost_per_hour']:g}/小时")
+                if v.get("affinity_per_hour"):
+                    parts.append(f"同伴好感+{v['affinity_per_hour']:g}/小时")
+        else:
+            # 三层合并（与执行层 apply()/_base() 一致）：ACTIVITIES 原始值
+            # → 活动参数面板 activity_config → 活动编辑器 activity_overrides
+            cfg = sim.activity_config.get(key, {})
+            over = sim.activity_overrides.get(key, {})
+            eff = dict(cfg.get("effects", a.get("effects", {})))
+            eff.update(over.get("effects", {}))
+            dur = over.get("duration", cfg.get("duration", a["duration"]))
+            cost = over.get("cost", cfg.get("cost", a.get("cost", 0)))
+            if cost:
+                parts.append(f"费用{cost:g}元")
+            parts.append(f"默认{int(dur) * 10:g}分钟")
+            for stat, label in _STAT_LABELS:
+                val = eff.get(stat, 0)
+                if val:
+                    parts.append(f"{label}{'+' if val > 0 else ''}{val:g}/刻")
+            joint = over.get("joint_affinity_per_tick", (8 / 6 if key == "dating" else 0))
+            if joint:
+                parts.append(f"共同好感+{joint:g}/刻")
+            self_aff = over.get("self_affinity_per_tick", 0)
+            target_aff = over.get("target_affinity_per_tick", 0)
+            if self_aff:
+                parts.append(f"自己对对象好感+{self_aff:g}/刻")
+            if target_aff:
+                parts.append(f"对象对自己好感+{target_aff:g}/刻")
+            if a.get("synergy"):
+                parts.append("协同：2人×1.35/3人×1.70/4人×2.05（好感调制）")
+            if a.get("gives_item"):
+                parts.append(f"获得{ITEMS[a['gives_item']]['name']}×1")
+            need = a.get("needs_item")
+            if need:
+                label = "鲜花或盆栽" if need == "any" else ITEMS.get(need, {}).get("name", need)
+                parts.append(f"需消耗{label}")
+            for stat, bonus in (a.get("night_bonus") or {}).items():
+                if bonus:
+                    label = dict(_STAT_LABELS).get(stat, stat)
+                    parts.append(f"夜间{label}+{bonus:g}/刻")
+        if key == "cook":
+            shelf = int(sim.mechanics.get("meal_shelf_life_ticks", 36))
+            parts.append("时长30/45/60/80分钟→产出1/2/3/4份饭菜（每份耗1食材）")
+            parts.append(f"饭菜保质{shelf}刻；做好后15刻内家人可直接吃饭")
+        note = KEY_NOTES.get(key)
+        if note:
+            parts.append("⚠" + note)
+        out[key] = "；".join(parts) or a.get("desc", "")
+    return out

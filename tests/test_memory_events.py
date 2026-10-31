@@ -34,15 +34,15 @@ class MemoryTests(unittest.TestCase):
         self.fill(48)
         chosen=[]
         async def selector(entries, count):
-            self.assertEqual(count, 10)
+            self.assertEqual(count, 4)
             chosen.extend(m.id for m in entries[:count])
             return [{'id':m.id,'summary':'精简：'+m.content} for m in entries[:count]]
         asyncio.run(self.mem.maintain(selector))
         promoted=self.mem.page(2)
-        self.assertEqual(self.mem.counts(), {'1':8,'2':10,'3':0})
-        self.assertEqual(sum(m.selection_weight==0.8 for m in promoted),8)
-        self.assertEqual(sum(m.selection_weight==0.2 for m in promoted),2)
-        self.assertEqual(sum(m.selected_by=='模型主动选择' for m in promoted),8)
+        self.assertEqual(self.mem.counts(), {'1':8,'2':4,'3':0})
+        self.assertEqual(sum(m.selection_weight==0.8 for m in promoted),3)
+        self.assertEqual(sum(m.selection_weight==0.2 for m in promoted),1)
+        self.assertEqual(sum(m.selected_by=='模型主动选择' for m in promoted),3)
         self.assertTrue(all(m.content.startswith('精简：') for m in promoted if m.selection_weight==0.8))
         self.assertTrue(all(m.content.startswith('与小禾') for m in promoted if m.selection_weight==0.2))
 
@@ -56,16 +56,16 @@ class MemoryTests(unittest.TestCase):
         self.mem.rng=draw
         self.fill(48)
         async def nominate(entries,count):
-            self.assertEqual(count,10)
-            return [{"id":m.id,"summary":"候选"+str(i)} for i,m in enumerate(entries[:10])]
+            self.assertEqual(count,4)
+            return [{"id":m.id,"summary":"候选"+str(i)} for i,m in enumerate(entries[:4])]
         asyncio.run(self.mem.maintain(nominate))
-        self.assertEqual(draw.calls,[(10,8),(32,2)])
+        self.assertEqual(draw.calls,[(4,3),(37,1)])
         active={m.content for m in self.mem.page(2) if m.selection_weight==0.8}
-        self.assertEqual(active,{"候选"+str(i) for i in range(2,10)})
+        self.assertLessEqual(active,{"候选"+str(i) for i in range(4)})
+        self.assertEqual(len(active),3)
         # 模型候选0、1虽未进入第一次抽样，仍通过全池随机抽取被保留。
         lucky=[m.content for m in self.mem.page(2) if m.selection_weight==0.2]
-        self.assertTrue(any('经历编号0，' in s for s in lucky))
-        self.assertTrue(any('经历编号1，' in s for s in lucky))
+        self.assertTrue(any(('经历编号0，' in s) or ('经历编号1，' in s) for s in lucky))
 
     def test_bad_model_output_cannot_remove_all_memories(self):
         for response in (None, [{'id':'invented','summary':'不应入库'}], [{'id':None}], []):
@@ -83,7 +83,7 @@ class MemoryTests(unittest.TestCase):
             asyncio.run(self.mem.maintain(AsyncMock(side_effect=asyncio.CancelledError)))
         self.assertEqual({m.id for m in self.mem.items},original)
         asyncio.run(self.mem.maintain(AsyncMock(side_effect=TimeoutError)))
-        self.assertEqual(self.mem.counts()['2'],10)
+        self.assertEqual(self.mem.counts()['2'],4)
 
     def test_storage_failure_rolls_back_promotion(self):
         self.fill(48)
@@ -105,7 +105,7 @@ class MemoryTests(unittest.TestCase):
             self.assertLess(self.mem.counts()['1'],THRESHOLDS[1][0])
             self.assertLess(self.mem.counts()['2'],THRESHOLDS[2][0])
             self.assertLessEqual(len(self.mem.brief(100000)), PROMPT_CHARS)
-        self.assertGreater(len(deep_ids),100)
+        self.assertGreater(len(deep_ids),20)
         text=self.mem.brief(100000)
         self.assertTrue(all('[L'+str(tier) in text for tier in (1,2,3)))
 
@@ -205,7 +205,7 @@ class EventTests(unittest.TestCase):
         with patch('engine.brain.select_memories_llm',side_effect=select) as call:
             asyncio.run(self.sim.maintain_memories())
         call.assert_called_once()
-        self.assertEqual(self.p.memory.counts()['2'],10)
+        self.assertEqual(self.p.memory.counts()['2'],4)
         self.assertTrue(any(e.type=='memory' for e in self.sim.events))
 
 

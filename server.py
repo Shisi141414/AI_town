@@ -125,6 +125,7 @@ def _sync_from_config() -> None:
     sim.model_of = {pid: b.get("model", "") for pid, b in config.player_bindings.items()}
     sim.record("configuration",{"settings":config.settings.model_dump(),"system_prompt":config.system_prompt,"bindings":config.player_bindings})
     for p in sim.players:
+        p.cycle_enabled = config.settings.cycle_enabled
         profile = sim.profile_for(p.pid)
         p.model = sim.model_of.get(p.pid) or (profile.default_model if profile else "")
 
@@ -285,7 +286,7 @@ async def state():
         "identity_phase": sim.identity_phase,
         "town_config":sim.town_config,"market_price":sim.market_price,
         "decor_common": sim.decor_common,
-        "players": [p.snapshot(name_of).model_dump() for p in sim.players],
+        "players": [p.snapshot(name_of,sim).model_dump() for p in sim.players],
         "vehicles": [v.model_dump() for v in sim.vehicles],
         "active_profile": (sim.profile.name if sim.profile else None),
         "llm_mode": bool(sim.profile and sim.profile.api_key),
@@ -670,6 +671,7 @@ async def get_config():
 
 class SettingsIn(BaseModel):
     dialogue_generation: bool | None = None
+    cycle_enabled: bool | None = None
     temperature: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
     decision_timeout: float | None = Field(default=None, ge=5, le=300, allow_inf_nan=False)
     ticks_per_second: float | None = Field(default=None, ge=0.1, le=10, allow_inf_nan=False)
@@ -691,6 +693,8 @@ async def put_config(s_in: SettingsIn):
             raise HTTPException(400, "玩家或 API 档案不存在")
     if s_in.dialogue_generation is not None:
         config.settings.dialogue_generation = s_in.dialogue_generation
+    if s_in.cycle_enabled is not None:
+        config.settings.cycle_enabled = s_in.cycle_enabled
     if s_in.temperature is not None:
         config.settings.temperature = max(0.0, min(2.0, s_in.temperature))
     if s_in.decision_timeout is not None:
@@ -728,7 +732,7 @@ async def player_travel(pid: str, travel: TravelIn):
         sim.set_travel_mode(p, travel.mode)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-    return p.snapshot().model_dump()
+    return p.snapshot({o.pid:o.name for o in sim.players},sim).model_dump()
 
 
 @app.post("/api/players/{pid}/car")
@@ -772,7 +776,7 @@ async def add_player(p_in: PlayerIn):
         p = sim.add_player_manual(p_in.name, p_in.color, p_in.emoji, join_identity=p_in.join_identity)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return p.snapshot().model_dump()
+    return p.snapshot({o.pid:o.name for o in sim.players},sim).model_dump()
 
 
 @app.delete("/api/players/{name}")
@@ -995,7 +999,7 @@ async def tick_broadcaster() -> None:
                 "identity_phase": sim.identity_phase,
                 "town_config":sim.town_config,"market_price":sim.market_price,
                 "decor_common": sim.decor_common,
-                "players": [p.snapshot(name_of).model_dump() for p in sim.players],
+                "players": [p.snapshot(name_of,sim).model_dump() for p in sim.players],
                 "vehicles": [v.model_dump() for v in sim.vehicles],
                 "events": new_events,
                 "maps": {scene: ["".join(row) for row in world.grid(scene)] for scene in ("house", "town")},

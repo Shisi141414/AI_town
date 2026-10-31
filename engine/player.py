@@ -52,6 +52,8 @@ class Player:
         self.interaction_resume = False
         self.service_completed = False
         self.dining_tick = -1
+        self._suspended_activity = None     # 被中断活动的剩余进度（同key继续时恢复）
+        self._period_hp_at = -1             # 本刻生理期失血标记（归因用）
         self.work_paid = 0.0
         self.phone_paid = 0.0
         self.injury_alert = ''
@@ -129,7 +131,13 @@ class Player:
         self._final_goal: tuple[int, int] | None = None   # 跨场景的最终目的地
         self._final_scene: str | None = None
         self.model = ""
-        self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0}
+        self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0, "ingredient": 0}
+        # 生理周期（cycle.py）：周期锚点/黄体期满足标记/经期提示标记
+        # 初始锚点随机偏移（负值=已进行到周期中某阶段），避免全员周期同步
+        from .cycle import CYCLE_TICKS
+        self.cycle_anchor = -random.randrange(CYCLE_TICKS)
+        self.cycle_satisfied_anchor = -1
+        self.cycle_noticed = -1
         self.meal_qualities: list[int] = []
         self.meal_expiry: list[int] = []      # 每份饭菜的到期tick（与数量FIFO对应）
         self.eating_quality = 0
@@ -158,9 +166,17 @@ class Player:
         return [o for o in sim.players if o is not self and world.same_place(self, o)]
 
     # ------------------------------------------------------------- 快照
-    def snapshot(self, name_of: dict[str, str] | None = None) -> PlayerSnapshot:
+    def snapshot(self, name_of: dict[str, str] | None = None, sim=None) -> PlayerSnapshot:
         name_of = name_of or {}
         aff_named = {name_of.get(k, k): v for k, v in self.affinity.items()}
+        from . import cycle
+        relationships=[]
+        if sim is not None:
+            from . import relations
+            for relation in relations.all_of(sim,self.pid):
+                other=relation['b'] if relation['a']==self.pid else relation['a']
+                relationships.append({'other_pid':other,'name':name_of.get(other,other),'type':relation['type'],
+                                      'days':(sim.global_tick-relation['since'])//144+1})
         return PlayerSnapshot(
             pid=self.pid, name=self.name, color=self.color, emoji=self.emoji, gender=self.gender,
             scene=self.scene, x=self.x, y=self.y, stats=self.stats,
@@ -178,6 +194,7 @@ class Player:
             activity_minutes_left=self.activity_left*10, activity_minutes_total=self.activity_total*10, decision_status=self.decision_status,
             last_system_prompt=self.last_system_prompt,last_user_prompt=self.last_user_prompt,last_raw_reply=self.last_raw_reply,
             memory_counts=self.memory.counts(), illness=self.health_description, illness_severity=self.illness_severity,
+            cycle_status=cycle.description(self,sim),relationships=relationships,
             hospitalized=self.hospitalized, awaiting_admission=self.awaiting_admission)
 
     @property
@@ -269,6 +286,13 @@ class Player:
         from .activity_rules import registry
         a = action_spec(sim,self,key) if key in registry(sim) else None
         if not a:
+            self._rejection='这项活动不存在或已被关闭，请改选其他行动'
+            return False
+        if key == 'self_relief' and not sim.settings.cycle_enabled:
+            self._rejection='生理周期机制已关闭'
+            return False
+        if a.get('male_only') and self.gender != '男':
+            self._rejection='这项活动只有男性居民可以进行'
             return False
         if key in ('eat', 'eat_out') and self.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
             # 家中用餐与饭店用餐同一饱食上限：避免在饭店相遇后饱着肚子无休止聚餐
@@ -276,12 +300,62 @@ class Player:
             self._rejection = f'我吃得很饱（饱食{self.stats.satiety:.0f}，达到{cap:.0f}上限），等饿了再吃'
             self.remember('我吃得很饱，暂时吃不下饭', 3)
             return False
+        if key == 'cook':
+            meals = act.cook_meal_output(self.requested_duration)
+            have = self.items.get('ingredient', 0) + sim.fridge.get('ingredient', 0)
+            if have <= 0:
+                self._rejection = '缺少食材：做饭需要食材（1份食材出1份饭），商店S有售'
+                return False
+            if have < meals:
+                # 食材不够原计划：自动降档到现有的量（1→3刻/2→5刻/3→6刻），不整单拒绝
+                ticks_for = {1: 3, 2: 5, 3: 6}
+                self.requested_duration = ticks_for.get(have, 8)
+                meals = have
+                self.remember(f'食材只够做{meals}份饭，就先做这些', 3)
+            self._cook_meals = meals
         if a.get('need') is None and a.get('scene') not in ('any',self.scene):
+            self._rejection=f"这项活动不能在{'室内' if self.scene=='house' else '室外'}进行"
             return False
-        need = a.get("need", "")
         if a.get('_target_mode')=='required' and target is None:
             self._rejection='这项活动需要选择一位室友作为对象'
             return False
+        if a.get('_place_join')=='or' and target is None and a.get('need')=='player' and a.get('_target_mode')!='required':
+            from .activity_rules import choose_place,need_for_location,_location
+            concrete={scene:[loc for loc in locations if loc not in ('near_player','house_patient')]
+                      for scene,locations in a['_places'].items()}
+            concrete={scene:locations for scene,locations in concrete.items() if locations}
+            if concrete:
+                scene,location=choose_place({'places':concrete},self)
+                a['scene'],a['_chosen_location']=scene,location
+                a['need']=need_for_location(location,a.get('_target_mode','none'))
+                a['_use_interaction_points']=location==_location(key,a)
+                if location.startswith('town:'):a['_building']=location[5:]
+                else:a.pop('_building',None)
+        if a.get('_place_join')=='and':
+            from .activity_rules import location_matches
+            candidates=[(scene,location) for scene,locations in a['_places'].items() for location in locations]
+            options=a.get('_position_options',[])
+            staying=next(((scene,location) for scene,location in candidates
+                          if 'here' in options and location_matches(self,scene,location)),None)
+            meeting=next(((scene,location) for scene,location in candidates
+                          if 'near_player' in options and target is not None
+                          and location_matches(target,scene,location)),None)
+            can_stay=staying if (a.get('_target_mode')!='required' or target is not None
+                                and target.scene==self.scene and world.same_place(self,target)) else None
+            chosen=can_stay or meeting
+            if chosen is None:
+                self._rejection='这项活动要求在所选地点原地进行，或在该地点的目标角色旁进行'
+                return False
+            a['scene'],a['_chosen_location']=chosen
+            a['need']='player' if chosen==meeting else None
+            if a.get('_target_mode')=='required' and chosen==staying and target is not None:
+                if target.scene!=self.scene or not world.same_place(self,target):
+                    self._rejection='目标室友不在所选地点，无法原地一起进行'
+                    return False
+            if chosen[1].startswith('town:'):a['_building']=chosen[1][5:]
+            else:a.pop('_building',None)
+            a['_use_interaction_points']=False
+        need = a.get("need", "")
         self.target_player = target
         self._pending_target_pid = None
         from .interaction_points import LOCAL_ACTIONS,route,release,route_bed_pair
@@ -289,9 +363,12 @@ class Player:
 
         if key in LOCAL_ACTIONS and a.get('_use_interaction_points',True):return route(sim,self,key)
 
-        if key=='love' and self.decision and self.decision.location=='bed':
-            if target is None or self.affinity.get(target.pid,0)<55 or target.affinity.get(self.pid,0)<55:
-                self._rejection='我们之间的好感还不到可以同床共枕的程度'
+        if key=='dating' and self.decision and self.decision.location=='bed':
+            # 防御路径：正常邀请流程在 simulation._consent_decision；直接调用时保留门槛
+            from . import relations as rel_mod
+            if target is None or (self.affinity.get(target.pid,0)<55
+                                  and not rel_mod.between(sim,self.pid,target.pid)):
+                self._rejection='我们还不是恋爱关系，好感也还不到可以同床共枕的程度'
                 return False
             return route_bed_pair(sim,self,target)
 
@@ -315,7 +392,7 @@ class Player:
                 return False
             if max(abs(target.x - self.x), abs(target.y - self.y)) > 6 \
                     and not world.same_place(self, target):
-                self._rejection='对方离我太远，够不着'
+                self._rejection='对方离我太远，够不着；你们需在同一地点（同一设施区域）才能对话或互动'
                 return False
             if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
                 self._rejection=f'{target.name}身体很健康，用不上药品'
@@ -323,14 +400,20 @@ class Player:
             if key=='give_meal' and target.stats.satiety >= sim.mechanics.get('meal_block_satiety', 95.0):
                 self._rejection=f'{target.name}吃得很饱（饱食95以上），现在不需要饭菜'
                 return False
-            if key == "love":
+            if key == "dating":
+                from . import relations as rel_mod
+                rel = rel_mod.between(sim, self.pid, target.pid)
                 mutual = (self.affinity.get(target.pid, 0) >= a["consent_threshold"]
                           and target.affinity.get(self.pid, 0) >= a["consent_threshold"])
-                if not mutual:
-                    self._rejection='我们之间的好感还不够亲近，恋爱没有成'
+                if not (rel or mutual):
+                    self._rejection=(f'我们还不是恋爱关系，且好感未互达{a["consent_threshold"]}，约会没有成'
+                                     f'（好感足够可先 propose_love 建立关系）')
                     return False
             self._pending_key = key
             self._pending_target_pid = target.pid
+            if a.get('_place_join')=='and' and 'here' in a.get('_position_options',[]) and a.get('_chosen_location') and location_matches(self,*a['_chosen_location']):
+                self._start_social(key,sim,target)
+                return True
             self._plan_route(sim, self.scene, target.x, target.y, adjacent=True)
             return True
 
@@ -402,6 +485,8 @@ class Player:
             code=a['_building']
             if not open_now(sim.opening_hours[code], sim.hour):
                 self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
+                hours=sim.opening_hours[code]
+                self.info_feedback=f'{a["name"]}现在没营业（营业{hours[0]:02d}:00–{hours[1]:02d}00），请改选别的活动或稍后再来'
                 self.remember(f'{a["name"]}到达时未营业',3)
                 return
         from .interaction_points import LOCAL_ACTIONS,options,active_slot
@@ -436,17 +521,21 @@ class Player:
         energy_need=max(0,-a.get('effects',{}).get('energy',0))
         if a.get('_kind') in ('course','license_course','job') and self.stats.energy+1e-8<energy_need:
             self.state,self.activity,self.activity_key,self._pending_key='idle',None,'',''
+            self.info_feedback=f'抵达后精力不足（{self.stats.energy:.0f}，{a["name"]}至少需要{energy_need:.0f}），先睡觉或休息再来'
             self.remember('抵达后精力不足，需先休息再上课或工作',3)
             return
         if self.stats.money < cost:
             self.state, self.activity, self.activity_key, self._pending_key = "idle", None, "", ""
+            self.info_feedback=f"抵达后现金不足（{a['name']}需{cost:g}元，只有{self.stats.money:.1f}元）；可先去挣钱"
             self.remember(f"抵达后钱不够，无法{a['name']}", 3)
             return
         if key in ('fish','swim'):
             waters=[(self.x+dx,self.y+dy) for dx,dy in ((0,1),(0,-1),(1,0),(-1,0))
                     if self.scene=='town' and world.tile('town',self.x+dx,self.y+dy)=='W']
             if not waters:
-                self.state='idle';self._pending_key='';return
+                self.state='idle';self._pending_key=''
+                self.info_feedback='这里挨不到水面，请到池塘边的空地再试'
+                return
             if key=='swim':
                 # 下水格独占：避让已在水中的人与其他下水点
                 taken=sim.occupied('town',self)|sim.human_cells('town',self)
@@ -471,8 +560,18 @@ class Player:
         self.gift_affinity_per_tick = 0.0
         self.activity_key = key
         self.activity_custom_duration = self.requested_duration is not None
-        self.activity_left = self.requested_duration or a["duration"]
-        self.activity_total = self.activity_left
+        sus = getattr(self, '_suspended_activity', None)
+        if sus and sus.get('key') == key:
+            # 从中断处继续：保留剩余时长与中间量（如做饭的产出计划）
+            self.activity_left = sus['left']
+            self.activity_total = max(sus.get('total', 0), self.activity_left)
+            if sus.get('cook_meals') is not None:
+                self._cook_meals = sus['cook_meals']
+            self.info_feedback = f'{a["name"]}从中断处继续（剩{self.activity_left * 10:g}分钟）'
+        else:
+            self.activity_left = self.requested_duration or a["duration"]
+            self.activity_total = self.activity_left
+        self._suspended_activity = None     # 选了其他活动即放弃剩余进度
         self.requested_duration = None
         self.state = "doing"
         # 物品类活动：购买获得/布置消耗
@@ -480,6 +579,16 @@ class Player:
             self.items[a["gives_item"]] = self.items.get(a["gives_item"], 0) + 1
             it = act.ITEMS.get(a["gives_item"],{'name':a['name']})
             self.remember(f"我买了{it['name']}", 3)
+            if a["gives_item"]=='ingredient' and self.items['ingredient']>2:
+                move=self.items['ingredient']-2
+                room=max(0,act.FRIDGE_LIMITS['ingredient']-sim.fridge.get('ingredient',0))
+                move=min(move,room)
+                if move>0:
+                    self.items['ingredient']-=move
+                    sim.fridge['ingredient']=sim.fridge.get('ingredient',0)+move
+                    self.remember(f'{move}份食材放进了厨房冰箱', 3)
+                if self.items['ingredient']>2:
+                    self.remember(f'背包里还有{self.items["ingredient"]}份食材（冰箱已满）', 3)
         if a.get("needs_item"):
             if a['needs_item']=='any':self._consume_decor_item(key, sim)
         if key=='eat':
@@ -489,6 +598,11 @@ class Player:
                 self.items['meal']-=1
                 self.eating_quality=self.meal_qualities.pop(0) if self.meal_qualities else sim.meal_quality
                 if self.meal_expiry:self.meal_expiry.pop(0)
+            elif sim.fridge.get('meals'):
+                # 冰箱有饭：自动取出（最早存入的先吃）
+                chilled=sim.fridge_take_meal()
+                self.eating_from_inventory=True
+                self.eating_quality=chilled['quality']
         sim.log("activity", f"{self.name} 开始{a['name']} {a['emoji']}（计划{self.activity_total*10}分钟）", [self.name],scope="game")
 
     def _consume_decor_item(self, key: str, sim: "Simulation"):
@@ -651,7 +765,7 @@ class Player:
 
         if self.state == "doing":
             # 对话类活动不结算数值效果（效果在对话结束后统一给）
-            if self.activity_key in ("chat", "love", "phone") and self._conversation is not None:
+            if self.activity_key in ("chat", "dating", "phone") and self._conversation is not None:
                 return
             self._step_activity(sim)
 
@@ -697,13 +811,14 @@ class Player:
                                      and not world.same_place(self, t)):
             self.state = "idle"
             self._pending_key = ""
+            self.info_feedback=f'{t.name}已经不在身边了（活动开始时走散）；可改用phone联系或先做别的'
             return
         self._pending_key = ""
         self.target_player = t
         self._start_local(key, sim)
         if key == "attack":
             self._resolve_attack(sim)
-        if key in ("chat", "love"):
+        if key in ("chat", "dating"):
             sim.start_conversation(self, t, key)
         if key == "gift":
             self._resolve_gift(sim, t)
@@ -789,6 +904,14 @@ class Player:
                 return
         from .town_services import step_effects
         eff=step_effects(sim,self,key,eff)
+        # 生理周期：负面精力/饱食/心情效果按当前倍率加重
+        # （「自行解决」是释放动作本身，代价固定不放大）
+        from . import cycle as physio
+        if key != 'self_relief':
+            _pm = physio.multipliers(self, sim)
+            for _s in ('satiety', 'energy', 'mood'):
+                if eff.get(_s, 0) < 0:
+                    eff[_s] = eff[_s] * _pm[_s]
         if act.is_night(self.hour) and a.get("night_bonus"):
             for stat, bonus in a["night_bonus"].items():
                 eff[stat] = eff.get(stat, 0) + bonus
@@ -835,6 +958,7 @@ class Player:
             self.activity = None
             self.activity_key = ""
             self.state = "idle"
+            self.info_feedback='家里没现成饭了（做饭后15刻内有效）：请选cook（需食材）、去冰箱取或下馆子'
             self.remember("家里没饭了，得下馆子或自己做", 4)
             return
 
@@ -859,12 +983,46 @@ class Player:
             from .resident_tools import use_computer, remember_computer_use
             use_computer(sim,self,self.decision)
             remember_computer_use(self)
-        if key=='cook' and self.activity_left<=0:
+        if key=='cook':
             quality=min(5,int(self.skills.get('cooking',0)//100))
-            self.items['meal']=self.items.get('meal',0)+2
-            self.meal_qualities.extend([quality,quality])
-            self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',20))]*2)
-            sim.log('activity',f'🍱 {self.name}做好饭，留下两份可带走的饭菜',[self.pid])
+            planned=getattr(self,'_cook_meals',0) or act.cook_meal_output(self.activity_total)
+            elapsed=max(0,self.activity_total-self.activity_left)
+            # 中断时按实际进度折算产出；食材按实际产出消耗（不白扣）
+            produced=min(planned,int(planned*elapsed/max(1,self.activity_total)),
+                         self.items.get('ingredient',0)+sim.fridge.get('ingredient',0))
+            if produced>0:
+                # 食材消耗：先背包后冰箱
+                from_bag=min(produced,self.items.get('ingredient',0))
+                if from_bag:
+                    self.items['ingredient']-=from_bag
+                rest=produced-from_bag
+                if rest:
+                    sim.fridge['ingredient']-=rest
+                # 优先随身（最多2份），多出的放冰箱（保鲜=保质期×3，容量有限）；
+                # 冰箱放不下的仍随身带走，不浪费
+                fridge_room=max(0,act.FRIDGE_LIMITS['meals']-len(sim.fridge.get('meals',[])))
+                keep=min(produced,max(2-self.items.get('meal',0),produced-fridge_room))
+                keep=max(0,keep)
+                if keep>0:
+                    self.items['meal']=self.items.get('meal',0)+keep
+                    self.meal_qualities.extend([quality]*keep)
+                    self.meal_expiry.extend([sim.global_tick+int(sim.mechanics.get('meal_shelf_life_ticks',36))]*keep)
+                chilled=produced-keep
+                if chilled>0:
+                    sim.fridge_add_meal(quality,chilled)
+                sim.log('activity',f'🍱 {self.name}做好{produced}份饭（随身{keep}份、冰箱{chilled}份，消耗{produced}份食材）',[self.pid])
+            else:
+                sim.log('activity',f'🍳 {self.name}的做饭中途结束，没有产出饭菜',[self.pid])
+        from . import cycle as physio
+        if key == 'self_relief' and self.gender == '男':
+            physio.release_male(self, sim)
+        if key == 'sex':
+            if self.gender == '男':
+                physio.release_male(self, sim, how='互动')
+            else:
+                physio.satisfy_female(self, sim, how='亲密')
+        if key == 'dating' and self.gender == '女':
+            physio.satisfy_female(self, sim, how='约会')
         if key=='use_medicine' and self.target_player:
             target=self.target_player
             if self.items.get('medicine',0)>0 and self.scene==target.scene and max(abs(self.x-target.x),abs(self.y-target.y))<=3:
@@ -880,7 +1038,7 @@ class Player:
         if key == "destroy" and world.tile(self.scene, self.x, self.y) in act.facility_chars("destroy"):
             world.grid(self.scene)[self.y][self.x] = "X"
         # 社交/协同互动的好感结算：LLM 决定增减
-        if key in ("chat", "love"):
+        if key in ("chat", "dating"):
             # 对话结束时 Conversation 已写记忆/好感，这里不重复处理
             pass
         elif key == 'sex' and self.target_player:
@@ -941,10 +1099,13 @@ class Player:
             # 待收治（借款中）：不做消耗，等待结果
             self.stats.clamp()
             return
+        from . import cycle as physio
+        physio.tick_female_period(self, sim)
+        _mults = physio.multipliers(self, sim)
         hp_before=self.stats.hp
         for k, v in act.PASSIVE_DRAIN.items():
-            if k == 'mood':v = -sim.mechanics['base_mood_drain']
-            if k == 'satiety':v = -sim.mechanics['base_satiety_drain']
+            if k == 'mood':v = -sim.mechanics['base_mood_drain'] * _mults['mood']
+            if k == 'satiety':v = -sim.mechanics['base_satiety_drain'] * _mults['satiety']
             if k == 'energy':v = sim.mechanics['base_energy_regen']
             if k == "satiety" and (self.vehicle_driver or self.transport == "car"):
                 continue

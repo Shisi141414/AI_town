@@ -57,10 +57,12 @@ class RejectionTests(unittest.TestCase):
     def test_love_rejected_by_affinity(self):
         self.a.affinity[self.b.pid] = 30.0
         self.b.affinity[self.a.pid] = 40.0
-        self.sim._apply_decision(self.a, Decision(action='love', target=self.b.name, source='llm'))
-        self.assertIn('好感还不够', self.a.info_feedback)
-        self.assertIn('恋爱', self.a.memory.brief(0, k=10, query='被拒绝'))
-        self.assertIn('好感', self.b.memory.brief(0, k=10, query='没有成行'))
+        self.sim._apply_decision(self.a, Decision(action='dating', target=self.b.name, source='llm'))
+        self.assertIn('好感未互达', self.a.info_feedback)   # 未建立关系且好感不足
+        self.assertIn('约会', self.a.memory.brief(0, k=10, query='被拒绝'))
+        # 发起即被拦：对方没有被邀请，也就不会收到“没有成行”的记忆
+        self.assertNotIn('没有成行', self.b.memory.brief(0, k=10, query='没有成行'))
+
 
     def test_eat_out_blocked_when_satiety_high(self):
         # 饱食达上限时饭店用餐与家中用餐同样被拒，且给出理由（防饭店无限聚餐）
@@ -83,11 +85,11 @@ class RejectionTests(unittest.TestCase):
         self.sim._apply_decision(self.b, Decision(
             action='think', target='', reason='想先休息一下', source='llm'))
         self.assertNotIn(self.b.pid, self.sim.sex_proposals)
-        mem_a = self.a.memory.brief(0, k=10, query='亲密邀请被拒绝')
+        mem_a = self.a.memory.brief(0, k=10, query='亲密邀请被婉拒')
         self.assertIn(self.b.name, mem_a)
         self.assertIn('想先休息', mem_a)                 # 对象说明的理由
-        self.assertIn('拒绝', self.a.info_feedback)
-        mem_b = self.b.memory.brief(0, k=10, query='拒绝了')
+        self.assertIn('婉拒', self.a.info_feedback)
+        mem_b = self.b.memory.brief(0, k=10, query='婉拒了')
         self.assertIn(self.a.name, mem_b)
 
     def test_phone_busy_rejection(self):

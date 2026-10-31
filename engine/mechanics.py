@@ -96,10 +96,13 @@ def activity_defaults():
 def validate_activity_descriptions(values):
     from .activities import activity_description_defaults
     defaults = activity_description_defaults()
-    if not isinstance(values, dict) or set(values) != set(defaults):
-        raise ValueError('可选行动描述不完整')
+    if not isinstance(values, dict):
+        raise ValueError('可选行动描述格式错误')
+    # 结构迁移：缺键（新增活动）补默认、多余键（已删除活动）丢弃，
+    # 旧面板整表提交不再被整单拒绝
     result = {}
-    for key, value in values.items():
+    for key in defaults:
+        value = values.get(key, defaults[key])
         if not isinstance(value, str) or not 1 <= len(value.strip()) <= 240 or any(c in value for c in '\r\n'):
             raise ValueError(f'{key} 的行动描述应为一行，长度不超过240字')
         result[key] = value.strip()
@@ -110,9 +113,19 @@ def validate_activities(values):
     defaults = activity_defaults()
     if not isinstance(values, dict) or set(values) != set(defaults):
         raise ValueError('活动参数不完整')
+    out = {}
     for key, row in values.items():
-        if not isinstance(row, dict) or set(row) != set(defaults[key]) or set(row['effects']) != set(defaults[key]['effects']):
+        base = defaults[key]
+        if not isinstance(row, dict):
             raise ValueError(f'{key} 活动字段不完整')
+        # 结构迁移：以当前默认键集为准——缺失键补默认值、多余键丢弃（如 cook 的
+        # effects 键集随版本演进）。旧面板/旧存档整表提交时，用户没动过的活动
+        # 行自动升级，不再整单拒绝（否则「改A活动却报B活动字段不完整」）。
+        old_effects = row.get('effects') if isinstance(row.get('effects'), dict) else {}
+        row = {'duration': row.get('duration', base['duration']),
+               'cost': row.get('cost', base['cost']),
+               'effects': {stat: old_effects.get(stat, val)
+                           for stat, val in base['effects'].items()}}
         for field, value in row.items():
             fields = value if field == 'effects' else {field: value}
             for name, number in fields.items():
@@ -122,4 +135,5 @@ def validate_activities(values):
             raise ValueError(f'{key} 时长必须为 1～144 刻')
         if row['cost'] < 0:
             raise ValueError(f'{key} 费用不能为负')
-    return deepcopy(values)
+        out[key] = row
+    return out

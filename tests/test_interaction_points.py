@@ -42,6 +42,7 @@ class InteractionPointTests(unittest.TestCase):
                     self.assertTrue(world.walkable('house',p.x,p.y))
 
     def test_cook_meal_shower_couch_and_sun_use_exact_points(self):
+        self.p.items['ingredient']=2
         for key in ('cook','eat','shower','watch_tv','balcony'):
             with self.subTest(key=key):
                 self.sim._apply_decision(self.p,Decision(action=key))
@@ -86,7 +87,10 @@ class InteractionPointTests(unittest.TestCase):
 
     def test_bed_intimacy_routes_both_people_and_releases_positions(self):
         a,b=self.sim.players[:2];a.affinity[b.pid]=80;b.affinity[a.pid]=80
-        self.sim._apply_decision(a,Decision(action='love',target=b.name,location='bed'))
+        self.sim._apply_decision(a,Decision(action='dating',target=b.name,location='bed'))
+        # 约会需对方同意：b 以 love 回应后才双双上床
+        self.assertEqual(a.state,'waiting_consent')
+        self.sim._apply_decision(b,Decision(action='dating',target=a.name,location='bed'))
         for _ in range(300):
             for p in (a,b):p.tick(self.sim)
             if a._conversation:break
@@ -101,12 +105,13 @@ class InteractionPointTests(unittest.TestCase):
 
     def test_low_affinity_bed_invitation_does_not_move_the_other_resident(self):
         a,b=self.sim.players[:2];pos=(b.x,b.y)
-        a.decision=Decision(action='love',target=b.name,location='bed')
-        self.assertFalse(a.begin_activity('love',self.sim,target=b))
+        a.decision=Decision(action='dating',target=b.name,location='bed')
+        self.assertFalse(a.begin_activity('dating',self.sim,target=b))
         self.assertEqual((b.x,b.y),pos)
         self.assertIsNone(b.interaction_slot)
 
     def test_save_restores_furniture_use_and_legacy_activity_reroutes_without_repaying(self):
+        self.p.items['ingredient']=2
         self.sim._apply_decision(self.p,Decision(action='cook'))
         self.arrive(self.p);self.p.tick(self.sim)
         with tempfile.TemporaryDirectory() as temp:
@@ -144,7 +149,7 @@ class InteractionPointTests(unittest.TestCase):
                 for p in branch.players:p.memory.close()
 
     def test_model_can_choose_bed_and_sun_alias(self):
-        self.assertEqual(brain.parse_decision('{"action":"love","location":"bed","target":"室友"}').location,'bed')
+        self.assertEqual(brain.parse_decision('{"action":"dating","location":"bed","target":"室友"}').location,'bed')
         self.assertEqual(brain.parse_decision('{"action":"晒太阳"}').action,'balcony')
 
 
