@@ -625,7 +625,9 @@ async function loadMemories(pid, more=false) {
   page.offset+=d.items.length;page.hasMore=d.has_more;
   if(!page.offset)page.html='<div class="hint">这一层还没有记忆</div>';
   const card=[...$("playerList").querySelectorAll('.pcard')].find(el=>el.dataset.pid===pid);
-  if(!card||memoryTiers.get(pid)!==tier)return;
+  // 守卫与取值对称：未切换过层级的居民 memoryTiers 里没有条目（undefined），
+  // 必须同样按默认 "1" 比较，否则首次加载的结果永远被丢弃
+  if(!card||(memoryTiers.get(pid)||"1")!==tier)return;
   card.querySelector('.mem-stats').textContent=page.stats;
   card.querySelector('.mem-list').innerHTML=page.html;
   card.querySelector('.mem-more').hidden=!page.hasMore;
