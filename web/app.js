@@ -607,7 +607,18 @@ async function loadMemories(pid, more=false) {
   if(!more){page.offset=0;page.html="";}
   const request=++page.request, saveId=memorySaveId;
   memoryPages.set(key,page);
-  const d=await jget(`${API}/players/${encodeURIComponent(pid)}/memories?tier=${tier}&offset=${page.offset}&limit=40`);
+  // 读取状态可见化：发起即显示"读取中"，失败显示原因——不静默空白
+  const cardNow=[...$("playerList").querySelectorAll('.pcard')].find(el=>el.dataset.pid===pid);
+  if(cardNow&&!more)cardNow.querySelector('.mem-stats').textContent='读取中…';
+  let d;
+  try{
+    d=await jget(`${API}/players/${encodeURIComponent(pid)}/memories?tier=${tier}&offset=${page.offset}&limit=40`);
+  }catch(err){
+    if(page.request===request)page.stats=`读取失败：${err?.message||err}`;
+    const c=[...$("playerList").querySelectorAll('.pcard')].find(el=>el.dataset.pid===pid);
+    if(c)c.querySelector('.mem-stats').textContent=page.stats;
+    return;
+  }
   if(page.request!==request||memorySaveId!==saveId)return;
   page.stats=`一级 ${d.counts["1"]} · 二级 ${d.counts["2"]} · 三级 ${d.counts["3"]}（永久）`;
   page.html+=d.items.map(m=>`<div class="mi"><span class="t">[L${m.tier}·D${m.day}·${m.tick}] ${esc(m.selected_by)}${m.tier>1?" · 权重"+m.selection_weight:""}</span><br>${esc(m.content)}</div>`).join("");
