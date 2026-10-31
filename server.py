@@ -370,6 +370,25 @@ class MechanicsUpdate(BaseModel):
     prompt_template: str
 
 
+def _dump_rejected_mechanics(update:MechanicsUpdate,reason:str)->None:
+    """机制保存被拒时把改动落盘留痕——面板关闭后表单即失，此处是唯一的找回途径。"""
+    try:
+        import json as _json, datetime as _dt
+        from pathlib import Path as _Path
+        folder=_Path('data');folder.mkdir(parents=True,exist_ok=True)
+        now=_dt.datetime.now()
+        payload={'time':now.isoformat(timespec='seconds'),'reason':reason,
+                 'hint':'机制面板保存被拒时的完整改动快照；修正拒绝原因后可对照此文件手工恢复',
+                 **update.model_dump()}
+        (folder/f"rejected-mechanics-{now:%Y%m%d-%H%M%S-%f}.json").write_text(
+            _json.dumps(payload,ensure_ascii=False,indent=1),encoding='utf-8')
+        stale=sorted(folder.glob('rejected-mechanics-*.json'))
+        for old in stale[:-20]:      # 只保留最近 20 份
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 @app.put('/api/mechanics')
 async def mechanics_update(update:MechanicsUpdate):
     from engine.mechanics import validate_rules,validate_hours,validate_activities,validate_activity_descriptions
@@ -377,6 +396,7 @@ async def mechanics_update(update:MechanicsUpdate):
     from string import Formatter
     async with _control_lock:
         if sim.running or sim.identity_phase or sim._tick_lock.locked() or (_identity_task and not _identity_task.done()):
+            _dump_rejected_mechanics(update,'模拟运行中只能查看（409）：请先暂停再保存')
             raise HTTPException(409,'模拟运行中只能查看，请先暂停')
         try:
             rules=validate_rules(update.rules);hours=validate_hours(update.hours)
@@ -392,12 +412,15 @@ async def mechanics_update(update:MechanicsUpdate):
             fields={field for _,field,_,_ in Formatter().parse(template) if field}
             if not fields <= allowed or not {'town','menu','memories'} <= fields:
                 raise ValueError('提示词只能使用原有占位符，且必须保留 {town}、{menu}、{memories}')
-        except (ValueError,KeyError) as exc:raise HTTPException(400,str(exc))
+        except (ValueError,KeyError) as exc:
+            _dump_rejected_mechanics(update,f'参数校验失败（400）：{exc}')
+            raise HTTPException(400,str(exc))
         old=(sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template)
         sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=rules,hours,activities,descriptions,overrides,list(disabled),custom,template
         try:save_store().checkpoint(sim,'修改机制')
-        except Exception:
+        except Exception as exc:
             sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=old
+            _dump_rejected_mechanics(update,f'存档写入失败（500）：{exc!r}')
             raise
         sim.record('configuration',{'mechanics':rules,'opening_hours':hours,'activity_config':activities,'activity_descriptions':descriptions,'activity_overrides':overrides,'disabled_activities':list(disabled),'custom_activities':custom,'user_prompt_template':template})
         sim.log('system','机制参数已更新',resident_memory=False)
@@ -413,6 +436,7 @@ async def update_building(code:str,update:BuildingParameters):
     from engine.town_services import validate_parameters
     async with _control_lock:
         if sim.running or sim.identity_phase or sim._tick_lock.locked() or (_identity_task and not _identity_task.done()):
+            _dump_rejected_mechanics(update,'模拟运行中只能查看（409）：请先暂停再保存')
             raise HTTPException(409,'模拟运行中只能查看，请先暂停')
         try:values=validate_parameters(code,update.parameters)
         except ValueError as exc:raise HTTPException(400,str(exc))
