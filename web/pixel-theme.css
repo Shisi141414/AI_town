@@ -68,6 +68,10 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 @media(max-width:500px){.building-dialog{width:94vw;padding:12px;}.building-fields{grid-template-columns:1fr;}}
 .mechanics-dialog{width:min(920px,94vw);max-height:90vh;background:#fff8e9;color:#4d513b;border:4px solid #667b56;box-shadow:10px 10px 0 #353d30;padding:18px}
 .mechanics-dialog::backdrop{background:#18251f99}
+.mechanics-heading-actions,.mechanics-record-toolbar,.mechanics-record-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.mechanics-records-dialog{width:min(640px,92vw)}.mechanics-record-list{display:grid;gap:8px;max-height:60vh;overflow:auto;margin:12px 0}
+.mechanics-record-row{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start;padding:9px;border:1px solid #c8bea0;background:#fffbf1}
+.mechanics-record-row input[type=checkbox]{accent-color:#607e59;margin-top:4px}.mechanics-record-row b{display:block;overflow-wrap:anywhere;font-size:12px}.mechanics-record-row small{display:block;color:#857c66;margin:4px 0 8px;overflow-wrap:anywhere}.mechanics-record-actions .btn{font-size:11px;padding:5px 9px}
 .mechanics-scroll{max-height:68vh;overflow:auto;padding:3px 8px 14px 3px}
 .mechanics-scroll>details{border:1px solid #c8bea0;background:#fffbf1;margin:8px 0;padding:10px}
 .mechanics-scroll>details>summary{font-weight:bold;cursor:pointer;color:#50694a}

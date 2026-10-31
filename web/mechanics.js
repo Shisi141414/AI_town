@@ -123,6 +123,7 @@ async function openMechanics(){
  const locked=mechanicsLocked();
  $('mechanicsDialog').querySelectorAll('input,textarea:not([readonly])').forEach(el=>el.disabled=locked);
  $('saveMechanics').disabled=locked;
+ $('saveMechanicsRecord').disabled=replayMode;
  $('mechanicsHint').textContent=locked?'模拟进行中只能查看；暂停后可修改。':'暂停中可修改。修改后会写入当前存档，新活动使用新参数。';
  if(!$('mechanicsDialog').open)$('mechanicsDialog').showModal();
 }
@@ -169,15 +170,94 @@ $('mechanicsActivities').onchange=e=>{
  if(el.checked)row.places[el.dataset.activityScene]=el.dataset.activityScene==='any'?['here']:[];else delete row.places[el.dataset.activityScene];
  renderActivities();
 };
-$('saveMechanics').onclick=async()=>{
- if(mechanicsLocked())return toast('请先暂停模拟',false);
+function mechanicsPayload(){
  collectActivityFields();
  const payload={rules:structuredClone(mechanicsData.rules),hours:structuredClone(mechanicsData.hours),activities:structuredClone(mechanicsData.activities),activity_catalog:structuredClone(mechanicsData.activity_catalog),prompt_template:$('mechanicsTemplate').value};
  for(const el of $('mechanicsDialog').querySelectorAll('input[data-mechanic]')){
-  if(!el.reportValidity())return;
   const parts=el.dataset.mechanic.split('.');let target=payload;
   for(const part of parts.slice(0,-1))target=target[part];
   target[parts.at(-1)]=Number(el.value);
+ }
+ return payload;
+}
+function mechanicsRawFields(){
+ const fields={};
+ for(const el of $('mechanicsDialog').querySelectorAll('input[data-mechanic], [data-activity-key][data-activity-field]')){
+  const key=el.dataset.mechanic||`activity.${el.dataset.activityKey}.${el.dataset.activityField}`;
+  fields[key]=el.type==='checkbox'?String(el.checked):el.value;
+ }
+ return fields;
+}
+async function createMechanicsRecord(status='draft',reason=''){
+ const record=await jpost('/api/mechanics/records',{payload:mechanicsPayload(),status,reason,raw_fields:mechanicsRawFields()});
+ await showMechanicsRecords();
+ return record;
+}
+function renderMechanicsRecordList(items){
+ $('mechanicsRecordsList').innerHTML=items.map(row=>`<div class="mechanics-record-row" data-id="${esc(row.id)}"><input type="checkbox" class="mechanics-record-select" aria-label="选择记录 ${esc(row.name)}" ${replayMode?'disabled':''}><div><b>${esc(row.name)}</b><small>${row.status==='applied'?'已应用':row.status==='failed'?'未成功':'手动保存'}${row.reason?' · '+esc(row.reason):''}</small><div class="mechanics-record-actions"><button class="btn" data-record-action="open" type="button">打开</button><button class="btn" data-record-action="rename" type="button" ${replayMode?'disabled':''}>重命名</button></div></div></div>`).join('')||'<p class="hint">暂无机制记录</p>';
+ updateMechanicsRecordSelection();
+}
+function selectedMechanicsRecordIds(){return [...$('mechanicsRecordsList').querySelectorAll('.mechanics-record-select:checked')].map(el=>el.closest('[data-id]').dataset.id);}
+function updateMechanicsRecordSelection(){
+ const count=selectedMechanicsRecordIds().length;
+ $('deleteMechanicsRecords').disabled=replayMode||!count;
+ $('deleteMechanicsRecords').textContent=`删除所选（${count}）`;
+}
+async function showMechanicsRecords(){
+ const d=await jget('/api/mechanics/records');renderMechanicsRecordList(d.items);
+ if(!$('mechanicsRecordsDialog').open)$('mechanicsRecordsDialog').showModal();
+}
+function openMechanicsRecord(record){
+ const p=record.payload;
+ mechanicsData.rules=structuredClone(p.rules);mechanicsData.hours=structuredClone(p.hours);
+ mechanicsData.activities=structuredClone(p.activities);
+ if(p.activity_catalog)mechanicsData.activity_catalog=structuredClone(p.activity_catalog);
+ $('mechanicsRules').innerHTML=renderMechanicRules(mechanicsData.rules);
+ $('mechanicsHours').innerHTML=Object.entries(mechanicsData.hours).map(([code,h])=>`<div class="mechanic-hour"><b>${esc(mechanicsData.buildings[code]?.name||code)}</b>${mechanicsField('hours.'+code+'.0','开始（整点）',h[0],1)}${mechanicsField('hours.'+code+'.1','结束（整点）',h[1],1)}</div>`).join('');
+ renderActivities();$('mechanicsTemplate').value=p.prompt_template;
+ for(const el of $('mechanicsDialog').querySelectorAll('input[data-mechanic], [data-activity-key][data-activity-field]')){
+  const key=el.dataset.mechanic||`activity.${el.dataset.activityKey}.${el.dataset.activityField}`;
+  if(Object.hasOwn(record.raw_fields||{},key)){
+   if(el.type==='checkbox')el.checked=record.raw_fields[key]==='true';else el.value=record.raw_fields[key];
+  }
+ }
+ const locked=mechanicsLocked();
+ $('mechanicsDialog').querySelectorAll('input,textarea:not([readonly])').forEach(el=>el.disabled=locked);
+ $('saveMechanics').disabled=locked;
+ $('mechanicsHint').textContent=`已打开“${record.name}”${record.status==='failed'?'（未成功：'+record.reason+'）':''}；当前世界未改变。${locked?'暂停模拟后可修改并应用。':'检查后按“保存机制”应用。'}`;
+ $('mechanicsRecordsDialog').close();
+}
+$('saveMechanicsRecord').onclick=()=>createMechanicsRecord().then(()=>toast('机制记录已保存')).catch(e=>toast(e.message,false));
+$('openMechanicsRecords').onclick=()=>showMechanicsRecords().catch(e=>toast(e.message,false));
+$('closeMechanicsRecords').onclick=()=>$('mechanicsRecordsDialog').close();
+$('mechanicsRecordsList').onchange=updateMechanicsRecordSelection;
+$('selectAllMechanicsRecords').onclick=()=>{$('mechanicsRecordsList').querySelectorAll('.mechanics-record-select:not(:disabled)').forEach(el=>el.checked=true);updateMechanicsRecordSelection();};
+$('clearMechanicsRecords').onclick=()=>{$('mechanicsRecordsList').querySelectorAll('.mechanics-record-select').forEach(el=>el.checked=false);updateMechanicsRecordSelection();};
+$('deleteMechanicsRecords').onclick=async()=>{
+ const ids=selectedMechanicsRecordIds();if(!ids.length||!confirm(`删除所选 ${ids.length} 条机制记录？此操作不可撤销。`))return;
+ try{await jpost('/api/mechanics/records/delete-selected',{ids});await showMechanicsRecords();toast(`已删除 ${ids.length} 条记录`);}catch(e){toast(e.message,false);}
+};
+$('mechanicsRecordsList').onclick=async e=>{
+ const button=e.target.closest('[data-record-action]');if(!button)return;
+ const id=button.closest('[data-id]').dataset.id;
+ try{
+  if(button.dataset.recordAction==='open')openMechanicsRecord(await jget(`/api/mechanics/records/${encodeURIComponent(id)}`));
+  else if(button.dataset.recordAction==='rename'){
+   const row=button.closest('[data-id]'),name=prompt('机制记录名称',row.querySelector('b').textContent);
+   if(name===null)return;
+   await jput(`/api/mechanics/records/${encodeURIComponent(id)}`,{name:name.trim()});await showMechanicsRecords();
+  }
+ }catch(err){toast(err.message,false);}
+};
+$('saveMechanics').onclick=async()=>{
+ if(mechanicsLocked())return toast('请先暂停模拟',false);
+ const payload=mechanicsPayload();
+ for(const el of $('mechanicsDialog').querySelectorAll('input[data-mechanic], input[data-activity-key]')){
+  if(!el.reportValidity()){
+   const reason=`输入无效：${el.getAttribute('aria-label')||el.closest('label')?.textContent?.trim()||el.dataset.mechanic||el.dataset.activityField}`;
+   try{await createMechanicsRecord('failed',reason);}catch(err){toast('记录失败：'+err.message,false);}
+   return;
+  }
  }
  try{await jput('/api/mechanics',payload);await openMechanics();toast('机制已保存');}
  catch(e){toast(e.message,false);}

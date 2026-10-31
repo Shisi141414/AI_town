@@ -248,7 +248,7 @@
         <li><b>模型</b>：API 档案管理（新建/测试/启用）、玩家模型绑定。</li>
         <li><b>设置</b>：系统提示词编辑（保存/恢复默认）、「聊天时生成对白」开关、「生理周期」开关、决策温度与超时、居民数量管理。</li>
         <li><b>存档</b>：保存当前世界（含记忆、对话、进度、提示词与绑定）为存档；点击存档可选「从此处继续」（创建副本）、「回放」（顶部进度条调进度、暂停与倍速）、「重命名」、「收藏」与「删除」。</li>
-        <li><b>⚙ 机制</b>（顶栏）：运行中只读，暂停后可改全部数值规则、营业时间、每项活动的参数与给模型看的描述（可新建自定义活动）等，并可直接预览<b>当前发给模型的完整提示词</b>、编辑用户提示词格式。</li>
+      <li><b>⚙ 机制</b>（顶栏）：运行中只读，暂停后可改数值规则、营业时间、活动参数及提示词。右上角可保存机制记录、打开旧记录或批量删除；应用失败也会留下带原因的记录。</li>
       </ul>
       <h3>游戏机制</h3>
       <p><b>身体状态</b>：生命、饱食、精力、心情四项持续消耗；饱食归零掉血、心情长期低落掉血、疾病发作掉血——每种原因首次扣血时居民会被告知原因。</p>
@@ -276,7 +276,7 @@
   <button class="btn primary" id="saveBuilding">保存参数</button>
 </dialog>
 <dialog id="mechanicsDialog" class="mechanics-dialog">
-  <div class="building-heading"><h3>游戏机制</h3><button class="btn" id="closeMechanics">关闭</button></div>
+  <div class="building-heading"><h3>游戏机制</h3><div class="mechanics-heading-actions"><button class="btn" id="saveMechanicsRecord" type="button">保存记录</button><button class="btn" id="openMechanicsRecords" type="button">记录</button><button class="btn" id="closeMechanics">关闭</button></div></div>
   <p id="mechanicsHint" class="hint"></p>
   <div class="mechanics-scroll">
     <div id="mechanicsRules" class="mechanics-rules"></div>
@@ -296,6 +296,12 @@
     </details>
   </div>
   <button class="btn primary" id="saveMechanics">保存机制</button>
+</dialog>
+<dialog id="mechanicsRecordsDialog" class="mechanics-dialog mechanics-records-dialog">
+  <div class="building-heading"><h3>机制记录</h3><button class="btn" id="closeMechanicsRecords" type="button">关闭</button></div>
+  <p class="hint">打开记录仅载入编辑面板；需按“保存机制”才会应用。未成功的记录会注明原因。</p>
+  <div class="mechanics-record-toolbar"><button class="btn" id="selectAllMechanicsRecords" type="button">全选</button><button class="btn" id="clearMechanicsRecords" type="button">取消选择</button><button class="btn warn" id="deleteMechanicsRecords" type="button" disabled>删除所选（0）</button></div>
+  <div id="mechanicsRecordsList" class="mechanics-record-list"></div>
 </dialog>
 <div id="toast"></div>
 

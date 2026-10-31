@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import server
@@ -33,11 +35,13 @@ class RejectedMechanicsDumpTests(unittest.TestCase):
             old = os.getcwd(); os.chdir(tmp)
             try:
                 bad = self.template + ' {not_allowed_field}'
-                r = self._put(template=bad)
+                with patch.object(server, 'CONFIG_PATH', Path(tmp)/'config.json'):
+                    r = self._put(template=bad)
                 self.assertEqual(r.status_code, 400)
                 files = glob.glob('data/rejected-mechanics-*.json')
                 self.assertEqual(len(files), 1)
-                snap = json.load(open(files[0], encoding='utf-8'))
+                with open(files[0], encoding='utf-8') as source:
+                    snap = json.load(source)
                 self.assertIn('占位符', snap['reason'])
                 self.assertEqual(snap['prompt_template'], bad)   # 完整改动快照可找回
                 self.assertIn('rules', snap)
@@ -50,13 +54,15 @@ class RejectedMechanicsDumpTests(unittest.TestCase):
             old = os.getcwd(); os.chdir(tmp)
             try:
                 from engine.models import Settings
-                for i in range(23):
-                    server._dump_rejected_mechanics(
-                        server.MechanicsUpdate(rules={}, hours={}, activities={},
-                                               prompt_template=f'v{i}'), f'原因{i}')
+                with patch.object(server, 'CONFIG_PATH', Path(tmp)/'config.json'):
+                    for i in range(23):
+                        server._dump_rejected_mechanics(
+                            server.MechanicsUpdate(rules={}, hours={}, activities={},
+                                                   prompt_template=f'v{i}'), f'原因{i}')
                 files = sorted(glob.glob('data/rejected-mechanics-*.json'))
                 self.assertEqual(len(files), 20)
-                first = json.load(open(files[0], encoding='utf-8'))
+                with open(files[0], encoding='utf-8') as source:
+                    first = json.load(source)
                 self.assertEqual(first['prompt_template'], 'v3')   # v0~v2 已被清理
             finally:
                 os.chdir(old)

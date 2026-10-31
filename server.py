@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from engine import brain, world
 from engine.recording import recordings, read_frame
 from engine.saves import SaveStore
+from engine.mechanics_records import MechanicsRecords
 from engine import simulation as sim_mod
 from engine.llm import LLMError, test_profile
 from engine.models import ApiProfile, AppConfig, Settings, Vehicle
@@ -132,6 +133,10 @@ def _sync_from_config() -> None:
 
 def save_store():
     return SaveStore(CONFIG_PATH.parent / "data" / "saves")
+
+
+def mechanics_records():
+    return MechanicsRecords(CONFIG_PATH.parent / "data" / "mechanics-records")
 
 
 def apply_saved_context(data):
@@ -389,8 +394,7 @@ def _dump_rejected_mechanics(update:MechanicsUpdate,reason:str)->None:
     """机制保存被拒时把改动落盘留痕——面板关闭后表单即失，此处是唯一的找回途径。"""
     try:
         import json as _json, datetime as _dt
-        from pathlib import Path as _Path
-        folder=_Path('data');folder.mkdir(parents=True,exist_ok=True)
+        folder=CONFIG_PATH.parent/'data';folder.mkdir(parents=True,exist_ok=True)
         now=_dt.datetime.now()
         payload={'time':now.isoformat(timespec='seconds'),'reason':reason,
                  'hint':'机制面板保存被拒时的完整改动快照；修正拒绝原因后可对照此文件手工恢复',
@@ -411,7 +415,9 @@ async def mechanics_update(update:MechanicsUpdate):
     from string import Formatter
     async with _control_lock:
         if sim.running or sim.identity_phase or sim._tick_lock.locked() or (_identity_task and not _identity_task.done()):
-            _dump_rejected_mechanics(update,'模拟运行中只能查看（409）：请先暂停再保存')
+            reason='模拟运行中只能查看（409）：请先暂停再保存'
+            _dump_rejected_mechanics(update,reason)
+            mechanics_records().create(update.model_dump(),'failed',reason)
             raise HTTPException(409,'模拟运行中只能查看，请先暂停')
         try:
             rules=validate_rules(update.rules);hours=validate_hours(update.hours)
@@ -428,18 +434,73 @@ async def mechanics_update(update:MechanicsUpdate):
             if not fields <= allowed or not {'town','menu','memories'} <= fields:
                 raise ValueError('提示词只能使用原有占位符，且必须保留 {town}、{menu}、{memories}')
         except (ValueError,KeyError) as exc:
-            _dump_rejected_mechanics(update,f'参数校验失败（400）：{exc}')
+            reason=f'参数校验失败（400）：{exc}'
+            _dump_rejected_mechanics(update,reason)
+            mechanics_records().create(update.model_dump(),'failed',reason)
             raise HTTPException(400,str(exc))
         old=(sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template)
         sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=rules,hours,activities,descriptions,overrides,list(disabled),custom,template
         try:save_store().checkpoint(sim,'修改机制')
         except Exception as exc:
             sim.mechanics,sim.opening_hours,sim.activity_config,sim.activity_descriptions,sim.activity_overrides,sim.disabled_activities,sim.custom_activities,sim.user_prompt_template=old
-            _dump_rejected_mechanics(update,f'存档写入失败（500）：{exc!r}')
+            reason=f'存档写入失败（500）：{exc!r}'
+            _dump_rejected_mechanics(update,reason)
+            mechanics_records().create(update.model_dump(),'failed',reason)
             raise
+        try:mechanics_records().create(update.model_dump(),'applied')
+        except OSError:pass   # 机制已应用、存档已落盘：记录失败不影响保存结果
         sim.record('configuration',{'mechanics':rules,'opening_hours':hours,'activity_config':activities,'activity_descriptions':descriptions,'activity_overrides':overrides,'disabled_activities':list(disabled),'custom_activities':custom,'user_prompt_template':template})
         sim.log('system','机制参数已更新',resident_memory=False)
         return {'ok':True}
+
+
+class MechanicsRecordCreate(BaseModel):
+    payload: MechanicsUpdate
+    status: Literal['draft','failed'] = 'draft'
+    reason: str = Field(default='',max_length=500)
+    raw_fields: dict[str,str] = Field(default_factory=dict)
+
+
+@app.get('/api/mechanics/records')
+async def list_mechanics_records():
+    return {'items':mechanics_records().listing()}
+
+
+@app.post('/api/mechanics/records')
+async def create_mechanics_record(request:MechanicsRecordCreate):
+    async with _control_lock:
+        return mechanics_records().create(request.payload.model_dump(),request.status,
+                                          request.reason,request.raw_fields)
+
+
+@app.get('/api/mechanics/records/{record_id}')
+async def read_mechanics_record(record_id:str):
+    try:return mechanics_records().read(record_id)
+    except (ValueError,FileNotFoundError):raise HTTPException(404,'机制记录不存在')
+
+
+class MechanicsRecordRename(BaseModel):
+    name: str = Field(min_length=1,max_length=160)
+
+
+@app.put('/api/mechanics/records/{record_id}')
+async def rename_mechanics_record(record_id:str,request:MechanicsRecordRename):
+    async with _control_lock:
+        try:return mechanics_records().rename(record_id,request.name)
+        except FileNotFoundError:raise HTTPException(404,'机制记录不存在')
+        except ValueError as exc:raise HTTPException(400,str(exc))
+
+
+class MechanicsRecordDelete(BaseModel):
+    ids: list[str] = Field(min_length=1,max_length=500)
+
+
+@app.post('/api/mechanics/records/delete-selected')
+async def delete_mechanics_records(request:MechanicsRecordDelete):
+    async with _control_lock:
+        try:return {'deleted':mechanics_records().delete_many(request.ids)}
+        except FileNotFoundError:raise HTTPException(404,'有记录已不存在，请刷新后重试')
+        except ValueError as exc:raise HTTPException(400,str(exc))
 
 
 class BuildingParameters(BaseModel):
