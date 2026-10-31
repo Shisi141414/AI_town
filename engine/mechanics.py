@@ -28,6 +28,7 @@ DEFAULT_RULES = {
     'negative_mood_at_threshold': 2, 'negative_mood_at_0': 5,
     # ---- 急救与住院 ----
     'meal_block_satiety': 95.0,        # 饱食高于此值不能吃饭/送饭
+    'hunger_alert_satiety': 10.0,      # 饱食低于此值：预警提醒、饿醒并禁止入睡
     'meal_shelf_life_ticks': 36,       # 饭菜保质期（刻）＝6小时，过期自动消失
     'hospital_trigger_hp': 10.0,      # 生命低于此值触发紧急送医
     'hospital_cost': 300.0,           # 急救费；资产不足需向室友借钱补齐

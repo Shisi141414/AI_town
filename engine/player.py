@@ -52,6 +52,7 @@ class Player:
         self.interaction_resume = False
         self.service_completed = False
         self.dining_tick = -1
+        self._hunger_alerted = False             # 饥饿预警去重（吃饱后重置）
         self._suspended_activity = None     # 被中断活动的剩余进度（同key继续时恢复）
         self._period_hp_at = -1             # 本刻生理期失血标记（归因用）
         self.work_paid = 0.0
@@ -299,6 +300,12 @@ class Player:
             cap = sim.mechanics.get('meal_block_satiety', 95.0)
             self._rejection = f'我吃得很饱（饱食{self.stats.satiety:.0f}，达到{cap:.0f}上限），等饿了再吃'
             self.remember('我吃得很饱，暂时吃不下饭', 3)
+            return False
+        if key == 'sleep' and self.stats.satiety < sim.mechanics.get('hunger_alert_satiety', 10.0):
+            # 饿到睡不着：先去吃饭，别饿着肚子入睡
+            cap = sim.mechanics.get('hunger_alert_satiety', 10.0)
+            self._rejection = f'太饿了睡不着（饱食{self.stats.satiety:.0f}，低于{cap:.0f}），去吃点东西再睡吧'
+            self.remember('肚子饿得咕咕叫，躺着翻来覆去睡不着，还是先吃点东西', 5)
             return False
         if key == 'cook':
             meals = act.cook_meal_output(self.requested_duration)
@@ -1116,6 +1123,21 @@ class Player:
         else:
             # 饱食离开 0：饥饿伤害结束，解除打断标记
             sim.clear_injury_break(self, 'starvation')
+        # 饥饿预警（默认饱食<10）：不等扣血就唤醒；饿醒正在睡觉的人
+        threshold = sim.mechanics.get('hunger_alert_satiety', 10.0)
+        if self.stats.satiety < threshold:
+            if self.state == 'doing' and self.activity_key == 'sleep':
+                sim._cancel_timed_action(self)
+                self.info_feedback = '太饿了睡不着，去吃点东西再睡吧'
+                self.remember('睡到一半饿醒了，肚子空得发慌，得先去吃点东西', 6)
+                sim.log('activity', f'🍜 {self.name}饿醒了（饱食{self.stats.satiety:.0f}），先去吃饭', [self.pid])
+            elif not getattr(self, '_hunger_alerted', False):
+                self._hunger_alerted = True
+                self.injury_alert = (f'很饿了（饱食{self.stats.satiety:.0f}/100），'
+                                     '尽快吃饭——吃随身饭菜、在家做饭、下馆子或请室友送饭')
+                self.remember('我饿得发慌，得赶紧吃点东西', 5)
+        elif self.stats.satiety > threshold + 20:
+            self._hunger_alerted = False
         if self.stats.satiety > sim.mechanics['high_satiety_hp_threshold']:
             self.stats.hp = min(100.0, self.stats.hp + sim.mechanics['high_satiety_hp_gain'])
         mood_delta = 0.0

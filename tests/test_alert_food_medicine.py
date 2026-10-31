@@ -209,3 +209,61 @@ class AlertFoodMedicineTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class HungerWakeTests(unittest.TestCase):
+    """饥饿预警：饱食<10 禁止入睡、饿醒睡眠、预警只提醒一次。"""
+
+    def setUp(self):
+        from engine.simulation import Simulation
+        self.sim = Simulation()
+        self.sim.spawn_players(1)
+        self.p = self.sim.players[0]
+
+    def test_sleep_blocked_when_starving(self):
+        self.p.stats.satiety = 9.0
+        ok = self.p.begin_activity('sleep', self.sim)
+        self.assertFalse(ok)
+        self.assertIn('太饿了睡不着', self.p._rejection)
+
+    def test_sleeping_player_wakes_up_hungry(self):
+        p = self.p
+        p.scene, p.x, p.y = 'house', 4, 4          # 卧室床位附近
+        p.stats.satiety = 40.0
+        p.state = 'idle'
+        self.assertTrue(p.begin_activity('sleep', self.sim) or p._pending_key == 'sleep')
+        for _ in range(30):
+            p.tick(self.sim)
+            if p.state == 'doing':
+                break
+        self.assertEqual(p.state, 'doing')
+        left0 = p.activity_left
+        p.stats.satiety = 8.0                       # 睡眠中饿到阈值以下
+        p.passive_drain(self.sim)
+        self.assertEqual(p.state, 'idle')           # 饿醒
+        self.assertIn('太饿了睡不着', p.info_feedback)
+        self.assertEqual(p._suspended_activity['key'], 'sleep')   # 进度挂起可续睡
+        self.assertEqual(p._suspended_activity['left'], left0)
+
+    def test_alert_fires_once_until_refed(self):
+        p = self.p
+        p.stats.satiety = 8.0
+        p.state = 'idle'
+        p.passive_drain(self.sim)
+        first = p.injury_alert
+        self.assertIn('很饿', first)
+        p.injury_alert = ''
+        p.passive_drain(self.sim)                   # 仍然饿：不重复提醒
+        self.assertEqual(p.injury_alert, '')
+        p.stats.satiety = 45.0                      # 吃饱：重置
+        p.passive_drain(self.sim)
+        p.stats.satiety = 7.0                       # 再饿：重新提醒
+        p.passive_drain(self.sim)
+        self.assertIn('很饿', p.injury_alert)
+
+    def test_threshold_is_tunable(self):
+        self.sim.mechanics['hunger_alert_satiety'] = 20.0
+        self.p.stats.satiety = 15.0
+        ok = self.p.begin_activity('sleep', self.sim)
+        self.assertFalse(ok)
+        self.assertIn('低于20', self.p._rejection)
