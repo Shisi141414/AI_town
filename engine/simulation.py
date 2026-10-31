@@ -113,7 +113,7 @@ class Simulation:
             "decor_common":self.decor_common,"meal_until":self.meal_until,
             "fridge":{"ingredient":self.fridge.get('ingredient',0),"meals":len(self.fridge.get('meals',[]))},
             "town_config":self.town_config,"market_price":self.market_price,"stocks":{k:dict(v) for k,v in self.stocks.items()},"shop_products":shop_catalog(self),
-            "players":[p.snapshot(names).model_dump() for p in self.players],
+            "players":[p.snapshot(names,self).model_dump() for p in self.players],
             "vehicles":[v.model_dump() for v in self.vehicles],
             "maps":{scene:["".join(row) for row in world.grid(scene)] for scene in ("house","town")},
             "execution":[{"pid":p.pid,"path":p.path,"pending":p._pending_key,

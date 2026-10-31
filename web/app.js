@@ -1,5 +1,7 @@
 "use strict";
 let replayMode=false, replayTimer=null, replayId="", replayIndex=0, replayTotal=0, replayRequest=0, replayPlayVersion=0, replaySource="replay", replayCanContinue=false;
+const replaySpeeds=[1,2,4,8];
+let replaySpeed=1;
 /* ================= 工具 ================= */
 const $ = id => document.getElementById(id);
 const API = "/api";
@@ -95,7 +97,7 @@ function renderPlayers() {
     const doing = p.activity
       ? `<div class="doing">${esc(p.activity_emoji)} 正在<b>${esc(p.activity)}</b> · 剩余${p.activity_minutes_left||0}分钟${p.target_name ? " → " + esc(p.target_name) : ""}</div>`
       : p.hospitalized
-      ? `<div class="doing">🏥 住院治疗中 · 房费100元/半天（生命+20 心情+15）</div>`
+      ? `<div class="doing">🏥 住院治疗中 · 费用与恢复按当前机制结算</div>`
       : p.awaiting_admission
       ? `<div class="doing">📞 正在向室友借钱凑急救费…</div>`
       : `<div class="doing">💭 ${p.state === "riding" ? "搭乘室友的汽车" : p.state === "moving" ? "前往目的地 · " + esc(({walk:"步行",bicycle:"骑行",car:"驾车",passenger:"乘车"})[p.transport]||"步行") : ["deciding","waiting_model"].includes(p.state) ? esc(p.decision_status||"等待模型回复…") : esc(p.plan || "休息片刻")}</div>`;
@@ -103,6 +105,8 @@ function renderPlayers() {
     return `<div class="pcard ${p.pid === selectedPid ? "selected" : ""}" data-pid="${esc(p.pid)}">
       <div class="head"><span class="dot" style="background:${p.color}"></span><b>${esc(p.emoji)} ${esc(p.name)}</b><span class="model" title="${esc(p.model||"未绑定模型，使用规则模式")}">${p.model ? esc(p.model) : "规则模式"}</span><span class="tag">${esc(p.gender || "男")}</span></div>
       ${bars}${doing}
+      ${(p.relationships||[]).length?`<div class="hint resident-relations">💞 ${p.relationships.map(r=>`${esc(r.name)} · ${esc(r.type)}（第${r.days}天）`).join('　')}</div>`:''}
+      ${p.cycle_status?`<details class="resident-cycle" data-open-key="cycle-${esc(p.pid)}" ${opened.has('cycle-'+p.pid)?'open':''}><summary>身体节律 · ${esc(p.cycle_status.split('：')[0])}</summary><p>${esc(p.cycle_status)}</p></details>`:''}
       <div class="hint resident-skills">📚 ${Object.entries(p.skills||{}).filter(([,v])=>v>0).map(([k,v])=>esc(({computer:'计算机',science:'理学',literature:'文学',medicine:'医学',economics:'经济学',cooking:'烹饪'})[k]||k)+' '+Math.min(5,Math.floor(v/100))+'级 ('+Number(v.toFixed(2))+'/500)').join(' · ')||'尚未学习技能'}</div>
       <div class="hint">📈 小镇股市：${Object.entries(stocks).map(([k,r])=>esc(r.name)+' '+Number(r.price).toFixed(2)).join('｜')||('指数 '+marketPrice.toFixed(2))}${(()=>{const port=Object.entries(p.stock_portfolio||{}).filter(([,v])=>v.shares>0);return port.length?'<br>持仓：'+port.map(([k,v])=>esc((stocks[k]||{}).name||k)+'×'+v.shares+'份(成本'+Number(v.cost).toFixed(2)+')').join('，'):'';})()}</div>
       <details class="resident-computer" data-open-key="computer-${esc(p.pid)}" ${opened.has('computer-'+p.pid)?'open':''}><summary>💻 ${esc(p.name)}的电脑 · ${(p.computer_files||[]).length}篇记录 <small>只读</small></summary>
@@ -119,10 +123,24 @@ function renderPlayers() {
 }
 
 /* ================= 关系网络 ================= */
+function renderActiveRelationships(nodes){
+  const found=new Map();
+  for(const person of nodes)for(const relation of person.relationships||[]){
+    const other=nodes.find(p=>p.pid===relation.other_pid||!relation.other_pid&&p.name===relation.name);
+    const pair=[person.pid,other?.pid||relation.other_pid||relation.name].sort().join('|');
+    if(!found.has(pair))found.set(pair,{person,otherName:other?.name||relation.name,
+      type:relation.type,days:relation.days});
+  }
+  $('activeRelationsTitle').textContent=`当前关系 · ${found.size}段`;
+  const records=[...found.values()];
+  $('activeRelations').innerHTML=records.length?records.map(r=>`<div class="active-relation ${r.type==='恋爱'?'love':'friend'}"><span class="relation-icon">${r.type==='恋爱'?'♥':'✦'}</span><div><b>${esc(r.person.name)} 与 ${esc(r.otherName)}</b><small>${esc(r.type)} · 第${Number(r.days)||1}天</small></div></div>`).join(''):
+    `<p class="hint">${nodes.length&&nodes.every(p=>!Object.hasOwn(p,'relationships'))?'此回放帧未记录正式关系':'暂无已建立的关系'}</p>`;
+}
 function drawRelations() {
   const c = $("relCanvas"), g = c.getContext("2d");
   g.clearRect(0, 0, c.width, c.height);
   const nodes = players, n = nodes.length;
+  renderActiveRelationships(nodes);
   if (!n) return;
   const cx = c.width/2, cy = c.height/2, R = Math.min(cx, cy) - 52;
   const pos = nodes.map((_, i) => {
@@ -162,7 +180,8 @@ function drawRelations() {
   for (let i = 0; i < n; i++) for (let j = i+1; j < n; j++) {
     const ab = nodes[i].affinity[nodes[j].name], ba = nodes[j].affinity[nodes[i].name];
     if (ab === undefined && ba === undefined) continue;
-    rows.push(`<div class="ev"><span class="meta"></span>${esc(nodes[i].name)} ⇄ ${esc(nodes[j].name)}：
+    const established=(nodes[i].relationships||[]).find(r=>r.name===nodes[j].name);
+    rows.push(`<div class="ev"><span class="meta"></span>${esc(nodes[i].name)} ⇄ ${esc(nodes[j].name)}${established?` · ${esc(established.type)}第${established.days}天`:''}：
       ${ab!==undefined ? ab.toFixed(0) : "?"} / ${ba!==undefined ? ba.toFixed(0) : "?"}</div>`);
   }
   $("relList").innerHTML = rows.join("") || '<div class="hint">还没有人际互动</div>';
@@ -726,7 +745,7 @@ async function openReplay(id,source='replay'){
   stopReplay();
   if(!replayMode)await jpost(`${API}/control`,{cmd:"pause"});
   replayId=id;replaySource=source;replayMode=true;replayLocks(true);$("replayControls").hidden=false;
-  await showReplayFrame(0);$("replayControls").scrollIntoView({block:'nearest'});
+  await showReplayFrame(0);
 }
 function stopReplay(){replayPlayVersion++;clearTimeout(replayTimer);replayTimer=null;$("btnPlayReplay").textContent="▶ 播放";}
 function replayLocks(active){
@@ -762,19 +781,24 @@ $("btnContinueReplay").onclick=async()=>{
 };
 $("replaySeek").oninput=()=>{stopReplay();showReplayFrame(+$("replaySeek").value);};
 $("btnStepReplay").onclick=()=>{stopReplay();showReplayFrame(Math.min(replayTotal-1,replayIndex+1));};
+$("btnReplaySpeed").onclick=()=>{
+  replaySpeed=replaySpeeds[(replaySpeeds.indexOf(replaySpeed)+1)%replaySpeeds.length];
+  $("btnReplaySpeed").textContent=`${replaySpeed}× 倍速`;
+  if(replayTimer){clearTimeout(replayTimer);replayTimer=setTimeout(()=>advanceReplay(replayPlayVersion).catch(e=>{stopReplay();toast(e.message,false);}),Math.max(40,500/replaySpeed));}
+};
+async function advanceReplay(version){
+  if(version!==replayPlayVersion)return;
+  if(!replayMode||replayIndex>=replayTotal-1){stopReplay();return;}
+  await showReplayFrame(replayIndex+1);
+  if(version!==replayPlayVersion)return;
+  if(replayIndex<replayTotal-1)replayTimer=setTimeout(()=>advanceReplay(version).catch(e=>{stopReplay();toast(e.message,false);}),Math.max(40,500/replaySpeed));
+}
 $("btnPlayReplay").onclick=async()=>{
   if(replayTimer){stopReplay();return;}
   if(replayIndex>=replayTotal-1)await showReplayFrame(0);
   $("btnPlayReplay").textContent="⏸ 暂停回放";
   const version=++replayPlayVersion;
-  async function advance(){
-    if(version!==replayPlayVersion)return;
-    if(!replayMode||replayIndex>=replayTotal-1){stopReplay();return;}
-    await showReplayFrame(replayIndex+1);
-    if(version!==replayPlayVersion)return;
-    if(replayIndex<replayTotal-1)replayTimer=setTimeout(()=>advance().catch(e=>{stopReplay();toast(e.message,false);}),500);
-  }
-  replayTimer=setTimeout(()=>advance().catch(e=>{stopReplay();toast(e.message,false);}),500);
+  replayTimer=setTimeout(()=>advanceReplay(version).catch(e=>{stopReplay();toast(e.message,false);}),Math.max(40,500/replaySpeed));
 };
 $("btnExitReplay").onclick=async()=>{
   stopReplay();replayMode=false;replayRequest++;replayLocks(false);$("replayControls").hidden=true;

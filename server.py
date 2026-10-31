@@ -285,7 +285,7 @@ async def state():
         "identity_phase": sim.identity_phase,
         "town_config":sim.town_config,"market_price":sim.market_price,
         "decor_common": sim.decor_common,
-        "players": [p.snapshot(name_of).model_dump() for p in sim.players],
+        "players": [p.snapshot(name_of,sim).model_dump() for p in sim.players],
         "vehicles": [v.model_dump() for v in sim.vehicles],
         "active_profile": (sim.profile.name if sim.profile else None),
         "llm_mode": bool(sim.profile and sim.profile.api_key),
@@ -728,7 +728,7 @@ async def player_travel(pid: str, travel: TravelIn):
         sim.set_travel_mode(p, travel.mode)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-    return p.snapshot().model_dump()
+    return p.snapshot({o.pid:o.name for o in sim.players},sim).model_dump()
 
 
 @app.post("/api/players/{pid}/car")
@@ -772,7 +772,7 @@ async def add_player(p_in: PlayerIn):
         p = sim.add_player_manual(p_in.name, p_in.color, p_in.emoji, join_identity=p_in.join_identity)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return p.snapshot().model_dump()
+    return p.snapshot({o.pid:o.name for o in sim.players},sim).model_dump()
 
 
 @app.delete("/api/players/{name}")
@@ -995,7 +995,7 @@ async def tick_broadcaster() -> None:
                 "identity_phase": sim.identity_phase,
                 "town_config":sim.town_config,"market_price":sim.market_price,
                 "decor_common": sim.decor_common,
-                "players": [p.snapshot(name_of).model_dump() for p in sim.players],
+                "players": [p.snapshot(name_of,sim).model_dump() for p in sim.players],
                 "vehicles": [v.model_dump() for v in sim.vehicles],
                 "events": new_events,
                 "maps": {scene: ["".join(row) for row in world.grid(scene)] for scene in ("house", "town")},

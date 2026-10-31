@@ -147,7 +147,7 @@ def nearby_description(nearby: list) -> str:
 
 
 def build_user_prompt(p, nearby: list, clock: str, decor_common: float = 0.0) -> str:
-    aff = "、".join(f"{getattr(p, 'known_names', {}).get(name, name)}{v:.0f}" for name, v in
+    aff = "、".join(f"{getattr(p, 'known_names', {}).get(name, name)}{v:.0f}/100" for name, v in
                     sorted(p.affinity.items(), key=lambda kv: -kv[1])[:6]) or "（还不认识谁）"
     nearby_s = nearby_description(nearby)
     roommates_s = '、'.join(f'{name}（{gender}）' for name,gender in getattr(p,'known_roommates',[])) or '（暂无）'

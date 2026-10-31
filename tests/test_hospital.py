@@ -32,6 +32,9 @@ class EmergencyTests(unittest.TestCase):
             p.stats.money = 0.0
             p.illness_severity = 0
         self.a = self.sim.players[0]
+        # 周期锚点随机相位会改变消耗倍率，数值断言需重置回基线
+        for _p in self.sim.players:
+            _p.cycle_anchor = 0
 
     def test_hp_threshold_triggers_admission_with_cash(self):
         # 现金足够：直接收治（收急救费；首半天房费在72刻后的结算再收）

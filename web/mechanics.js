@@ -17,10 +17,10 @@ Object.assign(mechanicLabels,{
  post_hospital_energy:'出院精力下限',post_hospital_mood:'出院心情下限'
 });
 const mechanicGroups=[
- ['饱食与生命',['base_satiety_drain','high_satiety_hp_threshold','high_satiety_hp_gain','starvation_hp_loss','low_mood_threshold','low_mood_delay_ticks','low_mood_hp_loss']],
+ ['饱食、饭菜与生命',['base_satiety_drain','meal_block_satiety','meal_shelf_life_ticks','high_satiety_hp_threshold','high_satiety_hp_gain','starvation_hp_loss','low_mood_threshold','low_mood_delay_ticks','low_mood_hp_loss']],
  ['精力与心情',['base_energy_regen','base_mood_drain','illness_mood_drain','low_energy_threshold','low_energy_mood_per_point','work_mood_per_hour','study_mood_per_hour','decor_mood_per_200']],
  ['室友关系带来的心情变化',['positive_affinity_threshold','positive_mood_at_threshold','positive_mood_at_80','negative_affinity_threshold','negative_mood_at_threshold','negative_mood_at_0','affinity_decisions_per_tick']],
- ['电话与社交费用',['phone_fee_per_tick']],
+ ['电话与对话',['phone_fee_per_tick','dialogue_energy_per_round']],
  ['室外出行',['walk_speed','bicycle_speed','car_speed','walk_satiety_per_tile','bicycle_satiety_per_tile','walk_energy_per_tile','bicycle_energy_per_tile','car_energy_per_tile','car_fuel_per_tick']],
  ['疾病、文学与随机事件',['disease_daily_chance','disease_worsen_chance','disease_hp_loss_mild','disease_hp_loss_moderate','disease_hp_loss_severe','disease_energy_loss_per_level','affinity_daily_chance','literature_mood_chance_per_level','literature_mood_bonus']],
  ['急救与住院',['hospital_trigger_hp','hospital_cost','hospital_fee_halfday','hospital_heal_multiplier','hospital_mood_gain','post_hospital_hp','post_hospital_satiety','post_hospital_energy','post_hospital_mood']]
@@ -38,12 +38,12 @@ function renderMechanicRules(rules){
 }
 function mechanicsField(path,label,value,step=.01){return `<label>${esc(label)}<input type="number" data-mechanic="${esc(path)}" value="${value}" step="${step}" aria-label="${esc(label)}"></label>`;}
 const activityStatNames={hp:'生命',satiety:'饱食',energy:'精力',mood:'心情',money:'金钱'};
-const activityLocations={here:'原地',own_computer:'自己的电脑',own_bedroom:'自己的卧室',house_common:'室内公共区',house_patient:'病人旁',near_player:'目标角色旁','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣机','house:h':'卧室'};
+const activityLocations={own_computer:'自己的电脑',own_bedroom:'自己的卧室',house_common:'室内公共区','house:K':'厨房','house:D':'餐厅','house:L':'客厅','house:a':'阳台','house:b':'浴室','house:w':'洗衣机','house:h':'卧室'};
 function activityLocationChoices(scene,current=[]){
  const options={...activityLocations};
  for(const [code,b] of Object.entries(mechanicsData.buildings))options['town:'+code]=b.name;
- const choices=Object.entries(options).filter(([value])=>value==='here'||value==='near_player'||(scene==='house'&&value.startsWith('house:'))||(scene==='house'&&['own_computer','own_bedroom','house_common','house_patient'].includes(value))||(scene==='town'&&value.startsWith('town:')));
- for(const value of current)if(!choices.some(([item])=>item===value))choices.push([value,value]);
+ const choices=Object.entries(options).filter(([value])=>(scene==='house'&&value.startsWith('house:'))||(scene==='house'&&['own_computer','own_bedroom','house_common'].includes(value))||(scene==='town'&&value.startsWith('town:')));
+ for(const value of current)if(!['here','near_player','house_patient'].includes(value)&&!choices.some(([item])=>item===value))choices.push([value,value]);
  return choices;
 }
 function activityInput(key,field,label,value,type='text',step=''){
@@ -61,22 +61,38 @@ function collectActivityFields(){
   const box=[...$('mechanicsActivities').querySelectorAll('[data-activity-scene]')].filter(el=>el.dataset.activityKey===key);
   if(!box.length)continue;
   row.places={};
+  row.place_join=$('mechanicsActivities').querySelector(`[data-place-join="${key}"]`)?.dataset.joinValue||'or';
+  row.position_options=[...$('mechanicsActivities').querySelectorAll('[data-position-option]')].filter(el=>el.dataset.activityKey===key&&el.checked).map(el=>el.dataset.positionOption);
   for(const sceneBox of box.filter(el=>el.checked)){
    const scene=sceneBox.dataset.activityScene;
-   row.places[scene]=[...$('mechanicsActivities').querySelectorAll('[data-activity-location]')].filter(el=>el.dataset.activityKey===key&&el.dataset.activityLocationScene===scene&&el.checked).map(el=>el.dataset.activityLocation);
+   const concrete=[...$('mechanicsActivities').querySelectorAll('[data-activity-location]')].filter(el=>el.dataset.activityKey===key&&el.dataset.activityLocationScene===scene&&el.checked).map(el=>el.dataset.activityLocation);
+   if(scene==='any')concrete.push('here');
+   if(row.place_join==='or'&&scene!=='any')for(const option of row.position_options)concrete.push(option==='near_player'&&key==='home_treat'&&scene==='house'?'house_patient':option);
+   row.places[scene]=concrete;
   }
+  if(row.position_options.includes('near_player')&&row.target_mode==='none')row.target_mode='optional';
+  if(row.place_join==='and'&&row.position_options.length===1&&row.position_options[0]==='near_player')row.target_mode='required';
  }
 }
 function renderActivities(){
  const locked=mechanicsLocked();
+ const open=new Set([...$('mechanicsActivities').querySelectorAll('details.building-service[open]')].map(el=>el.dataset.activityRow));
  $('mechanicsActivities').innerHTML=Object.entries(mechanicsData.activity_catalog).map(([key,row])=>{
   const places=row.places||{[row.scene]:[row.location]};
   const sceneLabel=Object.keys(places).map(scene=>({house:'室内',town:'室外',any:'任意'}[scene])).join('、');
-  const locationControl=Object.entries({house:'室内',town:'室外',any:'任意'}).map(([scene,label])=>`<div class="mechanics-place-group"><label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-activity-scene="${scene}" ${places[scene]?'checked':''}>${label}</label>${places[scene]?`<div class="mechanics-place-options">${activityLocationChoices(scene,places[scene]).map(([value,name])=>`<label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-activity-location="${esc(value)}" data-activity-location-scene="${scene}" ${(places[scene]||[]).includes(value)?'checked':''}>${esc(name)}</label>`).join('')}</div>`:''}</div>`).join('');
+  const positionOptions=row.position_options||[...new Set(Object.values(places).flat().map(loc=>loc==='house_patient'?'near_player':loc).filter(loc=>['near_player','here'].includes(loc)))];
+  const sceneChecks=Object.entries({house:'室内',town:'室外',any:'任意'}).map(([scene,label])=>`<label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-activity-scene="${scene}" ${places[scene]?'checked':''}>${label}</label>`).join('');
+  const locationMenus=['house','town'].filter(scene=>places[scene]).map(scene=>{
+   const chosen=places[scene].filter(loc=>!['here','near_player','house_patient'].includes(loc));
+   const title=scene==='house'?'室内地点':'室外地点';
+   return `<details class="mechanics-place-menu"><summary>${title}：${chosen.length?`已选 ${chosen.length} 处`:'请选择'}</summary><div class="mechanics-place-options">${activityLocationChoices(scene,chosen).map(([value,name])=>`<label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-activity-location="${esc(value)}" data-activity-location-scene="${scene}" ${chosen.includes(value)?'checked':''}>${esc(name)}</label>`).join('')}</div></details>`;
+  }).join('');
+  const join=row.place_join||'or';
+  const locationControl=`<div class="mechanics-places"><b>活动类别与地点</b><div class="mechanics-place-scenes">${sceneChecks}</div><div class="mechanics-place-selects">${locationMenus}${places.any?'<span class="mechanics-any-note">任意地点，无需选择具体地点</span>':''}</div><div class="mechanics-place-condition"><button class="btn mechanics-join" type="button" data-place-join="${esc(key)}" data-join-value="${join}" aria-label="具体地点与独立条件的连接方式：${join==='and'?'且':'或'}">${join==='and'?'且':'或'}</button><label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-position-option="near_player" ${positionOptions.includes('near_player')?'checked':''}>目标角色旁</label><label class="mechanics-check"><input type="checkbox" data-activity-key="${esc(key)}" data-position-option="here" ${positionOptions.includes('here')?'checked':''}>原地</label></div><small>“或”表示满足其中一项即可；“且”表示具体地点和独立条件同时满足。</small></div>`;
   const special=Object.entries(row.special||{}).filter(([k,v])=>typeof v==='number'&& !['price','minutes','affinity_per_hour','hourly_wage','energy_gain_per_hour','energy_cost_per_hour','mood_per_hour','satiety_per_hour','hp_per_hour'].includes(k)).map(([k,v])=>`${esc(k)}：${esc(String(v))}`).join('；');
-  return `<details class="building-service"><summary><b>${esc(row.emoji)} ${esc(row.name)}</b><small>${esc(key)} · ${sceneLabel}${row.enabled?'':' · 已关闭'}</small></summary><div class="building-fields">
+  return `<details class="building-service" data-activity-row="${esc(key)}" ${open.has(key)?'open':''}><summary><b>${esc(row.emoji)} ${esc(row.name)}</b><small>${esc(key)} · ${sceneLabel}${row.enabled?'':' · 已关闭'}</small></summary><div class="building-fields">
    ${activityInput(key,'name','名称',row.name)}${activityInput(key,'emoji','图标',row.emoji)}
-   <div class="mechanics-places"><b>类别与可用地点（可多选）</b>${locationControl}</div>
+   ${locationControl}
    <label>活动对象<select data-activity-key="${esc(key)}" data-activity-field="target_mode"><option value="none" ${row.target_mode==='none'?'selected':''}>无</option><option value="optional" ${row.target_mode==='optional'?'selected':''}>可选择室友</option><option value="required" ${row.target_mode==='required'?'selected':''}>必须选择室友</option></select></label>
    ${activityInput(key,'duration','默认时长（刻）',row.duration,'number','1')}
    ${activityInput(key,'cost','开始时一次性花费',row.cost,'number','0.01')}
@@ -123,15 +139,34 @@ $('addMechanicsActivity').onclick=()=>{
  $('mechanicsActivities').querySelector(`[data-activity-key="${key}"]`)?.closest('details')?.setAttribute('open','');
 };
 $('mechanicsActivities').onclick=e=>{
+ const join=e.target.closest('[data-place-join]');
+ if(join&&!mechanicsLocked()){
+  collectActivityFields();const row=mechanicsData.activity_catalog[join.dataset.placeJoin];
+  row.place_join=row.place_join==='and'?'or':'and';
+  if(row.place_join==='and'&&row.position_options.length===1&&row.position_options[0]==='near_player')row.target_mode='required';
+  renderActivities();return;
+ }
  const button=e.target.closest('[data-delete-activity]');if(!button||mechanicsLocked())return;
  collectActivityFields();const key=button.dataset.deleteActivity,row=mechanicsData.activity_catalog[key];
  if(row.builtin){row.enabled=!row.enabled;}else delete mechanicsData.activity_catalog[key];
  renderActivities();
 };
 $('mechanicsActivities').onchange=e=>{
- const el=e.target;if(!el.dataset.activityScene)return;
+ const el=e.target;
+ if(el.dataset.activityLocation){
+  const menu=el.closest('.mechanics-place-menu'),count=menu.querySelectorAll('[data-activity-location]:checked').length;
+  menu.querySelector('summary').textContent=`${el.dataset.activityLocationScene==='house'?'室内':'室外'}地点：${count?`已选 ${count} 处`:'请选择'}`;
+  return;
+ }
+ if(el.dataset.positionOption){
+  collectActivityFields();
+  const mode=$('mechanicsActivities').querySelector(`select[data-activity-key="${el.dataset.activityKey}"][data-activity-field="target_mode"]`);
+  mode.value=mechanicsData.activity_catalog[el.dataset.activityKey].target_mode;
+  return;
+ }
+ if(!el.dataset.activityScene)return;
  collectActivityFields();const row=mechanicsData.activity_catalog[el.dataset.activityKey];
- if(el.checked)row.places[el.dataset.activityScene]=['here'];else delete row.places[el.dataset.activityScene];
+ if(el.checked)row.places[el.dataset.activityScene]=el.dataset.activityScene==='any'?['here']:[];else delete row.places[el.dataset.activityScene];
  renderActivities();
 };
 $('saveMechanics').onclick=async()=>{

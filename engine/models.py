@@ -58,6 +58,8 @@ class PlayerSnapshot(BaseModel):
     memory_counts: dict[str, int] = Field(default_factory=dict)
     illness: str = "未患疾病"
     illness_severity: int = 0
+    cycle_status: str = ""
+    relationships: list[dict] = Field(default_factory=list)
     hospitalized: bool = False
     awaiting_admission: bool = False
     activity_minutes_left: int = 0

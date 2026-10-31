@@ -130,6 +130,43 @@ class ActivityRuleTests(unittest.TestCase):
         self.assertEqual(spec['_self_affinity_per_tick'],2)
         self.assertEqual(spec['_target_affinity_per_tick'],-1)
 
+    def test_place_and_here_requires_actor_at_selected_location(self):
+        rows=catalog(self.sim)
+        rows['think']['places']={'house':['house:L']}
+        rows['think']['place_join']='and'
+        rows['think']['position_options']=['here']
+        self.sim.activity_overrides,_,_=validate_catalog(self.sim,rows)
+        self.assertFalse(self.player.begin_activity('think',self.sim))
+        self.assertIn('所选地点',self.player._rejection)
+        self.player.x,self.player.y=next(iter(world.find_tiles('house','L')))
+        self.assertTrue(self.player.begin_activity('think',self.sim))
+        self.assertEqual(self.player.state,'doing')
+
+    def test_place_and_target_requires_target_at_selected_location(self):
+        rows=catalog(self.sim)
+        rows['think']['places']={'house':['house:L']}
+        rows['think']['place_join']='and'
+        rows['think']['position_options']=['near_player']
+        rows['think']['target_mode']='required'
+        self.sim.activity_overrides,_,_=validate_catalog(self.sim,rows)
+        target=self.sim.players[1]
+        self.assertFalse(self.player.begin_activity('think',self.sim,target))
+        self.player.x,self.player.y=next(iter(world.find_tiles('house','L')))
+        target.x,target.y=self.player.x,self.player.y
+        self.assertTrue(self.player.begin_activity('think',self.sim,target))
+        self.assertEqual(self.player._pending_target_pid,target.pid)
+
+    def test_place_or_target_falls_back_to_concrete_place_without_target(self):
+        rows=catalog(self.sim)
+        rows['think']['places']={'house':['house:L','near_player']}
+        rows['think']['place_join']='or'
+        rows['think']['position_options']=['near_player']
+        rows['think']['target_mode']='optional'
+        self.sim.activity_overrides,_,_=validate_catalog(self.sim,rows)
+        self.assertTrue(self.player.begin_activity('think',self.sim))
+        self.assertEqual(self.player._pending_key,'think')
+        self.assertEqual(self.player._final_scene,None)
+
     def test_shop_product_creation_purchase_and_off_shelf(self):
         rows=shop_catalog(self.sim)
         rows['buy_seeds']={'name':'种子','emoji':'🌱','price':7,'enabled':True,'builtin':False}

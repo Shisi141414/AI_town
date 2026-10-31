@@ -66,6 +66,9 @@ class PassiveDrainMoodTests(unittest.TestCase):
         x, y = tiles[0]
         for p in (self.a, self.b):
             p.scene, p.x, p.y = "house", x, y
+        # 周期锚点随机相位会改变消耗倍率，数值断言需重置回基线
+        for _p in self.sim.players:
+            _p.cycle_anchor = 0
 
     def drain_mood_delta(self, p):
         """跑一次被动结算，返回心情变化量（其他消耗远离阈值，不影响心情）"""

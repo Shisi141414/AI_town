@@ -16,6 +16,33 @@ def places_of(row):
     return deepcopy(places) if places is not None else {row['scene']:[row['location']]}
 
 
+def position_options_of(row):
+    if 'position_options' in row:return deepcopy(row['position_options'])
+    options=[]
+    for locations in places_of(row).values():
+        for location in locations:
+            option='near_player' if location in ('near_player','house_patient') else location
+            if option in ('near_player','here') and option not in options:options.append(option)
+    return options
+
+
+def location_matches(player,scene,location):
+    """检查角色此刻是否处于选中的具体活动地点。"""
+    if scene not in ('any',player.scene):return False
+    if location=='here':return True
+    from . import world
+    if location=='own_bedroom':return player.scene=='house' and '卧室' in world.zone_of('house',player.x,player.y)
+    if location=='own_computer':
+        from .resident_tools import computer_seat
+        return player.scene=='house' and (player.x,player.y)==tuple(computer_seat(player))
+    if location=='house_common':return player.scene=='house' and world.zone_of('house',player.x,player.y) in ('客厅','餐厅','厨房','阳台')
+    if location.startswith('house:'):return player.scene=='house' and world.tile('house',player.x,player.y)==location[6:]
+    if location.startswith('town:'):
+        from .town_services import onsite
+        return player.scene=='town' and onsite(player,location[5:])
+    return False
+
+
 def target_mode_of(row):
     return row.get('target_mode','required' if row.get('need')=='player' or row.get('location')=='near_player' else 'optional' if row.get('need')=='home_patient' or row.get('location')=='house_patient' else 'none')
 
@@ -53,6 +80,8 @@ def available_here(sim,p,key):
     from . import world
     row=catalog(sim).get(key)
     if not row:return False
+    if row['place_join']=='and':
+        return any(location_matches(p,scene,loc) for scene,locations in row['places'].items() for loc in locations)
     for scene,locations in row['places'].items():
         if scene not in ('any',p.scene):continue
         for location in locations:
@@ -75,6 +104,8 @@ def registry(sim):
         row['desc']=sim.activity_descriptions.get(key,row.get('desc',''))
         row['_places']=places_of({**_base(sim,key,value),**override})
         row['_target_mode']=override.get('target_mode',target_mode_of(value))
+        row['_place_join']=override.get('place_join','or')
+        row['_position_options']=position_options_of({**_base(sim,key,value),**override})
         builtins[key]=row
     return {**builtins,**{k: custom_spec(v) for k,v in sim.custom_activities.items()
                         if k not in sim.disabled_activities and v.get('enabled',True)}}
@@ -87,6 +118,7 @@ def custom_spec(row):
             'need':need,'duration':row['duration'],'cost':row['cost'],
             'effects':deepcopy(row['effects']),'desc':row['description'],
             '_custom':True,'_places':places_of(row),'_target_mode':row.get('target_mode','none'),
+            '_place_join':row.get('place_join','or'),'_position_options':position_options_of(row),
             '_venue':loc.split(':',1)[1] if loc.startswith('town:') else None,
             '_building':loc.split(':',1)[1] if loc.startswith('town:') else None}
     if row.get('product_item'):
@@ -162,6 +194,8 @@ def catalog(sim):
         base['target_mode']=override.get('target_mode',target_mode_of(activity))
         base['self_affinity_per_tick']=override.get('self_affinity_per_tick',0)
         base['target_affinity_per_tick']=override.get('target_affinity_per_tick',0)
+        base['place_join']=override.get('place_join','or')
+        base['position_options']=position_options_of({**base,**override})
         rows[key]=base
     for key,row in sim.custom_activities.items():
         rows[key]={field:deepcopy(row[field]) for field in FIELDS}
@@ -169,6 +203,8 @@ def catalog(sim):
         rows[key]['target_mode']=row.get('target_mode','none')
         rows[key]['self_affinity_per_tick']=row.get('self_affinity_per_tick',0)
         rows[key]['target_affinity_per_tick']=row.get('target_affinity_per_tick',0)
+        rows[key]['place_join']=row.get('place_join','or')
+        rows[key]['position_options']=position_options_of(row)
         if row.get('product_item'):rows[key]['product_item']=row['product_item']
         rows[key]['special']={}
     return rows
@@ -201,11 +237,18 @@ def validate_catalog(sim, values):
         if not isinstance(row['description'],str) or not 1<=len(row['description'].strip())<=240 or any(c in row['description'] for c in '\r\n'):raise ValueError(f'{key} 说明应为一行，最多240字')
         places=places_of(row)
         if not isinstance(places,dict) or not places or not set(places)<=set(PLACE_SCENES):raise ValueError(f'{key} 活动类别无效')
+        place_join=row.get('place_join','or')
+        if place_join not in ('or','and'):raise ValueError(f'{key} 地点连接方式无效')
+        position_options=position_options_of(row)
+        if not isinstance(position_options,list) or any(not isinstance(value,str) for value in position_options) or len(set(position_options))!=len(position_options) or any(value not in ('here','near_player') for value in position_options):raise ValueError(f'{key} 独立位置条件无效')
+        if place_join=='and' and not position_options:raise ValueError(f'{key} 选择“且”时须勾选原地或目标角色旁')
         for scene,locations in places.items():
             if not isinstance(locations,list) or not locations or len(locations)>24 or len(set(locations))!=len(locations) or any(not isinstance(loc,str) or not _allowed_location(scene,loc) and not (builtin and scene==ACTIVITIES[key].get('scene','any') and loc==_location(key,ACTIVITIES[key])) for loc in locations):
                 raise ValueError(f'{key} 地点无效')
+            if place_join=='and' and any(loc in ('near_player','house_patient') or loc=='here' and scene!='any' for loc in locations):raise ValueError(f'{key} 选择“且”时须指定具体地点')
         target_mode=row.get('target_mode',target_mode_of(ACTIVITIES[key]) if builtin else 'none')
         if target_mode not in ('none','optional','required'):raise ValueError(f'{key} 对象设置无效')
+        if place_join=='and' and position_options==['near_player'] and target_mode!='required':raise ValueError(f'{key} 只选择“目标角色旁”时必须指定室友')
         if key in ('phone','dating','sex') and target_mode!='required':raise ValueError(f'{key} 必须选择一位室友')
         if type(row['duration']) is not int or not 1<=row['duration']<=144:raise ValueError(f'{key} 时长应为1～144刻')
         for field in ('cost','joint_affinity_per_tick','self_affinity_per_tick','target_affinity_per_tick'):
@@ -220,6 +263,8 @@ def validate_catalog(sim, values):
         normalized['target_mode']=target_mode
         normalized['self_affinity_per_tick']=row.get('self_affinity_per_tick',0)
         normalized['target_affinity_per_tick']=row.get('target_affinity_per_tick',0)
+        normalized['place_join']=place_join
+        normalized['position_options']=position_options
         normalized['name']=normalized['name'].strip();normalized['description']=normalized['description'].strip()
         if builtin:
             base=_base(sim,key,ACTIVITIES[key])
@@ -227,6 +272,8 @@ def validate_catalog(sim, values):
             change={field:normalized[field] for field in FIELDS if field not in ('enabled','builtin','description','effects') and normalized[field]!=base[field]}
             for field,default in (('places',{base['scene']:[base['location']]}),('target_mode',target_mode_of(ACTIVITIES[key])),('self_affinity_per_tick',0),('target_affinity_per_tick',0)):
                 if normalized[field]!=default:change[field]=normalized[field]
+            if normalized['place_join']!='or':change['place_join']=normalized['place_join']
+            if normalized['place_join']=='and' or normalized['position_options']!=position_options_of({**base,'places':normalized['places']}):change['position_options']=normalized['position_options']
             changed_effects={stat:value for stat,value in normalized['effects'].items() if value!=base['effects'][stat]}
             if changed_effects:change['effects']=changed_effects
             if change:overrides[key]=change
@@ -266,6 +313,8 @@ def apply(sim,key,activity,p=None):
     a['_target_mode']=configured['target_mode']
     a['_self_affinity_per_tick']=configured['self_affinity_per_tick']
     a['_target_affinity_per_tick']=configured['target_affinity_per_tick']
+    a['_place_join']=configured['place_join']
+    a['_position_options']=configured['position_options']
     if p is not None:
         scene,location=choose_place(configured,p)
         a['scene']=scene

@@ -394,7 +394,7 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
             if a.get('_venue') and a['_venue']!=venue_code:continue
             if scene != "any" and a.get("scene") not in ("any", scene) and not home_bound:continue
         req = []
-        if a.get('_target_mode')=='required' or a.get("need") == "player":
+        if a.get('_target_mode')=='required' or a.get("need") == "player" or a.get('_place_join')=='and' and a.get('_position_options')==['near_player']:
             req.append("target=室友")
         elif a.get('_target_mode')=='optional':req.append('target=室友（可选）')
         if a.get("needs_item"):
@@ -412,6 +412,9 @@ def activity_menu(scene: str = "any", venue_code: str | None = None,
             from .town_services import NAMES
             visible=[labels.get(loc,NAMES.get(loc[5:],loc) if loc.startswith('town:') else loc) for current,locations in places.items() if current in (scene,'any') for loc in locations]
             if visible:place_hint='｜可在'+ '、'.join(dict.fromkeys(visible))
+            if a.get('_place_join')=='and' and a.get('_position_options'):
+                conditions=['目标角色旁' if value=='near_player' else '原地' for value in a['_position_options']]
+                place_hint+=' 且 '+ '或'.join(conditions)
         disg = MODEL_DISGUISES.get(k)
         menu_key = disg['key'] if disg else k
         menu_name = disg['name'] if disg else a['name']

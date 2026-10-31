@@ -37,6 +37,9 @@ class RelationTests(unittest.TestCase):
         self.assertEqual(self.a.affinity[self.b.pid], 53)   # 50 + 3
         self.assertEqual(self.b.affinity[self.a.pid], 53)
         self.assertEqual(self.a.state, 'idle')
+        shown=self.a.snapshot({p.pid:p.name for p in self.sim.players},self.sim).relationships
+        self.assertEqual(shown[0]['other_pid'],self.b.pid)
+        self.assertEqual(shown[0]['type'],'恋爱')
 
     def test_decline_by_choosing_other_action(self):
         self._propose(self.a, self.b)

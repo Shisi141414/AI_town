@@ -27,6 +27,9 @@ class CycleTests(unittest.TestCase):
         self.sim.players[1].gender = '女'
         self.male = self.sim.players[0]
         self.female = self.sim.players[1]
+        # 锚点初始随机偏移（避免全员周期同步），测试周期逻辑需要显式归零
+        for p in self.sim.players:
+            p.cycle_anchor = 0
 
     def _tick(self, n=1):
         self.sim.global_tick += n
@@ -130,6 +133,7 @@ class CycleTests(unittest.TestCase):
         ctx_f = prompt_context(self.sim, f)
         self.assertIn('黄体期', ctx_f)
         self.assertIn('×1.5', ctx_f)
+        self.assertNotIn('{d}', ctx_f)
 
     def test_rule_engine_suggests_relief_for_tense_male(self):
         from engine import brain
@@ -225,3 +229,41 @@ class PeriodInjuryTests(unittest.TestCase):
         self.assertEqual(f.state, 'doing')
         self.assertEqual(f.activity_left, left_before)         # 进度恢复而非重来
         self.assertIn('继续', f.info_feedback)
+
+
+class RandomPhaseTests(unittest.TestCase):
+    """周期初始相位随机：不同角色锚点错开，状态自洽。"""
+
+    def test_initial_anchors_are_staggered(self):
+        import collections
+        from engine import cycle as physio
+        anchors = []
+        for _ in range(3):
+            sim = Simulation()
+            sim.spawn_players(4)
+            anchors.extend(p.cycle_anchor for p in sim.players)
+        # 全员同锚点（旧bug）的概率应被随机器打散：12个锚点至少4种不同取值
+        self.assertGreaterEqual(len(set(anchors)), 4)
+        # 锚点语义自洽：elapsed ∈ [0, 720)，男性紧张度与阶段一致
+        sim = Simulation(); sim.spawn_players(1)
+        p = sim.players[0]; p.gender = '男'
+        e = physio.elapsed_ticks(p, sim)
+        self.assertGreaterEqual(e, 0)
+        self.assertLess(e, physio.CYCLE_TICKS)
+        self.assertAlmostEqual(physio.male_tension(p, sim), min(1.0, e / physio.CYCLE_TICKS))
+
+    def test_female_may_start_in_period_or_luteal_consistently(self):
+        from engine import cycle as physio
+        sim = Simulation(); sim.spawn_players(30)
+        seen = set()
+        for p in sim.players:
+            p.gender = '女'
+            p.day, p.world_tick, p.hour = sim.day, sim.global_tick, sim.hour
+            if physio.in_period(p, sim):
+                seen.add('period')
+                self.assertFalse(physio.in_luteal(p, sim))
+            elif physio.in_luteal(p, sim):
+                seen.add('luteal')
+            else:
+                seen.add('calm')
+        self.assertTrue(seen & {'period', 'luteal', 'calm'})

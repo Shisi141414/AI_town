@@ -133,7 +133,9 @@ class Player:
         self.model = ""
         self.items: dict[str, int] = {"flower": 0, "plant": 0, "meal": 0, "medicine": 0, "ingredient": 0}
         # 生理周期（cycle.py）：周期锚点/黄体期满足标记/经期提示标记
-        self.cycle_anchor = 0
+        # 初始锚点随机偏移（负值=已进行到周期中某阶段），避免全员周期同步
+        from .cycle import CYCLE_TICKS
+        self.cycle_anchor = -random.randrange(CYCLE_TICKS)
         self.cycle_satisfied_anchor = -1
         self.cycle_noticed = -1
         self.meal_qualities: list[int] = []
@@ -164,9 +166,17 @@ class Player:
         return [o for o in sim.players if o is not self and world.same_place(self, o)]
 
     # ------------------------------------------------------------- 快照
-    def snapshot(self, name_of: dict[str, str] | None = None) -> PlayerSnapshot:
+    def snapshot(self, name_of: dict[str, str] | None = None, sim=None) -> PlayerSnapshot:
         name_of = name_of or {}
         aff_named = {name_of.get(k, k): v for k, v in self.affinity.items()}
+        from . import cycle
+        relationships=[]
+        if sim is not None:
+            from . import relations
+            for relation in relations.all_of(sim,self.pid):
+                other=relation['b'] if relation['a']==self.pid else relation['a']
+                relationships.append({'other_pid':other,'name':name_of.get(other,other),'type':relation['type'],
+                                      'days':(sim.global_tick-relation['since'])//144+1})
         return PlayerSnapshot(
             pid=self.pid, name=self.name, color=self.color, emoji=self.emoji, gender=self.gender,
             scene=self.scene, x=self.x, y=self.y, stats=self.stats,
@@ -184,6 +194,7 @@ class Player:
             activity_minutes_left=self.activity_left*10, activity_minutes_total=self.activity_total*10, decision_status=self.decision_status,
             last_system_prompt=self.last_system_prompt,last_user_prompt=self.last_user_prompt,last_raw_reply=self.last_raw_reply,
             memory_counts=self.memory.counts(), illness=self.health_description, illness_severity=self.illness_severity,
+            cycle_status=cycle.description(self,sim),relationships=relationships,
             hospitalized=self.hospitalized, awaiting_admission=self.awaiting_admission)
 
     @property
@@ -302,10 +313,46 @@ class Player:
         if a.get('need') is None and a.get('scene') not in ('any',self.scene):
             self._rejection=f"这项活动不能在{'室内' if self.scene=='house' else '室外'}进行"
             return False
-        need = a.get("need", "")
         if a.get('_target_mode')=='required' and target is None:
             self._rejection='这项活动需要选择一位室友作为对象'
             return False
+        if a.get('_place_join')=='or' and target is None and a.get('need')=='player' and a.get('_target_mode')!='required':
+            from .activity_rules import choose_place,need_for_location,_location
+            concrete={scene:[loc for loc in locations if loc not in ('near_player','house_patient')]
+                      for scene,locations in a['_places'].items()}
+            concrete={scene:locations for scene,locations in concrete.items() if locations}
+            if concrete:
+                scene,location=choose_place({'places':concrete},self)
+                a['scene'],a['_chosen_location']=scene,location
+                a['need']=need_for_location(location,a.get('_target_mode','none'))
+                a['_use_interaction_points']=location==_location(key,a)
+                if location.startswith('town:'):a['_building']=location[5:]
+                else:a.pop('_building',None)
+        if a.get('_place_join')=='and':
+            from .activity_rules import location_matches
+            candidates=[(scene,location) for scene,locations in a['_places'].items() for location in locations]
+            options=a.get('_position_options',[])
+            staying=next(((scene,location) for scene,location in candidates
+                          if 'here' in options and location_matches(self,scene,location)),None)
+            meeting=next(((scene,location) for scene,location in candidates
+                          if 'near_player' in options and target is not None
+                          and location_matches(target,scene,location)),None)
+            can_stay=staying if (a.get('_target_mode')!='required' or target is not None
+                                and target.scene==self.scene and world.same_place(self,target)) else None
+            chosen=can_stay or meeting
+            if chosen is None:
+                self._rejection='这项活动要求在所选地点原地进行，或在该地点的目标角色旁进行'
+                return False
+            a['scene'],a['_chosen_location']=chosen
+            a['need']='player' if chosen==meeting else None
+            if a.get('_target_mode')=='required' and chosen==staying and target is not None:
+                if target.scene!=self.scene or not world.same_place(self,target):
+                    self._rejection='目标室友不在所选地点，无法原地一起进行'
+                    return False
+            if chosen[1].startswith('town:'):a['_building']=chosen[1][5:]
+            else:a.pop('_building',None)
+            a['_use_interaction_points']=False
+        need = a.get("need", "")
         self.target_player = target
         self._pending_target_pid = None
         from .interaction_points import LOCAL_ACTIONS,route,release,route_bed_pair
@@ -361,6 +408,9 @@ class Player:
                     return False
             self._pending_key = key
             self._pending_target_pid = target.pid
+            if a.get('_place_join')=='and' and 'here' in a.get('_position_options',[]) and a.get('_chosen_location') and location_matches(self,*a['_chosen_location']):
+                self._start_social(key,sim,target)
+                return True
             self._plan_route(sim, self.scene, target.x, target.y, adjacent=True)
             return True
 

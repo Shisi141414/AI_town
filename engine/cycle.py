@@ -117,6 +117,6 @@ def description(p, sim) -> str:
     if in_luteal(p, sim):
         if luteal_satisfied(p, sim):
             return f'黄体期（第{d}/5天）：渴望已被满足，心情消耗正常'
-        return ('黄体期（第{d}/5天）：渴望恋爱与亲密互动，未满足时心情消耗×'
+        return (f'黄体期（第{d}/5天）：渴望恋爱与亲密互动，未满足时心情消耗×'
                 f'{LUTEAL_MOOD_MULT:g}；与室友「恋爱」或双方同意的「互动」后恢复基线')
     return f'第{d}/5天，身体状态平稳'
