@@ -131,6 +131,7 @@
 
   <div class="panel" id="panel-api">
     <div class="section-title">API 档案</div>
+    <p class="hint">⚡ 模型选择建议：居民决策频繁，为保障响应速度，建议使用 flash 等响应较快的模型；同时不建议使用智力过低的模型——跟不上提示词里的数值规则时，居民容易陷入无效行动的循环。</p>
     <div id="profileList"></div>
     <button class="btn" id="btnAddProfile" style="width:100%;margin:8px 0">＋ 新增档案</button>
     <div id="profileForm" style="display:none;background:#f8f9fa;border:1px solid #e0e4e8;border-radius:8px;padding:12px">
@@ -212,7 +213,7 @@
       <p>① <b>选择居民数量</b>：侧栏「设置」→ 居民管理，<span class="kbd">＋ 入住小镇</span> 添加（至多 5 位，可移除）；默认勾选「开局由模型自选姓名、性别与颜色」；</p>
       <p>② <b>新建档案</b>：侧栏「模型」→ 新增 API 档案，填 Base URL、API Key、上游格式，点 <span class="kbd">📋 获取模型列表</span> 拉取可用模型，保存后「启用」；</p>
       <p class="guide-note">（您的 API Key 只在本地使用，不会被上传网络）</p>
-      <p>③ <b>载入模型</b>：在「玩家模型绑定」里为每位居民先选 API 档案、再点「载模型」挑具体模型——不同居民可走不同网关用不同模型，「保存绑定」；</p>
+      <p>③ <b>载入模型</b>：在「玩家模型绑定」里为每位居民先选 API 档案、再点「载模型」挑具体模型——不同居民可走不同网关用不同模型，「保存绑定」。<span class="guide-note">⚡ 建议选 flash 等响应较快的模型（决策频繁，速度影响体验）；同时不建议智力过低的模型，跟不上规则会陷入行动循环。</span></p>
       <p>④ <b>开始</b>：点顶部 <span class="kbd">▶ 开始</span>，居民们先自选身份，然后开始生活；</p>
       <p>⑤ <b>观察</b>：在侧栏各面板看数值、关系、事件与决策理由；</p>
       <p>⑥ <b>控制</b>：随时 <span class="kbd">⏸ 暂停</span> / <span class="kbd">⏭ 单步</span> / 调速（0.5x～8x）/ <span class="kbd">⟲ 重置</span>。不配置 API 也能玩——居民由内置规则引擎驱动。</p>
