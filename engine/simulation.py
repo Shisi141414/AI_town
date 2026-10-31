@@ -500,8 +500,19 @@ class Simulation:
                 if p.pid in players or p.name in players:
                     p.remember(text, 6 if type_ in ("combat", "random") else 3)
 
-        if len(self.events) > 5000:
-            self.events = self.events[-3000:]
+        if len(self.events) > 50000:
+            # 内存事件带上限；被裁条目先追加写入归档文件，不真正丢失
+            dropped, self.events = self.events[:-30000], self.events[-30000:]
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                archive = _Path('data/events-archive.jsonl')
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open('a', encoding='utf-8') as _f:
+                    for _e in dropped:
+                        _f.write(_json.dumps(_e.model_dump(), ensure_ascii=False) + '\n')
+            except OSError:
+                pass   # 归档失败不影响模拟运行
         self.record("event", e.model_dump())
         if self.recorder:self.record_frame()
         return e
