@@ -395,21 +395,13 @@ class Player:
         # 玩家目标类
         if need == "player":
             if target is None or target.scene != self.scene:
-                where = (f'{target.name}在'
-                         f'{world.SCENE_NAMES.get(target.scene, target.scene)}·'
-                         f'{world.zone_of(target.scene, target.x, target.y)}'
-                         if target is not None else '对方不在')
-                self._rejection = (f'对方不在我的身边（不同场景；{where}）；'
-                                   f'赶不过去可先用 phone 电话跨地点联系')
+                self._rejection = ('对方不在我的身边（不在同一场景）；'
+                                   '想说话可以用 phone 打电话（target 填TA），或等回来自当面聊')
                 return False
             if max(abs(target.x - self.x), abs(target.y - self.y)) > 6 \
                     and not world.same_place(self, target):
-                dist = max(abs(target.x - self.x), abs(target.y - self.y))
-                self._rejection = (f'对方离我太远，够不着；你们需在同一地点（同一设施区域）才能对话或互动。'
-                                   f'{target.name}现在在'
-                                   f'{world.SCENE_NAMES.get(target.scene, target.scene)}·'
-                                   f'{world.zone_of(target.scene, target.x, target.y)}'
-                                   f'（约{dist}格外）；可先走过去，或用 phone 电话跨地点联系')
+                self._rejection = ('对方不在我的身边（不在同一地点）；'
+                                   '想说话可以用 phone 打电话（target 填TA）')
                 return False
             if key=='use_medicine' and target.stats.hp>=100 and not target.illness_severity:
                 self._rejection=f'{target.name}身体很健康，用不上药品'

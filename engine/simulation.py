@@ -881,7 +881,8 @@ class Simulation:
 
     def _observe_nearby(self, observer: Player) -> list[Player]:
         # 与社交发起判定（begin_activity 的 player 类）完全一致：
-        # 同一地点（同设施区）或切比雪夫距离≤6，提示词不再显示"够不着"的人
+        # 同一地点（同设施区）或切比雪夫距离≤6。远处/别场景的室友不列——
+        # 模型不知道室友在哪（信息不对称），想联系用电话。
         nearby = [other for other in self.players if other is not observer
                   and other.scene == observer.scene
                   and (world.same_place(observer, other)
@@ -1028,7 +1029,9 @@ class Simulation:
             else:
                 p.next_decision_at=time.monotonic()+1
                 p.decision_status='模型行动暂不可执行，等待重新选择'
-            p.remember(f"我想{act.ACTIVITIES.get(d.action,{}).get('name',d.action)}，但当时条件不合适，没能进行",4)
+            mem2=f"我想{act.ACTIVITIES.get(d.action,{}).get('name',d.action)}，但当时条件不合适，没能进行"
+            if mem2 not in [m.content for m in p.memory.items[-3:]]:
+                p.remember(mem2,4)
             self.log('error',f'⏳ {p.name} 的{d.action}暂不可执行，将请模型重新选择',[p.pid])
         else:
             self._apply_rule(p,depth+1)

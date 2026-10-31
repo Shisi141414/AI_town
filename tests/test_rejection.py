@@ -101,9 +101,11 @@ class RejectionTests(unittest.TestCase):
         self.assertIn('没能接', self.b.memory.brief(0, k=10, query='电话'))
 
     def test_target_far_away_reason(self):
-        self.b.x, self.b.y = self.a.x + 20, self.a.y   # 超出6格
+        self.b.x, self.b.y = self.a.x + 20, self.a.y   # 同场景但超出6格
         self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
-        self.assertIn('太远', self.a.info_feedback)
+        self.assertIn('不在我的身边', self.a.info_feedback)
+        self.assertIn('phone', self.a.info_feedback)
+        self.assertNotIn('格', self.a.info_feedback)   # 不带距离/位置情报
 
 
 class BlockageMemoryTests(unittest.TestCase):
@@ -158,13 +160,20 @@ class RejectionLoopGuardTests(unittest.TestCase):
         self.a.x, self.a.y = 3, 20
         self.b.x, self.b.y = 13, 4
 
-    def test_distance_rejection_tells_target_whereabouts(self):
+    def test_far_chat_rejected_with_phone_hint(self):
+        # 不告知对方位置（模型不应知道室友在哪）；指明电话是替代通道
         ok = self.a.begin_activity('chat', self.sim, target=self.b)
         self.assertFalse(ok)
-        self.assertIn(self.b.name, self.a._rejection)
-        self.assertIn('phone', self.a._rejection)          # 给出替代路径
+        self.assertIn('phone', self.a._rejection)
+        self.assertNotIn(self.b.name, self.a._rejection)   # 不泄露位置
+        # 跨场景同样拒绝
+        self.b.scene = 'town'
+        ok = self.a.begin_activity('chat', self.sim, target=self.b)
+        self.assertFalse(ok)
+        self.assertIn('phone', self.a._rejection)
 
     def test_duplicate_rejection_not_spamming_memory(self):
+        self.b.scene = 'town'   # 跨场景：稳定被拒
         for _ in range(3):
             self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
         dup = [m.content for m in self.a.memory.items].count(
@@ -176,6 +185,7 @@ class RejectionLoopGuardTests(unittest.TestCase):
         self.assertEqual(texts.most_common(1)[0][1], 1)
 
     def test_repeated_rejection_slows_retry(self):
+        self.b.scene = 'town'
         for _ in range(4):
             self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
             self.a.next_decision_at = 0                      # 强制可决策
