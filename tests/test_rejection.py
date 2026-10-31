@@ -139,3 +139,56 @@ class BlockageMemoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RejectionLoopGuardTests(unittest.TestCase):
+    """对话循环三重防护：拒绝带对方位置、重复拒绝不刷记忆、连续被拒拉长重试。"""
+
+    def setUp(self):
+        world.reset_maps()
+        from engine.simulation import Simulation
+        self.sim = Simulation()
+        self.sim.spawn_players(3)
+        asyncio.run(self.sim.run_identity_phase())
+        self.a, self.b = self.sim.players[0], self.sim.players[1]
+        for p in self.sim.players:
+            p.state = 'idle'; p.info_feedback = ''
+        # 同场景但相距很远
+        self.a.scene = self.b.scene = 'house'
+        self.a.x, self.a.y = 3, 20
+        self.b.x, self.b.y = 13, 4
+
+    def test_distance_rejection_tells_target_whereabouts(self):
+        ok = self.a.begin_activity('chat', self.sim, target=self.b)
+        self.assertFalse(ok)
+        self.assertIn(self.b.name, self.a._rejection)
+        self.assertIn('phone', self.a._rejection)          # 给出替代路径
+
+    def test_duplicate_rejection_not_spamming_memory(self):
+        for _ in range(3):
+            self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
+        dup = [m.content for m in self.a.memory.items].count(
+            [m.content for m in self.a.memory.items][-1])
+        # 三次同样的拒绝，相同记忆最多 1 条（另有一次'条件不合适'通用记忆）
+        from collections import Counter
+        texts = Counter(m.content for m in self.a.memory.items
+                        if '被拒绝' in m.content)
+        self.assertEqual(texts.most_common(1)[0][1], 1)
+
+    def test_repeated_rejection_slows_retry(self):
+        for _ in range(4):
+            self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
+            self.a.next_decision_at = 0                      # 强制可决策
+        self.assertGreaterEqual(self.a._rejection_streak, 3)
+        # 第3次起重试间隔拉长到15秒（不再每秒轰炸）
+        self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
+        self.assertGreater(self.a.next_decision_at, 10)      # monotonic()+15
+
+    def test_streak_resets_on_success(self):
+        self.sim._apply_decision(self.a, Decision(action='chat', target=self.b.name, source='llm'))
+        self.a.next_decision_at = 0
+        self.a.stats.satiety = 50.0
+        self.a.items['meal'] = 1
+        self.sim._apply_decision(self.a, Decision(action='eat', source='llm'))
+        self.a.next_decision_at = 0
+        self.assertEqual(self.a._rejection_streak, 0)

@@ -974,7 +974,11 @@ class Simulation:
         from .activities import ACTIVITIES
         name = ACTIVITIES.get(key, {}).get('name', key)
         tname = f'（对象：{target.name}）' if target else ''
-        p.remember(f'我想{name}（{target.name if target else "他人"}），但被拒绝：{reason}', 5)
+        mem = f'我想{name}（{target.name if target else "他人"}），但被拒绝：{reason}'
+        # 同样的拒绝短时间内不重复写记忆——否则近期记忆被刷屏，
+        # 反而把模型的注意力锚死在被拒的那个行动上（小枫对话循环的教训）
+        if mem not in [m.content for m in p.memory.items[-3:]]:
+            p.remember(mem, 5)
         if target is not None and target is not p:
             target.remember(f'{p.name}想和我{name}，没有成行：{reason}', 4)
         p.info_feedback = f'{name}被拒绝：{reason}（请换一种做法）'
@@ -1013,9 +1017,17 @@ class Simulation:
     def _reject_decision(self,p,d,depth):
         p.requested_duration=None
         if d.source=='llm':
+            # 连续被拒防风暴：模型无视反馈死循环重试时拉长间隔，
+            # 给世界时间变化（对方可能走开/走过来），也省 token
+            streak=getattr(p,'_rejection_streak',0)+1
+            p._rejection_streak=streak
             p.state='waiting_model'
-            p.next_decision_at=time.monotonic()+1
-            p.decision_status='模型行动暂不可执行，等待重新选择'
+            if streak>=3:
+                p.next_decision_at=time.monotonic()+15
+                p.decision_status=f'连续{streak}次行动被拒，稍等片刻再重新考虑'
+            else:
+                p.next_decision_at=time.monotonic()+1
+                p.decision_status='模型行动暂不可执行，等待重新选择'
             p.remember(f"我想{act.ACTIVITIES.get(d.action,{}).get('name',d.action)}，但当时条件不合适，没能进行",4)
             self.log('error',f'⏳ {p.name} 的{d.action}暂不可执行，将请模型重新选择',[p.pid])
         else:
@@ -1184,6 +1196,7 @@ class Simulation:
             self._notify_rejection(p, key, target)
             self._reject_decision(p,d,depth)
         elif d.source == "llm":
+            p._rejection_streak = 0          # 行动成功执行：连续被拒计数清零
             self.log("activity",
                      f"🧠 {p.name} 决定{a['name']}"
                      + (f"（对象:{d.target}）" if d.target else "")
