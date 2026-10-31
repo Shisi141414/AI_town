@@ -137,6 +137,11 @@ function renderPlayers() {
       ${memoryPanel(p, opened)}
     </div>`;
   }).join("");
+  // 兜底：面板刷新重建后，已展开但还没读过缓存的记忆面板自动补加载
+  document.querySelectorAll("#playerList .resident-memory[open]").forEach(panel=>{
+    const pid=panel.closest('.pcard')?.dataset.pid; if(!pid||replayMode)return;
+    if(!memoryPages.has(`${pid}:${memoryTiers.get(pid)||'1'}`))loadMemories(pid);
+  });
   renderTravel();
 }
 
@@ -619,11 +624,16 @@ $("playerList").addEventListener("click",e=>{
   if(!card||!panel)return;
   if(e.target.closest('.mem-load'))loadMemories(card.dataset.pid);
   else if(e.target.closest('.mem-more'))loadMemories(card.dataset.pid,true);
-  else if(e.target.closest('summary')===panel.querySelector('summary')){
-    const pid=card.dataset.pid;
-    if(!memoryPages.has(`${pid}:${memoryTiers.get(pid)||'1'}`))setTimeout(()=>{if(panel.open)loadMemories(pid);},0);
-  }
 });
+// 展开「记忆提取」即自动读取（toggle 不冒泡，走捕获阶段；比 click+setTimeout 稳定，
+// 不受事件默认行为时序与面板刷新竞态影响）
+$("playerList").addEventListener("toggle",e=>{
+  const panel=e.target.closest('.resident-memory');
+  if(!panel||!e.target.open)return;
+  const card=panel.closest('.pcard'); if(!card)return;
+  const pid=card.dataset.pid;
+  if(!memoryPages.has(`${pid}:${memoryTiers.get(pid)||'1'}`))loadMemories(pid);
+},true);
 $("playerList").addEventListener("change",e=>{
   if(!e.target.matches('.mem-tier'))return;
   const card=e.target.closest('.pcard'), pid=card.dataset.pid;

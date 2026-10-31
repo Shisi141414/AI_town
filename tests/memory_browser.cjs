@@ -11,6 +11,7 @@ let browser;
  const first=page.locator('.pcard').first(), second=page.locator('.pcard').nth(1);
  if(await first.locator('.resident-memory').evaluate(el=>el.open))throw Error('Memory should start collapsed');
  await first.locator('.resident-memory > summary').click();
+ await first.locator('.mem-list .mi').first().waitFor();   // 展开即自动加载一级记忆
  await first.locator('.mem-tier').selectOption('3');
  await first.locator('.mem-list .mi').first().waitFor();
  if(!await first.locator('.mem-stats').textContent().then(t=>t.includes('永久')))throw Error('Missing permanent layer');
