@@ -83,6 +83,25 @@ const STAT_STYLE = {
   hp: ["生命", "#e74c3c"], satiety: ["饱食", "#e67e22"], energy: ["精力", "#f1c40f"],
   mood: ["心情", "#9b59b6"], money: ["金钱", "#27ae60"],
 };
+const memoryTiers = new Map(), memoryPages = new Map();
+let memorySaveId = null;
+function memoryPanel(p, opened) {
+  const pid = p.pid, tier = memoryTiers.get(pid) || "1";
+  const page = replayMode ? null : memoryPages.get(`${pid}:${tier}`);
+  const options = [["1", "一级 · 日常经历"], ["2", "二级 · 精简记忆"], ["3", "三级 · 深层记忆（永久）"]]
+    .map(([value, label]) => `<option value="${value}" ${tier===value?'selected':''}>${label}</option>`).join("");
+  return `<details class="resident-memory" data-open-key="memory-${esc(pid)}" ${opened.has('memory-'+pid)?'open':''}>
+    <summary>记忆提取 · ${p.memory_counts?.["1"]||0} / ${p.memory_counts?.["2"]||0} / ${p.memory_counts?.["3"]||0}</summary>
+    <div class="resident-memory-body">
+      <select class="mem-tier" aria-label="${esc(p.name)}的记忆层级">${options}</select>
+      <p class="hint mem-stats">${page?.stats||'选择层级后读取该居民的记忆。'}</p>
+      <button class="btn mem-load" type="button" ${replayMode?'disabled':''}>读取记忆流</button>
+      <div class="mem-list">${page?.html||''}</div>
+      <button class="btn mem-more" type="button" ${page?.hasMore&&!replayMode?'':'hidden'}>继续读取</button>
+      ${replayMode?'<p class="hint">回放期间无法读取该帧的记忆流。</p>':''}
+    </div>
+  </details>`;
+}
 function renderPlayers() {
   const opened=new Set([...document.querySelectorAll("#playerList details[open]")].map(e=>e.dataset.openKey));
   $("playerList").innerHTML = players.map(p => {
@@ -113,12 +132,11 @@ function renderPlayers() {
       ${(p.computer_files||[]).map(f=>`<details data-open-key="file-${esc(p.pid)}-${esc(f.id)}" ${opened.has('file-'+p.pid+'-'+f.id)?'open':''}><summary>${esc(f.title)}</summary><pre class="computer-content">${esc(f.content)}</pre></details>`).join('')||'<p class="hint">还没有主动记录</p>'}</details>
       <details class="resident-transfers" data-open-key="money-${esc(p.pid)}" ${opened.has('money-'+p.pid)?'open':''}><summary>资金往来 · ${(p.transactions||[]).length}笔</summary>${[...(p.transactions||[])].reverse().map(t=>{const amt=Number.isFinite(Number(t.amount))?Number(t.amount).toFixed(2):""+(t.delta??"?");const from=t.from||"我",to=t.to||"诊所";return `<p class="hint">第${t.day??"?"}天 ${esc(t.clock??"")} · ${esc(from)} → ${esc(to)} · ${amt}元<br>${esc(t.actor??"诊所")}：${esc(t.reason||"")}</p>`}).join('')||'<p class="hint">暂无资金往来</p>'}</details>
       <details class="resident-computer" data-open-key="prompt-${esc(p.pid)}" ${opened.has('prompt-'+p.pid)?'open':''}><summary>🧠 最近一次模型提示词与原始回复</summary><details><summary>系统提示词</summary><pre class="computer-content">${esc(p.last_system_prompt||'尚未发送')}</pre></details><details><summary>用户提示词</summary><pre class="computer-content">${esc(p.last_user_prompt||'尚未发送')}</pre></details><details><summary>原始回复</summary><pre class="computer-content">${esc(p.last_raw_reply||'尚未收到')}</pre></details></details>
-      <div class="hint">${esc(p.illness || "健康")} · 记忆 ${p.memory_counts?.["1"]||0} / ${p.memory_counts?.["2"]||0} / ${p.memory_counts?.["3"]||0}</div>
+      <div class="hint">${esc(p.illness || "健康")}</div>
       <div class="belong">${sceneTag} ${esc(p.home)}${decor}${items ? " · " + items : ""}${p.model ? ` · <span title="${esc(p.model)}">${esc(p.model)}</span>` : ""}</div>
+      ${memoryPanel(p, opened)}
     </div>`;
   }).join("");
-  const sel = $("memPlayer");
-  if (sel) { const value=sel.value; sel.innerHTML = players.map(p => `<option>${esc(p.name)}</option>`).join(""); if(players.some(p=>p.name===value))sel.value=value; }
   renderTravel();
 }
 
@@ -576,28 +594,46 @@ $("btnAddPlayer").onclick = async () => {
   } catch (e) { toast(e.message, false); }
 };
 
-/* ================= 记忆 ================= */
-let memoryOffset=0, memoryQuery="", memoryRequest=0;
-async function loadMemories(more=false) {
-  const request=++memoryRequest;
-  const name=$("memPlayer").value, tier=$("memTier").value;
-  if(!name)return;
-  const query=name+":"+tier;
-  if(!more||query!==memoryQuery){memoryOffset=0;$("memList").innerHTML="";}
-  memoryQuery=query;
-  const d=await jget(`${API}/players/${encodeURIComponent(name)}/memories?tier=${tier}&offset=${memoryOffset}&limit=40`);
-  if(memoryQuery!==query||request!==memoryRequest)return;
-  $("memStats").textContent=`一级 ${d.counts["1"]} · 二级 ${d.counts["2"]} · 三级 ${d.counts["3"]}（永久）`;
-  $("memList").insertAdjacentHTML("beforeend",d.items.map(m=>
-    `<div class="mi"><span class="t">[L${m.tier}·D${m.day}·${m.tick}] ${esc(m.selected_by)}${m.tier>1?" · 权重"+m.selection_weight:""}</span><br>${esc(m.content)}</div>`
-  ).join(""));
-  memoryOffset+=d.items.length;$("btnMoreMem").hidden=!d.has_more;
-  if(!memoryOffset)$("memList").innerHTML='<div class="hint">这一层还没有记忆</div>';
+/* ================= 每位居民的记忆 ================= */
+async function loadMemories(pid, more=false) {
+  if(replayMode)return;
+  const tier=memoryTiers.get(pid)||"1", key=`${pid}:${tier}`;
+  const page=memoryPages.get(key)||{offset:0,html:"",hasMore:false,stats:"",request:0};
+  if(!more){page.offset=0;page.html="";}
+  const request=++page.request, saveId=memorySaveId;
+  memoryPages.set(key,page);
+  const d=await jget(`${API}/players/${encodeURIComponent(pid)}/memories?tier=${tier}&offset=${page.offset}&limit=40`);
+  if(page.request!==request||memorySaveId!==saveId)return;
+  page.stats=`一级 ${d.counts["1"]} · 二级 ${d.counts["2"]} · 三级 ${d.counts["3"]}（永久）`;
+  page.html+=d.items.map(m=>`<div class="mi"><span class="t">[L${m.tier}·D${m.day}·${m.tick}] ${esc(m.selected_by)}${m.tier>1?" · 权重"+m.selection_weight:""}</span><br>${esc(m.content)}</div>`).join("");
+  page.offset+=d.items.length;page.hasMore=d.has_more;
+  if(!page.offset)page.html='<div class="hint">这一层还没有记忆</div>';
+  const card=[...$("playerList").querySelectorAll('.pcard')].find(el=>el.dataset.pid===pid);
+  if(!card||memoryTiers.get(pid)!==tier)return;
+  card.querySelector('.mem-stats').textContent=page.stats;
+  card.querySelector('.mem-list').innerHTML=page.html;
+  card.querySelector('.mem-more').hidden=!page.hasMore;
 }
-$("btnLoadMem").onclick=()=>loadMemories();
-$("btnMoreMem").onclick=()=>loadMemories(true);
-$("memTier").onchange=()=>loadMemories();
-$("memPlayer").onchange=()=>loadMemories();
+$("playerList").addEventListener("click",e=>{
+  const card=e.target.closest('.pcard'), panel=e.target.closest('.resident-memory');
+  if(!card||!panel)return;
+  if(e.target.closest('.mem-load'))loadMemories(card.dataset.pid);
+  else if(e.target.closest('.mem-more'))loadMemories(card.dataset.pid,true);
+  else if(e.target.closest('summary')===panel.querySelector('summary')){
+    const pid=card.dataset.pid;
+    if(!memoryPages.has(`${pid}:${memoryTiers.get(pid)||'1'}`))setTimeout(()=>{if(panel.open)loadMemories(pid);},0);
+  }
+});
+$("playerList").addEventListener("change",e=>{
+  if(!e.target.matches('.mem-tier'))return;
+  const card=e.target.closest('.pcard'), pid=card.dataset.pid;
+  memoryTiers.set(pid,e.target.value);
+  const page=memoryPages.get(`${pid}:${e.target.value}`);
+  card.querySelector('.mem-stats').textContent=page?.stats||'选择层级后读取该居民的记忆。';
+  card.querySelector('.mem-list').innerHTML=page?.html||'';
+  card.querySelector('.mem-more').hidden=!page?.hasMore;
+  if(!page&&!replayMode)loadMemories(pid);
+});
 $("btnFilter").onclick = queryEvents;
 
 /* ================= AI 居民出行与车辆 ================= */
@@ -638,6 +674,7 @@ $("profileList").addEventListener("click",e=>{const b=e.target.closest("[data-ac
 async function refreshState() {
   if(replayMode)return;
   const d = await jget(`${API}/state`);
+  if(memorySaveId!==d.save_id){memorySaveId=d.save_id;memoryTiers.clear();memoryPages.clear();}
   $("recordingTag").textContent=d.recording?"● 自动录制中":"○ 尚未录制";
   townConfig=d.town_config||townConfig;marketPrice=d.market_price??marketPrice;stocks=d.stocks||stocks;shopProducts=d.shop_products||shopProducts;
   window.refreshBuildingLock?.(d.running||d.identity_phase);

@@ -30,6 +30,11 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 .archive-batch{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0}.archive-batch .btn{font-size:11px}.archive-row{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:start;gap:5px}.archive-select{width:17px;height:17px;margin:13px 0 0 2px;accent-color:#607e62;cursor:pointer}.archive-select:disabled{cursor:not-allowed;opacity:.45}
 
 .resident-computer,.resident-transfers {margin:8px 0 0;padding:8px;border:1px solid var(--line,#cbbb99);background:#fff9eb;font-size:12px;}
+.resident-memory{margin:10px 0 0;padding:8px;border:1px solid #cbbb99;background:#fff9eb;font-size:12px}
+.resident-memory>summary{cursor:pointer;color:#526d50;font-weight:600}
+.resident-memory-body{display:grid;gap:8px;margin-top:9px}
+.resident-memory .mem-tier{width:100%;padding:6px;border:1px solid #cbbd9c;background:#fffdf4;color:#5f624d}
+.resident-memory .mem-stats{margin:0}.resident-memory .mem-list{max-height:280px;overflow:auto;overflow-wrap:anywhere}.resident-memory .btn{width:100%}
 .resident-computer summary,.resident-transfers summary {cursor:pointer;overflow-wrap:anywhere;}
 .resident-computer small {color:#8b826d;}
 .resident-computer details {margin-top:8px;}
